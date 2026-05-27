@@ -1,0 +1,2005 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Facilim — Tableau de bord</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    /* ── Reset & Base ─────────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { font-size: 16px; }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #F8FAFC;
+      color: #0F172A;
+      min-height: 100vh;
+      display: flex;
+      overflow-x: hidden;
+    }
+
+    /* ── CSS Variables ────────────────────────────────────────────────────── */
+    :root {
+      --navy:         #1B3A6B;
+      --navy-dark:    #0F2547;
+      --navy-mid:     #1A3461;
+      --green:        #2ECC9A;
+      --green-dark:   #22A87E;
+      --green-light:  #E8FBF5;
+      --bg:           #F8FAFC;
+      --surface:      #FFFFFF;
+      --border:       #E2E8F0;
+      --border-light: #F1F5F9;
+      --text-1:       #0F172A;
+      --text-2:       #475569;
+      --text-3:       #94A3B8;
+      --red:          #EF4444;
+      --red-light:    #FEF2F2;
+      --orange:       #F59E0B;
+      --orange-light: #FFFBEB;
+      --purple:       #7C3AED;
+      --purple-light: #F5F3FF;
+      --blue:         #3B82F6;
+      --blue-light:   #EFF6FF;
+      --sidebar-w:    260px;
+      --topbar-h:     56px;
+      --radius-sm:    6px;
+      --radius:       10px;
+      --radius-lg:    14px;
+      --shadow-sm:    0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+      --shadow:       0 4px 6px -1px rgba(0,0,0,0.07), 0 2px 4px -1px rgba(0,0,0,0.04);
+      --shadow-lg:    0 20px 25px -5px rgba(0,0,0,0.10), 0 8px 10px -5px rgba(0,0,0,0.05);
+      --transition:   150ms cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    /* ══════════════════════════════════════════════════════════════════════
+       SIDEBAR
+    ══════════════════════════════════════════════════════════════════════ */
+    .sidebar {
+      width: var(--sidebar-w);
+      min-height: 100vh;
+      background: var(--navy-dark);
+      display: flex;
+      flex-direction: column;
+      position: fixed;
+      left: 0; top: 0; bottom: 0;
+      z-index: 200;
+      transition: width 0.22s ease;
+      overflow: hidden;
+    }
+
+    .sidebar-brand {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      padding: 22px 18px 18px;
+      border-bottom: 1px solid rgba(255,255,255,0.07);
+      flex-shrink: 0;
+    }
+    .sidebar-logo {
+      width: 34px; height: 34px;
+      background: var(--green);
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 16px; font-weight: 800; color: #0A3D2E;
+      flex-shrink: 0;
+      box-shadow: 0 0 0 3px rgba(46,204,154,0.22);
+      letter-spacing: -1px;
+    }
+    .sidebar-name {
+      font-size: 16px; font-weight: 700; color: #fff;
+      letter-spacing: -0.4px; white-space: nowrap;
+    }
+    .sidebar-tag {
+      font-size: 9px; font-weight: 600;
+      color: var(--green); background: rgba(46,204,154,0.12);
+      border-radius: 4px; padding: 1px 5px;
+      letter-spacing: 0.3px; white-space: nowrap;
+    }
+
+    .sidebar-nav {
+      flex: 1; padding: 14px 10px;
+      display: flex; flex-direction: column; gap: 1px;
+      overflow-y: auto;
+    }
+    .sidebar-nav::-webkit-scrollbar { display: none; }
+
+    .nav-section {
+      font-size: 10px; font-weight: 700;
+      color: rgba(255,255,255,0.28);
+      text-transform: uppercase; letter-spacing: 0.8px;
+      padding: 10px 8px 5px; white-space: nowrap;
+    }
+
+    .nav-item {
+      display: flex; align-items: center; gap: 9px;
+      padding: 8px 10px;
+      border-radius: var(--radius-sm);
+      font-size: 13.5px; font-weight: 500;
+      color: rgba(255,255,255,0.58);
+      cursor: pointer; transition: all var(--transition);
+      white-space: nowrap; text-decoration: none;
+      position: relative;
+    }
+    .nav-item:hover { background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.88); }
+    .nav-item.active { background: rgba(46,204,154,0.14); color: var(--green); font-weight: 600; }
+    .nav-item.active .nav-ico { color: var(--green); }
+
+    .nav-ico {
+      width: 18px; height: 18px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px; flex-shrink: 0;
+    }
+    .nav-badge {
+      margin-left: auto;
+      background: var(--red); color: #fff;
+      font-size: 10px; font-weight: 700;
+      padding: 1px 6px; border-radius: 10px;
+      min-width: 18px; text-align: center;
+    }
+
+    /* Quota block */
+    .sidebar-quota {
+      margin: 0 10px 10px;
+      padding: 11px 12px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: var(--radius); flex-shrink: 0;
+    }
+    .quota-row {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 7px;
+    }
+    .quota-lbl { font-size: 11px; color: rgba(255,255,255,0.42); font-weight: 500; white-space: nowrap; }
+    .quota-val { font-size: 12px; font-weight: 700; color: var(--green); white-space: nowrap; }
+    .quota-track { height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; overflow: hidden; }
+    .quota-fill  { height: 100%; background: var(--green); border-radius: 2px; transition: width 0.5s, background 0.3s; }
+
+    /* User block */
+    .sidebar-user {
+      padding: 12px 10px 16px;
+      border-top: 1px solid rgba(255,255,255,0.07);
+      display: flex; align-items: center; gap: 9px;
+      flex-shrink: 0;
+    }
+    .user-avatar {
+      width: 32px; height: 32px;
+      background: rgba(46,204,154,0.18);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 13px; font-weight: 700; color: var(--green);
+      flex-shrink: 0;
+    }
+    .user-info { flex: 1; min-width: 0; }
+    .user-name  { font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.88); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .user-email { font-size: 11px; color: rgba(255,255,255,0.36); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .btn-logout {
+      width: 28px; height: 28px; flex-shrink: 0;
+      background: none; border: 1px solid rgba(255,255,255,0.11);
+      border-radius: var(--radius-sm); color: rgba(255,255,255,0.36);
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+      font-size: 12px; transition: all var(--transition);
+    }
+    .btn-logout:hover { border-color: rgba(255,255,255,0.25); color: rgba(255,255,255,0.7); }
+
+    /* ══════════════════════════════════════════════════════════════════════
+       MAIN WRAPPER
+    ══════════════════════════════════════════════════════════════════════ */
+    .main-wrapper {
+      margin-left: var(--sidebar-w);
+      flex: 1; min-width: 0;
+      display: flex; flex-direction: column;
+    }
+
+    /* ── Topbar ───────────────────────────────────────────────────────── */
+    .topbar {
+      height: var(--topbar-h);
+      position: sticky; top: 0; z-index: 100;
+      background: rgba(248,250,252,0.97);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .topbar-title {
+      font-size: 15px; font-weight: 700; color: var(--text-1);
+      letter-spacing: -0.3px; white-space: nowrap;
+    }
+    .topbar-divider { width: 1px; height: 18px; background: var(--border); flex-shrink: 0; }
+
+    .search-box {
+      position: relative; flex: 1; max-width: 340px;
+    }
+    .search-box-ico {
+      position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+      font-size: 13px; color: var(--text-3); pointer-events: none;
+    }
+    .search-input {
+      width: 100%; height: 34px;
+      padding: 0 10px 0 32px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); font-size: 13px;
+      font-family: inherit; color: var(--text-1); outline: none;
+      transition: all var(--transition);
+    }
+    .search-input:focus { border-color: var(--green); box-shadow: 0 0 0 3px rgba(46,204,154,0.12); }
+    .search-input::placeholder { color: var(--text-3); }
+
+    .filter-pills { display: flex; gap: 5px; align-items: center; }
+    .filter-pill {
+      height: 30px; padding: 0 11px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 20px; font-size: 12px; font-weight: 500;
+      color: var(--text-2); cursor: pointer;
+      display: flex; align-items: center; gap: 4px;
+      transition: all var(--transition); white-space: nowrap;
+      font-family: inherit;
+    }
+    .filter-pill:hover { border-color: var(--navy); color: var(--navy); }
+    .filter-pill.active { background: var(--navy); border-color: var(--navy); color: #fff; }
+
+    .topbar-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+    .btn-primary {
+      height: 34px; padding: 0 15px;
+      background: var(--green); color: #0A3D2E;
+      border: none; border-radius: var(--radius-sm);
+      font-size: 13px; font-weight: 700;
+      cursor: pointer; display: flex; align-items: center; gap: 5px;
+      transition: all var(--transition); font-family: inherit; white-space: nowrap;
+    }
+    .btn-primary:hover { background: var(--green-dark); transform: translateY(-1px); box-shadow: 0 4px 10px rgba(46,204,154,0.35); }
+    .btn-primary:active { transform: translateY(0); box-shadow: none; }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+
+    /* ── Content area ─────────────────────────────────────────────────── */
+    .content { padding: 22px 24px; display: flex; flex-direction: column; gap: 18px; }
+
+    /* ── KPI grid ─────────────────────────────────────────────────────── */
+    .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+
+    .kpi-card {
+      background: var(--surface); border-radius: var(--radius-lg);
+      border: 1px solid var(--border); padding: 18px 20px;
+      box-shadow: var(--shadow-sm); transition: box-shadow var(--transition), transform var(--transition);
+      cursor: default;
+    }
+    .kpi-card:hover { box-shadow: var(--shadow); transform: translateY(-1px); }
+
+    .kpi-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 10px; }
+    .kpi-label  { font-size: 11.5px; font-weight: 700; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.5px; }
+    .kpi-icon   { width: 34px; height: 34px; border-radius: 9px; display: flex; align-items: center; justify-content: center; font-size: 16px; }
+
+    .kpi-value  { font-size: 30px; font-weight: 800; color: var(--text-1); line-height: 1; letter-spacing: -1.5px; }
+    .kpi-sub    { font-size: 12px; color: var(--text-3); margin-top: 5px; }
+
+    .kpi-card.urgent-card  { border-left: 3px solid var(--red); }
+    .kpi-card.complet-card { border-left: 3px solid var(--green); }
+
+    /* ── Attention banner ─────────────────────────────────────────────── */
+    .attention-banner {
+      background: #FFFBEB; border: 1px solid #FDE68A; border-radius: var(--radius);
+      padding: 12px 16px; display: flex; align-items: flex-start; gap: 10px;
+    }
+    .attention-banner.hidden { display: none !important; }
+    .attention-banner-icon  { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+    .attention-banner-title { font-size: 13px; font-weight: 700; color: #92400E; }
+    .attention-banner-body  { font-size: 12px; color: #78350F; margin-top: 2px; line-height: 1.5; }
+
+    /* ── Table section ────────────────────────────────────────────────── */
+    .section-head {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 10px;
+    }
+    .section-title {
+      font-size: 14px; font-weight: 700; color: var(--text-1);
+      display: flex; align-items: center; gap: 8px;
+    }
+    .section-cnt {
+      font-size: 12px; font-weight: 600; color: var(--text-3);
+      background: var(--border-light); padding: 2px 8px; border-radius: 10px;
+    }
+
+    .table-card {
+      background: var(--surface); border-radius: var(--radius-lg);
+      border: 1px solid var(--border); box-shadow: var(--shadow-sm);
+      overflow: hidden; overflow-x: auto;
+    }
+
+    table { width: 100%; border-collapse: collapse; min-width: 820px; }
+
+    thead th {
+      text-align: left; padding: 10px 16px;
+      font-size: 11px; font-weight: 700; color: var(--text-3);
+      text-transform: uppercase; letter-spacing: 0.5px;
+      background: #FAFBFC; border-bottom: 1px solid var(--border-light);
+      white-space: nowrap; user-select: none;
+    }
+
+    tbody tr { border-bottom: 1px solid var(--border-light); transition: background var(--transition); }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr.row-main:hover { background: #FAFBFD; }
+    tbody tr.row-main:hover .row-actions { opacity: 1; }
+    tbody td { padding: 12px 16px; font-size: 13px; color: var(--text-2); vertical-align: middle; }
+
+    /* ── Cell components ──────────────────────────────────────────────── */
+    /* Dossier cell */
+    .cell-dossier { display: flex; flex-direction: column; gap: 3px; }
+    .cell-name    { font-size: 13px; font-weight: 600; color: var(--text-1); }
+    .cell-meta    { display: flex; align-items: center; gap: 6px; }
+    .cell-ref     { font-size: 10.5px; color: var(--text-3); font-family: 'SF Mono','Fira Code',monospace; }
+    .dept-chip    {
+      display: inline-flex; align-items: center;
+      background: var(--border-light); border-radius: 4px;
+      padding: 1px 5px; font-size: 10px; font-weight: 700; color: var(--text-3);
+    }
+    .tel-meta { font-size: 10.5px; color: var(--text-3); }
+
+    /* Badges */
+    .badge {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 9px; border-radius: 20px;
+      font-size: 11px; font-weight: 600; white-space: nowrap;
+    }
+    .badge-dot {
+      width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0;
+    }
+    .badge-complet   { background: #ECFDF5; color: #065F46; }
+    .badge-complet   .badge-dot { background: #10B981; }
+    .badge-incomplet { background: #FEF9C3; color: #854D0E; }
+    .badge-incomplet .badge-dot { background: #EAB308; }
+    .badge-cours     { background: #EFF6FF; color: #1E40AF; }
+    .badge-cours     .badge-dot { background: #3B82F6; }
+    .badge-erreur    { background: #FEF2F2; color: #991B1B; }
+    .badge-erreur    .badge-dot { background: #EF4444; }
+    .badge-archive   { background: var(--border-light); color: var(--text-3); }
+    .badge-archive   .badge-dot { background: #CBD5E1; }
+    .badge-bloque    { background: #FDF4FF; color: #6B21A8; }
+    .badge-bloque    .badge-dot { background: #A855F7; }
+    .badge-urgent    { background: #FEF2F2; color: #991B1B; }
+    .badge-urgent    .badge-dot { background: var(--red); animation: pdot 1.4s infinite; }
+    .badge-critique  { background: var(--red); color: #fff; }
+    .badge-critique  .badge-dot { background: rgba(255,255,255,0.6); animation: pdot 0.9s infinite; }
+    .badge-normal    { background: var(--border-light); color: var(--text-3); }
+    .badge-normal    .badge-dot { background: #CBD5E1; }
+
+    @keyframes pdot { 0%,100%{opacity:1} 50%{opacity:0.35} }
+
+    /* Missing hint */
+    .missing-hint {
+      display: inline-flex; align-items: center; gap: 4px;
+      font-size: 11px; color: #B45309; font-weight: 600;
+      margin-top: 5px; cursor: pointer;
+    }
+    .missing-hint:hover { text-decoration: underline; }
+
+    /* Score cell */
+    .score-cell { display: flex; align-items: center; gap: 10px; }
+    .score-bar-wrap { display: flex; flex-direction: column; gap: 4px; }
+    .score-track {
+      width: 90px; height: 5px;
+      background: var(--border-light); border-radius: 3px; overflow: hidden;
+    }
+    .score-fill { height: 100%; border-radius: 3px; transition: width 0.5s ease; }
+    .score-labels { display: flex; align-items: baseline; gap: 2px; }
+    .score-num    { font-size: 13px; font-weight: 700; }
+    .score-denom  { font-size: 10px; color: var(--text-3); }
+
+    /* Activity cell */
+    .activity-cell  { display: flex; flex-direction: column; gap: 3px; }
+    .activity-date  { font-size: 12px; color: var(--text-2); }
+    .activity-rl    { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-3); }
+    .rl-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+    .rl-0 { background: var(--text-3); }
+    .rl-1 { background: var(--orange); }
+    .rl-2 { background: var(--red); }
+    .rl-3 { background: #9B1C1C; }
+
+    /* Urgence cell */
+    .urgence-none { font-size: 11px; color: var(--text-3); }
+
+    /* Actions cell */
+    .row-actions {
+      display: flex; align-items: center; gap: 3px;
+      opacity: 0; transition: opacity var(--transition);
+    }
+    @media (hover: none) { .row-actions { opacity: 1; } }
+
+    .btn-act {
+      height: 27px; padding: 0 9px;
+      border-radius: 6px; font-size: 11.5px; font-weight: 600;
+      cursor: pointer; border: none; font-family: inherit;
+      transition: all var(--transition);
+      display: inline-flex; align-items: center; gap: 3px; white-space: nowrap;
+    }
+    .ba-voir    { background: #EFF6FF; color: #1E40AF; }
+    .ba-voir:hover { background: #DBEAFE; }
+    .ba-enrich  { background: var(--green-light); color: #065F46; font-weight: 700; }
+    .ba-enrich:hover { background: #D1FAE5; }
+    .ba-relance { background: var(--orange-light); color: #92400E; }
+    .ba-relance:hover { background: #FEF3C7; }
+    .ba-score   { background: var(--purple-light); color: #5B21B6; }
+    .ba-score:hover { background: #EDE9FE; }
+    .ba-del {
+      width: 27px; height: 27px; padding: 0; flex-shrink: 0;
+      background: none; border: 1px solid transparent; border-radius: 6px;
+      color: #CBD5E1; cursor: pointer; display: flex; align-items: center; justify-content: center;
+      font-size: 12px; transition: all var(--transition);
+    }
+    .ba-del:hover { background: var(--red-light); border-color: #FECACA; color: var(--red); }
+
+    /* Agent chip */
+    .agent-chip {
+      display: inline-flex; align-items: center; gap: 4px;
+      background: var(--blue-light); color: #1E40AF;
+      border-radius: 12px; padding: 2px 8px;
+      font-size: 11px; font-weight: 600;
+    }
+
+    /* Expand row */
+    .expand-tr { background: #FFFBEB; }
+    .expand-tr td { padding: 0 16px 11px !important; border-bottom: 2px solid #FDE68A !important; }
+    .expand-content { display: flex; flex-wrap: wrap; gap: 7px; align-items: flex-start; }
+    .missing-tag {
+      display: inline-flex; align-items: center; gap: 5px;
+      background: #FEF2F2; border: 1px solid #FECACA;
+      border-radius: 20px; padding: 3px 10px;
+      font-size: 11px; color: #991B1B; white-space: nowrap;
+    }
+    .expand-guide {
+      background: var(--blue-light); border: 1px solid #BFDBFE;
+      border-radius: 8px; padding: 8px 12px;
+      font-size: 12px; color: #1E40AF; line-height: 1.5;
+      flex: 1 1 auto; min-width: 200px;
+    }
+
+    /* ══════════════════════════════════════════════════════════════════════
+       MODALS
+    ══════════════════════════════════════════════════════════════════════ */
+    .modal-overlay {
+      position: fixed; inset: 0;
+      background: rgba(15,37,71,0.45);
+      backdrop-filter: blur(4px);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 1000;
+      opacity: 0; pointer-events: none;
+      transition: opacity 0.2s;
+    }
+    .modal-overlay.open { opacity: 1; pointer-events: auto; }
+
+    .modal {
+      background: var(--surface);
+      border-radius: var(--radius-lg);
+      width: 640px; max-width: 95vw;
+      max-height: 90vh; overflow-y: auto;
+      box-shadow: var(--shadow-lg), 0 0 0 1px rgba(0,0,0,0.04);
+      transform: scale(0.96) translateY(10px);
+      transition: transform 0.22s cubic-bezier(0.34, 1.2, 0.64, 1);
+    }
+    .modal-overlay.open .modal { transform: scale(1) translateY(0); }
+
+    /* Detail modal — right panel */
+    #modal-detail { align-items: stretch; justify-content: flex-end; }
+    #modal-detail .modal {
+      width: 700px; max-width: 96vw;
+      height: 100vh; max-height: 100vh;
+      border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+      transform: translateX(60px);
+      transition: transform 0.25s cubic-bezier(0.4,0,0.2,1);
+    }
+    #modal-detail.open .modal { transform: translateX(0); }
+
+    .modal-header {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      padding: 20px 24px 16px;
+      border-bottom: 1px solid var(--border-light);
+      position: sticky; top: 0; background: var(--surface); z-index: 10;
+    }
+    .modal-title { font-size: 16px; font-weight: 700; color: var(--text-1); letter-spacing: -0.3px; }
+    .modal-sub   { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+    .modal-close {
+      width: 30px; height: 30px;
+      background: var(--border-light); border: none; border-radius: 50%;
+      font-size: 16px; color: var(--text-2); cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: all var(--transition); flex-shrink: 0;
+    }
+    .modal-close:hover { background: var(--border); color: var(--text-1); }
+
+    .modal-footer {
+      display: flex; justify-content: flex-end; gap: 8px;
+      padding: 14px 24px;
+      border-top: 1px solid var(--border-light);
+      position: sticky; bottom: 0; background: var(--surface); z-index: 10;
+    }
+
+    /* Form sections */
+    .form-section { padding: 16px 24px; }
+    .form-section + .form-section { border-top: 1px solid var(--border-light); }
+    .form-section-lbl {
+      font-size: 11px; font-weight: 700; color: var(--text-3);
+      text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px;
+    }
+    .form-grid { display: grid; gap: 11px; }
+    .fg-3 { grid-template-columns: 1fr 1fr 1fr; }
+    .fg-2 { grid-template-columns: 1fr 1fr; }
+    .fg-1 { grid-template-columns: 1fr; }
+
+    .form-field { display: flex; flex-direction: column; gap: 4px; }
+    .form-field label { font-size: 12px; font-weight: 600; color: var(--text-2); }
+    .form-field input, .form-field select, .form-field textarea {
+      padding: 8px 11px;
+      border: 1px solid var(--border); border-radius: var(--radius-sm);
+      font-size: 13px; font-family: inherit;
+      background: var(--surface); color: var(--text-1); outline: none;
+      transition: all var(--transition);
+    }
+    .form-field input:focus, .form-field select:focus, .form-field textarea:focus {
+      border-color: var(--green); box-shadow: 0 0 0 3px rgba(46,204,154,0.12);
+    }
+    .form-field textarea { resize: vertical; min-height: 90px; line-height: 1.5; }
+
+    /* Urgence toggles */
+    .toggle-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .toggle-opt {
+      display: flex; align-items: center; gap: 6px;
+      padding: 7px 12px; border: 1px solid var(--border); border-radius: 7px;
+      cursor: pointer; font-size: 12px; font-weight: 500; color: var(--text-2);
+      transition: all var(--transition); user-select: none;
+    }
+    .toggle-opt input[type=checkbox] { display: none; }
+    .toggle-opt.checked-urgent   { border-color: var(--orange); background: var(--orange-light); color: #92400E; }
+    .toggle-opt.checked-critique { border-color: var(--red); background: var(--red-light); color: #991B1B; }
+    .lang-select {
+      margin-left: auto; display: flex; align-items: center; gap: 7px;
+      font-size: 12px; color: var(--text-2);
+    }
+    .lang-select select { padding: 5px 8px; border: 1px solid var(--border); border-radius: 5px; font-size: 12px; font-family: inherit; }
+
+    /* Tabs */
+    .tabs { display: flex; gap: 0; padding: 0 24px; border-bottom: 1px solid var(--border-light); }
+    .tab {
+      padding: 10px 16px; font-size: 13px; font-weight: 500; color: var(--text-3);
+      cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px;
+      transition: all var(--transition);
+    }
+    .tab.active { color: var(--navy); border-bottom-color: var(--navy); font-weight: 600; }
+    .tab:hover:not(.active) { color: var(--text-2); }
+
+    .hidden { display: none !important; }
+
+    /* Upload */
+    .upload-zone {
+      border: 2px dashed var(--border); border-radius: var(--radius);
+      padding: 28px; text-align: center; cursor: pointer; transition: all var(--transition);
+    }
+    .upload-zone:hover { border-color: var(--green); background: var(--green-light); }
+    .upload-icon { font-size: 28px; margin-bottom: 8px; }
+    .upload-text { font-size: 13px; color: var(--text-2); }
+    .upload-text span { color: var(--green); font-weight: 600; }
+    .upload-sub { font-size: 11px; color: var(--text-3); margin-top: 4px; }
+
+    /* Buttons */
+    .btn-cancel {
+      height: 36px; padding: 0 16px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); font-size: 13px; font-weight: 500;
+      color: var(--text-2); cursor: pointer; font-family: inherit; transition: all var(--transition);
+    }
+    .btn-cancel:hover { background: var(--border-light); color: var(--text-1); }
+
+    .btn-submit {
+      height: 36px; padding: 0 18px;
+      background: var(--green); color: #0A3D2E;
+      border: none; border-radius: var(--radius-sm);
+      font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit;
+      transition: all var(--transition);
+    }
+    .btn-submit:hover { background: var(--green-dark); }
+    .btn-submit:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .btn-relance-sm {
+      height: 32px; padding: 0 14px;
+      background: var(--orange-light); border: 1px solid #FDE68A;
+      border-radius: var(--radius-sm); font-size: 12px; font-weight: 600;
+      color: #92400E; cursor: pointer; font-family: inherit; transition: all var(--transition);
+    }
+    .btn-relance-sm:hover { background: #FEF3C7; }
+    .btn-relance-sm:disabled { opacity: 0.5; }
+
+    .btn-enrich-sm {
+      height: 32px; padding: 0 14px;
+      background: var(--green-light); border: 1px solid #A7F3D0;
+      border-radius: var(--radius-sm); font-size: 12px; font-weight: 700;
+      color: #065F46; cursor: pointer; font-family: inherit; transition: all var(--transition);
+    }
+    .btn-enrich-sm:hover { background: #D1FAE5; }
+
+    .btn-score-sm {
+      height: 32px; padding: 0 14px;
+      background: var(--purple-light); border: 1px solid #DDD6FE;
+      border-radius: var(--radius-sm); font-size: 12px; font-weight: 600;
+      color: #5B21B6; cursor: pointer; font-family: inherit; transition: all var(--transition);
+    }
+    .btn-score-sm:hover { background: #EDE9FE; }
+
+    /* Detail modal sections */
+    .detail-section {
+      padding: 15px 24px; border-bottom: 1px solid var(--border-light);
+    }
+    .detail-section:last-child { border-bottom: none; }
+    .detail-section-toggle {
+      display: flex; align-items: center; justify-content: space-between;
+      cursor: pointer; margin-bottom: 0;
+    }
+    .detail-section-title {
+      font-size: 11px; font-weight: 700; color: var(--text-3);
+      text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 10px;
+    }
+    .toggle-arr { font-size: 11px; color: var(--text-3); transition: transform var(--transition); }
+    .toggle-arr.open { transform: rotate(180deg); }
+
+    .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .detail-item label { display: block; font-size: 11px; color: var(--text-3); margin-bottom: 2px; }
+    .detail-item span  { font-size: 13px; color: var(--text-1); font-weight: 500; }
+    .detail-list { padding-left: 16px; }
+    .detail-list li { font-size: 13px; color: var(--text-1); margin-bottom: 5px; }
+    .detail-reco { font-size: 13px; color: var(--text-2); line-height: 1.6; }
+
+    .detail-score-bar  { height: 7px; background: var(--border-light); border-radius: 4px; overflow: hidden; }
+    .detail-score-fill { height: 100%; border-radius: 4px; transition: width 0.7s cubic-bezier(0.4,0,0.2,1); }
+
+    /* Checklist */
+    .checklist { display: flex; flex-direction: column; gap: 5px; }
+    .cl-item {
+      display: flex; align-items: center; gap: 9px;
+      padding: 8px 11px; border-radius: 8px; font-size: 13px;
+    }
+    .cl-ok  { background: #F0FDF4; }
+    .cl-bad { background: #FEFCE8; }
+    .cl-ico { font-size: 14px; flex-shrink: 0; }
+    .cl-label { flex: 1; font-weight: 500; }
+    .cl-ok  .cl-label { color: #065F46; }
+    .cl-bad .cl-label { color: #78350F; }
+    .cl-action {
+      padding: 3px 10px; font-size: 11px; font-weight: 600;
+      border-radius: 5px; border: none; cursor: pointer;
+      white-space: nowrap; flex-shrink: 0; font-family: inherit; transition: all var(--transition);
+    }
+    .cl-action-wa     { background: #D1FAE5; color: #065F46; }
+    .cl-action-wa:hover { background: #A7F3D0; }
+    .cl-action-enrich  { background: #DBEAFE; color: #1E40AF; }
+    .cl-action-enrich:hover { background: #BFDBFE; }
+
+    /* Next action box */
+    .next-action-box {
+      background: linear-gradient(135deg, #F0FDF4, #ECFDF5);
+      border: 1px solid #A7F3D0; border-radius: var(--radius);
+      padding: 13px 15px; margin-top: 10px;
+    }
+    .next-action-title {
+      font-size: 10px; font-weight: 800; color: #065F46;
+      text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px;
+    }
+    .next-action-text { font-size: 13px; color: var(--text-1); line-height: 1.5; margin-bottom: 10px; }
+    .btn-action-primary {
+      display: block; width: 100%; padding: 10px 16px;
+      background: var(--green); color: #0A3D2E;
+      border: none; border-radius: var(--radius-sm);
+      font-size: 13px; font-weight: 700; cursor: pointer;
+      text-align: center; font-family: inherit; transition: all var(--transition);
+    }
+    .btn-action-primary:hover { background: var(--green-dark); }
+
+    /* Guide section */
+    #section-guide { margin: 0; }
+    .guide-wrap {
+      padding: 13px 24px 16px;
+      background: #FFFEF0; border-top: 2px solid #FDE68A; border-bottom: 1px solid #FEF3C7;
+    }
+    .guide-title {
+      font-size: 11px; font-weight: 800; color: #92400E;
+      text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 10px;
+      display: flex; align-items: center; gap: 5px;
+    }
+
+    /* History */
+    .detail-history-item { background: var(--border-light); border-radius: 8px; padding: 10px 12px; margin-bottom: 6px; }
+    .h-meta { font-size: 11px; color: var(--text-3); margin-bottom: 3px; }
+    .h-text { font-size: 13px; color: var(--text-1); line-height: 1.5; }
+
+    /* Score panel */
+    .score-panel {
+      background: var(--purple-light); border: 1px solid #DDD6FE;
+      border-radius: var(--radius); padding: 15px 20px; margin: 0 24px;
+    }
+    .score-panel-title { font-size: 11px; font-weight: 700; color: #5B21B6; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 10px; }
+    .score-row { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+    .score-num { font-size: 34px; font-weight: 800; color: var(--text-1); letter-spacing: -1px; }
+    .score-arrow { font-size: 18px; color: var(--green); }
+    .score-potentiel { font-size: 28px; font-weight: 700; color: var(--green); }
+    .score-justif { font-size: 12px; color: #5B21B6; line-height: 1.5; margin-top: 5px; }
+    .score-taux { font-size: 11px; color: var(--text-3); margin-top: 4px; font-style: italic; }
+    .score-sources { font-size: 11px; color: var(--text-3); margin-top: 3px; }
+
+    /* Enrich modal */
+    .enrich-hint { font-size: 13px; color: var(--text-2); padding: 12px 24px 0; line-height: 1.5; }
+    .enrich-result { padding: 10px 14px; border-radius: var(--radius-sm); font-size: 13px; margin: 0 24px; }
+    .enrich-result.ok  { background: #F0FDF4; color: #065F46; border: 1px solid #A7F3D0; }
+    .enrich-result.err { background: #FEF2F2; color: #991B1B; border: 1px solid #FECACA; }
+
+    /* Loading & empty */
+    .spin {
+      display: inline-block; width: 20px; height: 20px;
+      border: 2px solid var(--border); border-top-color: var(--green);
+      border-radius: 50%; animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .empty-state { text-align: center; padding: 56px 20px; }
+    .empty-state-ico   { font-size: 38px; margin-bottom: 12px; }
+    .empty-state-title { font-size: 15px; font-weight: 600; color: var(--text-1); margin-bottom: 5px; }
+    .empty-state-sub   { font-size: 13px; color: var(--text-3); margin-bottom: 18px; }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #CBD5E1; }
+
+    /* ── Responsive ───────────────────────────────────────────────────── */
+    @media (max-width: 1200px) {
+      .filter-pills { display: none; }
+    }
+    @media (max-width: 1024px) {
+      :root { --sidebar-w: 58px; }
+      .sidebar-name, .sidebar-tag, .nav-item > span:not(.nav-ico), .nav-section,
+      .sidebar-quota, .user-info { display: none; }
+      .sidebar-brand { justify-content: center; padding: 18px 10px; }
+      .nav-item { justify-content: center; padding: 10px; }
+      .sidebar-user { justify-content: center; padding: 12px 8px; }
+    }
+    @media (max-width: 768px) {
+      :root { --sidebar-w: 0px; }
+      .sidebar { display: none; }
+      .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+      .content { padding: 14px; }
+      .topbar { padding: 0 14px; }
+      .fg-3 { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ══ SIDEBAR ══════════════════════════════════════════════════════════════ -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <div class="sidebar-logo">F</div>
+      <span class="sidebar-name">Facilim</span>
+    </div>
+
+    <nav class="sidebar-nav">
+      <span class="nav-section">Principal</span>
+
+      <a class="nav-item active" href="#">
+        <span class="nav-ico">⊞</span>
+        <span>Tableau de bord</span>
+      </a>
+      <a class="nav-item" href="#">
+        <span class="nav-ico">📁</span>
+        <span>Dossiers</span>
+        <span class="nav-badge" id="nav-badge-urgent" style="display:none">0</span>
+      </a>
+      <a class="nav-item" href="#">
+        <span class="nav-ico">📊</span>
+        <span>Statistiques</span>
+      </a>
+
+      <span class="nav-section" style="margin-top:10px;">Agents IA</span>
+
+      <a class="nav-item" href="#">
+        <span class="nav-ico">🔔</span>
+        <span>Mathilde (relances)</span>
+      </a>
+      <a class="nav-item" href="#">
+        <span class="nav-ico">💬</span>
+        <span>Bot WhatsApp</span>
+      </a>
+      <a class="nav-item" href="#">
+        <span class="nav-ico">⚖️</span>
+        <span>Analyse CNSA</span>
+      </a>
+    </nav>
+
+    <div class="sidebar-quota">
+      <div class="quota-row">
+        <span class="quota-lbl">Dossiers actifs</span>
+        <span class="quota-val" id="quota-label">—</span>
+      </div>
+      <div class="quota-track">
+        <div class="quota-fill" id="quota-fill" style="width:0%"></div>
+      </div>
+    </div>
+
+    <div class="sidebar-user">
+      <div class="user-avatar" id="user-avatar">N</div>
+      <div class="user-info">
+        <div class="user-name" id="user-name">Professionnel</div>
+        <div class="user-email" id="nav-user"></div>
+      </div>
+      <button class="btn-logout" id="logoutBtn" title="Déconnexion">⏻</button>
+    </div>
+  </aside>
+
+  <!-- ══ MAIN ══════════════════════════════════════════════════════════════════ -->
+  <div class="main-wrapper">
+
+    <!-- TOP BAR -->
+    <header class="topbar">
+      <span class="topbar-title">Tableau de bord</span>
+      <div class="topbar-divider"></div>
+
+      <div class="search-box">
+        <span class="search-box-ico">🔍</span>
+        <input type="text" class="search-input" id="search-input"
+               placeholder="Rechercher… (appuyez sur /)">
+      </div>
+
+      <div class="filter-pills" id="filter-pills">
+        <button class="filter-pill active" onclick="setFilter('all',this)">Tous</button>
+        <button class="filter-pill" onclick="setFilter('INCOMPLET',this)">⚠ Incomplets</button>
+        <button class="filter-pill" onclick="setFilter('EN_COURS',this)">● En cours</button>
+        <button class="filter-pill" onclick="setFilter('COMPLET',this)">✓ Complets</button>
+        <button class="filter-pill" onclick="setFilter('BLOQUE',this)">⊘ Bloqués</button>
+      </div>
+
+      <div class="topbar-actions">
+        <button class="btn-primary" id="btn-nouveau" onclick="openModal()">
+          + Nouveau dossier
+        </button>
+      </div>
+    </header>
+
+    <!-- CONTENT -->
+    <main class="content">
+
+      <!-- KPI CARDS -->
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-header">
+            <span class="kpi-label">Total</span>
+            <div class="kpi-icon" style="background:#EEF3FB;">📁</div>
+          </div>
+          <div class="kpi-value" id="stat-total">—</div>
+          <div class="kpi-sub">dossiers créés</div>
+        </div>
+
+        <div class="kpi-card">
+          <div class="kpi-header">
+            <span class="kpi-label">En cours</span>
+            <div class="kpi-icon" style="background:#DBEAFE;">🔄</div>
+          </div>
+          <div class="kpi-value" style="color:var(--blue);" id="stat-actifs">—</div>
+          <div class="kpi-sub">actifs</div>
+        </div>
+
+        <div class="kpi-card complet-card">
+          <div class="kpi-header">
+            <span class="kpi-label">Complétés</span>
+            <div class="kpi-icon" style="background:#D1FAE5;">✅</div>
+          </div>
+          <div class="kpi-value" style="color:var(--green-dark);" id="stat-complet">—</div>
+          <div class="kpi-sub" id="stat-taux">—</div>
+        </div>
+
+        <div class="kpi-card urgent-card">
+          <div class="kpi-header">
+            <span class="kpi-label">Urgents</span>
+            <div class="kpi-icon" style="background:#FEE2E2;">🚨</div>
+          </div>
+          <div class="kpi-value" style="color:var(--red);" id="stat-urgents">—</div>
+          <div class="kpi-sub">priorité haute</div>
+        </div>
+      </div>
+
+      <!-- Hidden but required by JS -->
+      <span id="stat-incomplet" style="display:none"></span>
+      <span id="stat-bloques"   style="display:none"></span>
+
+      <!-- ATTENTION BANNER -->
+      <div class="attention-banner hidden" id="attention-banner">
+        <div class="attention-banner-icon">⚡</div>
+        <div>
+          <div class="attention-banner-title" id="attention-title">Dossiers nécessitant votre action</div>
+          <div class="attention-banner-body" id="attention-body"></div>
+        </div>
+      </div>
+
+      <!-- TABLE -->
+      <div>
+        <div class="section-head">
+          <div class="section-title">
+            Dossiers récents
+            <span class="section-cnt" id="section-count">0</span>
+          </div>
+        </div>
+
+        <div class="table-card">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:240px;">Dossier</th>
+                <th style="width:150px;">Statut</th>
+                <th style="width:160px;">Complétude</th>
+                <th style="width:155px;">Dernière activité</th>
+                <th style="width:110px;">Urgence</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="dossiers-tbody">
+              <tr>
+                <td colspan="6" style="text-align:center;padding:3rem;">
+                  <div class="spin" style="margin:0 auto;"></div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- ══ MODAL — CRÉATION ═════════════════════════════════════════════════════ -->
+  <div class="modal-overlay" id="modal">
+    <div class="modal">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title">Nouveau dossier</div>
+          <div class="modal-sub">Renseignez les informations pour démarrer l'analyse IA</div>
+        </div>
+        <button class="modal-close" onclick="closeModal()">×</button>
+      </div>
+
+      <!-- Coordonnées -->
+      <div class="form-section">
+        <div class="form-section-lbl">Coordonnées</div>
+        <div class="form-grid fg-3">
+          <div class="form-field">
+            <label>Département MDPH <span style="color:var(--red)">*</span></label>
+            <select id="dept">
+              <option value="">Sélectionner…</option>
+              <option value="75">75 — Paris</option>
+              <option value="13">13 — Bouches-du-Rhône</option>
+              <option value="69">69 — Rhône</option>
+              <option value="59">59 — Nord</option>
+              <option value="33">33 — Gironde</option>
+              <option value="31">31 — Haute-Garonne</option>
+              <option value="06">06 — Alpes-Maritimes</option>
+              <option value="67">67 — Bas-Rhin</option>
+              <option value="76">76 — Seine-Maritime</option>
+              <option value="974">974 — La Réunion</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label>Téléphone WhatsApp <span style="color:var(--red)">*</span></label>
+            <input type="tel" id="telephone" placeholder="336XXXXXXXX" />
+          </div>
+          <div class="form-field">
+            <label>Email famille</label>
+            <input type="email" id="email_famille" placeholder="famille@email.com" />
+          </div>
+        </div>
+
+        <!-- Urgence + langue -->
+        <div class="toggle-row" style="margin-top:12px;">
+          <label class="toggle-opt" id="lbl-urgent" onclick="toggleUrgence(this,'urgent')">
+            <input type="checkbox" id="chk-urgent" />
+            🟠 Dossier urgent
+          </label>
+          <label class="toggle-opt" id="lbl-critique" onclick="toggleUrgence(this,'critique')">
+            <input type="checkbox" id="chk-critique" />
+            🔴 Critique (escalade)
+          </label>
+          <div class="lang-select">
+            <span>Langue :</span>
+            <select id="langue-preferee">
+              <option value="fr">Français</option>
+              <option value="ar">Arabe</option>
+              <option value="tr">Turc</option>
+              <option value="en">Anglais</option>
+              <option value="es">Espagnol</option>
+              <option value="pt">Portugais</option>
+              <option value="ro">Roumain</option>
+              <option value="wo">Wolof</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Identité bénéficiaire -->
+      <div class="form-section">
+        <div class="form-section-lbl">Identité du bénéficiaire (optionnel — pour pré-remplissage CERFA)</div>
+        <div class="form-grid fg-2">
+          <div class="form-field"><label>Nom</label><input type="text" id="nom_enfant" placeholder="NOM" /></div>
+          <div class="form-field"><label>Prénom</label><input type="text" id="prenom_enfant" placeholder="Prénom" /></div>
+          <div class="form-field"><label>Date de naissance</label><input type="text" id="ddn_enfant" placeholder="JJ/MM/AAAA" /></div>
+          <div class="form-field"><label>Code postal</label><input type="text" id="cp_enfant" placeholder="13000" /></div>
+        </div>
+        <div class="form-grid fg-1" style="margin-top:11px;">
+          <div class="form-field"><label>Adresse</label><input type="text" id="adresse_enfant" placeholder="12 rue des Lilas" /></div>
+          <div class="form-field"><label>Commune</label><input type="text" id="commune_enfant" placeholder="Marseille" /></div>
+        </div>
+      </div>
+
+      <!-- Onglets -->
+      <div class="tabs">
+        <div class="tab active" onclick="switchTab('text', this)">Saisie libre</div>
+        <div class="tab" onclick="switchTab('upload', this)">Importer un fichier</div>
+      </div>
+
+      <div id="tab-text" class="form-section">
+        <div class="form-field" style="padding:0;">
+          <label>Éléments du dossier <span style="color:var(--red)">*</span></label>
+          <textarea id="texte-brut" rows="5" placeholder="Diagnostic, difficultés au quotidien, contexte familial…"></textarea>
+        </div>
+      </div>
+
+      <div id="tab-upload" class="hidden" style="padding:14px 24px;">
+        <div class="upload-zone" id="upload-zone" onclick="document.getElementById('file-input').click()">
+          <div class="upload-icon">📄</div>
+          <div class="upload-text"><span>Cliquez pour importer</span> ou glissez vos fichiers ici</div>
+          <div class="upload-sub">PDF, Word (.docx), image (.jpg, .png) — 50 Mo max</div>
+          <input type="file" id="file-input" accept=".pdf,.docx,.jpg,.jpeg,.png" multiple class="hidden" />
+        </div>
+        <div id="file-list" style="margin-top:8px;font-size:13px;color:var(--green);text-align:center;"></div>
+        <div id="upload-progress" class="hidden" style="margin-top:6px;font-size:12px;color:var(--text-3);text-align:center;">Extraction en cours…</div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn-cancel" onclick="closeModal()">Annuler</button>
+        <button class="btn-submit" id="btn-submit-dossier" onclick="submitDossier()">Lancer l'analyse IA →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ MODAL — SCORE MAYA ════════════════════════════════════════════════════ -->
+  <div class="modal-overlay" id="modal-score">
+    <div class="modal" style="max-width:540px;">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title">Score Maya · Analyse prédictive</div>
+          <div class="modal-sub">Évaluation multi-agents — Expert GEVA · Juriste · Coordinateur</div>
+        </div>
+        <button class="modal-close" onclick="closeScoreModal()">×</button>
+      </div>
+
+      <div id="score-loading" style="text-align:center;padding:2.5rem;">
+        <div class="spin" style="margin:0 auto 12px;"></div>
+        <div style="font-size:13px;color:var(--text-3);">Calcul en cours…</div>
+      </div>
+
+      <div id="score-body" class="hidden">
+        <div style="padding:16px 24px;">
+          <div class="score-panel">
+            <div class="score-panel-title">Score de dossier (RAG légal CASF/CSS)</div>
+            <div class="score-row">
+              <div class="score-num" id="sc-actuel">—</div>
+              <div class="score-arrow">→</div>
+              <div class="score-potentiel" id="sc-potentiel">—</div>
+              <div style="font-size:12px;color:var(--text-3);">/ 100 (potentiel)</div>
+            </div>
+            <div class="score-justif" id="sc-justif"></div>
+            <div class="score-taux" id="sc-taux"></div>
+            <div class="score-sources" id="sc-sources"></div>
+          </div>
+        </div>
+        <div class="detail-section" id="sc-droits-section">
+          <div class="detail-section-title">Droits identifiés</div>
+          <ul class="detail-list" id="sc-droits"></ul>
+        </div>
+        <div class="detail-section">
+          <div class="detail-section-title">Suggestion Maya</div>
+          <div style="font-size:13px;color:var(--purple);line-height:1.6;" id="sc-suggestion"></div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn-score-sm" id="btn-recalcul" onclick="recalculerScore()">Recalculer</button>
+        <button class="btn-cancel" onclick="closeScoreModal()">Fermer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ MODAL — DÉTAIL (panneau droit) ════════════════════════════════════════ -->
+  <div class="modal-overlay" id="modal-detail">
+    <div class="modal">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title" id="detail-title">Dossier</div>
+          <div class="modal-sub" id="detail-subtitle"></div>
+        </div>
+        <button class="modal-close" onclick="closeDetailModal()">×</button>
+      </div>
+
+      <div id="detail-loading" style="text-align:center;padding:3rem;">
+        <div class="spin" style="margin:0 auto 12px;"></div>
+        <div style="font-size:13px;color:var(--text-3);">Chargement…</div>
+      </div>
+
+      <div id="detail-body" class="hidden">
+
+        <!-- Score + statut -->
+        <div class="detail-section">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:9px;">
+            <span id="detail-badge"></span>
+            <span id="detail-score-label" style="font-size:13px;font-weight:700;color:var(--text-1);"></span>
+          </div>
+          <div class="detail-score-bar">
+            <div class="detail-score-fill" id="detail-score-fill" style="width:0%"></div>
+          </div>
+          <div id="detail-score-hint" style="margin-top:6px;font-size:11.5px;color:var(--text-3);"></div>
+        </div>
+
+        <!-- Guide d'action (INCOMPLET uniquement) -->
+        <div id="section-guide" class="hidden">
+          <div class="guide-wrap">
+            <div class="guide-title">⚡ Ce qu'il faut faire pour débloquer ce dossier</div>
+            <div class="checklist" id="d-checklist" style="margin-bottom:0;"></div>
+            <div id="next-action-box" class="next-action-box hidden">
+              <div class="next-action-title">Action recommandée</div>
+              <div class="next-action-text" id="next-action-text"></div>
+              <button class="btn-action-primary" id="btn-next-action" onclick="executeNextAction()"></button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Droits identifiés -->
+        <div class="detail-section" id="section-droits">
+          <div class="detail-section-title">Droits identifiés</div>
+          <ul class="detail-list" id="d-droits"></ul>
+        </div>
+
+        <!-- Recommandation -->
+        <div class="detail-section" id="section-reco">
+          <div class="detail-section-title">Recommandation finale</div>
+          <div class="detail-reco" id="d-reco"></div>
+        </div>
+
+        <!-- Infos générales (collapsible) -->
+        <div class="detail-section">
+          <div class="detail-section-toggle" onclick="toggleSection('infos-gen')">
+            <div class="detail-section-title" style="margin-bottom:0;">Informations générales</div>
+            <span class="toggle-arr open" id="infos-gen-arrow">▼</span>
+          </div>
+          <div id="infos-gen" style="margin-top:10px;">
+            <div class="detail-grid">
+              <div class="detail-item"><label>Référence</label><span id="d-id"></span></div>
+              <div class="detail-item"><label>Département</label><span id="d-dept"></span></div>
+              <div class="detail-item"><label>Téléphone</label><span id="d-tel"></span></div>
+              <div class="detail-item"><label>Email</label><span id="d-email"></span></div>
+              <div class="detail-item"><label>Bénéficiaire</label><span id="d-enfant"></span></div>
+              <div class="detail-item"><label>Mise à jour</label><span id="d-date"></span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Relances (collapsible) -->
+        <div class="detail-section" id="section-relances-detail">
+          <div class="detail-section-toggle" onclick="toggleSection('relances-body')">
+            <div class="detail-section-title" style="margin-bottom:0;">Relances WhatsApp (Mathilde)</div>
+            <span class="toggle-arr open" id="relances-body-arrow">▼</span>
+          </div>
+          <div id="relances-body" style="margin-top:10px;">
+            <div id="d-relances-liste"></div>
+          </div>
+        </div>
+
+        <!-- Échanges (collapsible) -->
+        <div class="detail-section" id="section-historique">
+          <div class="detail-section-toggle" onclick="toggleSection('hist-body')">
+            <div class="detail-section-title" style="margin-bottom:0;">Échanges WhatsApp reçus</div>
+            <span class="toggle-arr" id="hist-body-arrow">▼</span>
+          </div>
+          <div id="hist-body" class="hidden" style="margin-top:10px;">
+            <div id="d-historique"></div>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="modal-footer" style="gap:7px;">
+        <button class="btn-relance-sm" id="btn-force-relance-detail" onclick="forceRelanceFromDetail()" style="display:none;">📱 Relancer WA</button>
+        <button class="btn-enrich-sm"  id="btn-enrich-from-detail"  onclick="enrichFromDetail()"       style="display:none;">+ Enrichir</button>
+        <button class="btn-cancel" onclick="closeDetailModal()">Fermer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ MODAL — ENRICHISSEMENT ════════════════════════════════════════════════ -->
+  <div class="modal-overlay" id="modal-enrich">
+    <div class="modal" style="max-width:560px;">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title">Enrichir le dossier</div>
+          <div class="modal-sub">L'analyse IA sera relancée automatiquement</div>
+        </div>
+        <button class="modal-close" onclick="closeEnrichModal()">×</button>
+      </div>
+
+      <p class="enrich-hint">Ajoutez un document ou du texte libre (bilan, compte-rendu, certificat…).</p>
+      <input type="hidden" id="enrich-dossier-id" value="" />
+
+      <div class="tabs">
+        <div class="tab active" onclick="switchEnrichTab('text', this)">Texte libre</div>
+        <div class="tab" onclick="switchEnrichTab('file', this)">Fichier</div>
+      </div>
+
+      <div id="enrich-tab-text" style="padding:14px 24px;">
+        <div class="form-field" style="padding:0;">
+          <label>Informations à ajouter</label>
+          <textarea id="enrich-texte" rows="5" placeholder="Ex : Bilan orthophonique reçu le…"></textarea>
+        </div>
+      </div>
+
+      <div id="enrich-tab-file" class="hidden" style="padding:14px 24px;">
+        <div class="upload-zone" onclick="document.getElementById('enrich-file-input').click()">
+          <div class="upload-icon">📎</div>
+          <div class="upload-text"><span>Cliquez pour importer</span></div>
+          <div class="upload-sub">PDF, Word, image (.jpg, .png) — 50 Mo max</div>
+          <input type="file" id="enrich-file-input" accept=".pdf,.docx,.jpg,.jpeg,.png" class="hidden"
+                 onchange="afficherFichierEnrich(this.files)" />
+        </div>
+        <div id="enrich-file-name" style="margin-top:8px;font-size:13px;color:var(--green);text-align:center;"></div>
+      </div>
+
+      <div id="enrich-result" class="hidden" style="margin:0 24px;"></div>
+
+      <div class="modal-footer">
+        <button class="btn-cancel" onclick="closeEnrichModal()">Annuler</button>
+        <button class="btn-submit" id="btn-enrich-submit" onclick="submitEnrich()">Ajouter et relancer l'analyse</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ JAVASCRIPT ════════════════════════════════════════════════════════════ -->
+  <script>
+    // ── État global ────────────────────────────────────────────────────────────
+    let _fichiersSelectionnes = [];
+    let _enrichFile           = null;
+    let _enrichTab            = 'text';
+    let _currentScoreDossierId  = null;
+    let _currentDetailDossierId = null;
+    let _allDossiers            = [];
+    let _activeFilter           = 'all';
+    let _searchQuery            = '';
+    const QUOTA = 10;
+
+    // ── Keyboard shortcuts ─────────────────────────────────────────────────────
+    document.addEventListener('keydown', e => {
+      if (e.key === '/' && !['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName)) {
+        e.preventDefault();
+        document.getElementById('search-input').focus();
+      }
+      if (e.key === 'Escape') {
+        closeModal(); closeDetailModal(); closeScoreModal(); closeEnrichModal();
+      }
+    });
+
+    // ── Search ─────────────────────────────────────────────────────────────────
+    document.getElementById('search-input').addEventListener('input', function() {
+      _searchQuery = this.value.toLowerCase().trim();
+      renderDossiers();
+    });
+
+    // ── Filter pills ───────────────────────────────────────────────────────────
+    function setFilter(filter, el) {
+      _activeFilter = filter;
+      document.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
+      if (el) el.classList.add('active');
+      renderDossiers();
+    }
+
+    // ── Helpers ────────────────────────────────────────────────────────────────
+    function formatDate(iso) {
+      if (!iso) return '—';
+      const d = new Date(iso);
+      return d.toLocaleDateString('fr-FR') + ' ' + d.toLocaleTimeString('fr-FR', {hour:'2-digit',minute:'2-digit'});
+    }
+
+    function formatDateShort(iso) {
+      if (!iso) return '—';
+      const d = new Date(iso);
+      const now = new Date();
+      const diffH = (now - d) / 3600000;
+      if (diffH < 1)  return 'Il y a ' + Math.round(diffH * 60) + ' min';
+      if (diffH < 24) return 'Il y a ' + Math.round(diffH) + 'h';
+      return d.toLocaleDateString('fr-FR', {day:'2-digit', month:'short'});
+    }
+
+    function badgeHtml(statut) {
+      const map = {
+        'COMPLET':   `<span class="badge badge-complet"><span class="badge-dot"></span>Complet</span>`,
+        'INCOMPLET': `<span class="badge badge-incomplet"><span class="badge-dot"></span>Incomplet</span>`,
+        'EN_COURS':  `<span class="badge badge-cours"><span class="badge-dot"></span>En cours</span>`,
+        'ERREUR':    `<span class="badge badge-erreur"><span class="badge-dot"></span>Erreur</span>`,
+        'ARCHIVE':   `<span class="badge badge-archive"><span class="badge-dot"></span>Archivé</span>`,
+        'BLOQUE':    `<span class="badge badge-bloque"><span class="badge-dot"></span>Bloqué</span>`,
+      };
+      return map[statut] || `<span class="badge">${statut}</span>`;
+    }
+
+    function urgenceBadge(urgence) {
+      if (!urgence || urgence === 'normal') return '';
+      if (urgence === 'urgent')   return `<span class="badge badge-urgent"><span class="badge-dot"></span>Urgent</span>`;
+      if (urgence === 'critique') return `<span class="badge badge-critique"><span class="badge-dot"></span>CRITIQUE</span>`;
+      return '';
+    }
+
+    function scoreColor(n) {
+      return n >= 70 ? '#10B981' : n >= 40 ? '#F59E0B' : '#EF4444';
+    }
+
+    function updateQuotaIndicator(actifs) {
+      const label = document.getElementById('quota-label');
+      const fill  = document.getElementById('quota-fill');
+      const btn   = document.getElementById('btn-nouveau');
+      if (!label || !btn) return;
+      const pct = Math.min((actifs / QUOTA) * 100, 100);
+      label.textContent = `${actifs}/${QUOTA}`;
+      if (fill) { fill.style.width = pct + '%'; fill.style.background = pct >= 100 ? 'var(--red)' : pct >= 80 ? 'var(--orange)' : 'var(--green)'; }
+      if (pct >= 100) {
+        btn.disabled = true; btn.style.opacity = '0.5'; btn.style.cursor = 'not-allowed';
+      } else {
+        btn.disabled = false; btn.style.opacity = ''; btn.style.cursor = '';
+      }
+    }
+
+    function showQuotaError(detail) {
+      closeModal();
+      alert('Quota atteint : ' + (detail.message || 'Archivez des dossiers avant d\'en créer un nouveau.'));
+    }
+
+    // ── Toggle urgence labels ──────────────────────────────────────────────────
+    function toggleUrgence(lbl, type) {
+      const chk = lbl.querySelector('input');
+      chk.checked = !chk.checked;
+      if (type === 'urgent')   lbl.classList.toggle('checked-urgent', chk.checked);
+      if (type === 'critique') lbl.classList.toggle('checked-critique', chk.checked);
+    }
+
+    // ── Render dossiers (client-side filter + search) ─────────────────────────
+    function renderDossiers() {
+      let list = _allDossiers;
+
+      if (_activeFilter !== 'all') list = list.filter(d => d.statut === _activeFilter);
+
+      if (_searchQuery) {
+        list = list.filter(d => {
+          const name = `${d.prenom_enfant||''} ${d.nom_enfant||''}`.toLowerCase();
+          return name.includes(_searchQuery)
+              || (d.telephone_famille||'').includes(_searchQuery)
+              || d.dossier_id.toLowerCase().includes(_searchQuery)
+              || (d.departement_code||'').includes(_searchQuery);
+        });
+      }
+
+      document.getElementById('section-count').textContent = list.length;
+
+      const tbody = document.getElementById('dossiers-tbody');
+
+      if (!list.length) {
+        tbody.innerHTML = `<tr><td colspan="6">
+          <div class="empty-state">
+            <div class="empty-state-ico">${_searchQuery ? '🔍' : '📭'}</div>
+            <div class="empty-state-title">${_searchQuery ? 'Aucun résultat' : 'Aucun dossier'}</div>
+            <div class="empty-state-sub">${_searchQuery ? 'Essayez avec d\'autres termes' : 'Créez votre premier dossier pour démarrer'}</div>
+          </div>
+        </td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = list.slice(0, 30).flatMap(d => {
+        const nom    = ((d.prenom_enfant||'') + ' ' + (d.nom_enfant||'')).trim();
+        const tel    = d.telephone_famille || '';
+        const score  = d.score_actuel ?? d.analyse?.score_global ?? null;
+        const scoreN = score !== null ? (parseInt(score) || 0) : 0;
+        const hasScore = score !== null;
+        const col    = scoreColor(scoreN);
+        const uid    = d.dossier_id.replace(/-/g, '');
+        const isIncomplet = d.statut === 'INCOMPLET';
+
+        // Score cell
+        const scoreHtml = hasScore
+          ? `<div class="score-cell">
+               <div class="score-bar-wrap">
+                 <div class="score-labels">
+                   <span class="score-num" style="color:${col}">${scoreN}</span>
+                   <span class="score-denom">/100</span>
+                 </div>
+                 <div class="score-track">
+                   <div class="score-fill" style="width:${scoreN}%;background:${col}"></div>
+                 </div>
+               </div>
+             </div>`
+          : '<span style="font-size:12px;color:var(--text-3);">En attente…</span>';
+
+        // Missing hint
+        const manquants = d.analyse?.questions_manquantes || d.analyse?.elements_manquants || [];
+        const manqHtml = (isIncomplet && manquants.length)
+          ? `<div class="missing-hint" onclick="toggleExpand('${uid}')">
+               ⚠ ${manquants.length} manquant(s) <span id="exp-arr-${uid}">↓</span>
+             </div>`
+          : (isIncomplet ? '<div style="margin-top:4px;font-size:11px;color:var(--text-3);">Analyse en cours…</div>' : '');
+
+        // Relance activity
+        const nb = d.nb_relances || 0;
+        const rlCls = nb >= 3 ? 'rl-3' : nb >= 2 ? 'rl-2' : nb >= 1 ? 'rl-1' : 'rl-0';
+
+        // Expand row
+        const expandRow = (isIncomplet && manquants.length) ? `
+          <tr class="expand-tr hidden" id="expand-${uid}">
+            <td colspan="6">
+              <div class="expand-content">
+                <div class="expand-guide">
+                  <strong>Guide rapide :</strong> cliquez sur <strong>Voir</strong> pour le détail des actions à réaliser, ou <strong>Enrichir</strong> pour ajouter un document.
+                </div>
+                ${manquants.slice(0, 6).map(m => `<span class="missing-tag">❌ ${m}</span>`).join('')}
+                ${manquants.length > 6 ? `<span style="font-size:11px;color:var(--text-3);">+${manquants.length - 6} autres…</span>` : ''}
+              </div>
+            </td>
+          </tr>` : '';
+
+        // Main row
+        const mainRow = `<tr class="row-main" id="row-${uid}" style="${isIncomplet ? 'background:#FFFEF8;' : ''}">
+          <td>
+            <div class="cell-dossier">
+              <div class="cell-name">${nom || '<span style="color:var(--text-3);font-style:italic;">Sans nom</span>'}</div>
+              <div class="cell-meta">
+                <span class="cell-ref">${d.dossier_id.substring(0, 8)}…</span>
+                ${d.departement_code ? `<span class="dept-chip">${d.departement_code}</span>` : ''}
+                ${tel ? `<span class="tel-meta">📱 ${tel}</span>` : ''}
+              </div>
+              ${manqHtml}
+            </div>
+          </td>
+          <td>${badgeHtml(d.statut)}</td>
+          <td>${scoreHtml}</td>
+          <td>
+            <div class="activity-cell">
+              <div class="activity-date">${formatDateShort(d.updated_at)}</div>
+              ${nb ? `<div class="activity-rl"><span class="rl-dot ${rlCls}"></span>${nb} relance(s)</div>` : ''}
+            </div>
+          </td>
+          <td>${urgenceBadge(d.urgence) || '<span class="urgence-none">—</span>'}</td>
+          <td>
+            <div class="row-actions">
+              <button class="btn-act ba-voir"   onclick="openDetailModal('${d.dossier_id}')">Voir</button>
+              ${d.statut !== 'ERREUR'
+                ? `<button class="btn-act ba-enrich" onclick="openEnrichModal('${d.dossier_id}')"
+                           style="${isIncomplet ? 'background:#D1FAE5;' : ''}">Enrichir</button>`
+                : ''}
+              ${['INCOMPLET','EN_COURS'].includes(d.statut)
+                ? `<button class="btn-act ba-relance" onclick="forceRelance('${d.dossier_id}', this)">Relancer</button>`
+                : ''}
+              <button class="btn-act ba-score"  onclick="openScoreModal('${d.dossier_id}')">Score</button>
+              <button class="ba-del" onclick="supprimerDossier('${d.dossier_id}')" title="Supprimer">🗑</button>
+            </div>
+          </td>
+        </tr>`;
+
+        return [mainRow, expandRow];
+      }).join('');
+    }
+
+    // ── Load dossiers ──────────────────────────────────────────────────────────
+    async function loadDossiers() {
+      try {
+        const res = await fetch('/api/v1/dossiers', { credentials: 'include' });
+        if (!res.ok) {
+          document.getElementById('dossiers-tbody').innerHTML =
+            `<tr><td colspan="6" style="text-align:center;padding:2rem;color:var(--red);">Erreur serveur ${res.status}</td></tr>`;
+          return;
+        }
+        const data     = await res.json();
+        _allDossiers   = data.dossiers || [];
+        const stats    = data.stats || {};
+
+        // Stats
+        const total       = _allDossiers.length;
+        const actifs      = stats.actifs   ?? _allDossiers.filter(d => ['EN_COURS','INCOMPLET'].includes(d.statut)).length;
+        const incomplets  = _allDossiers.filter(d => d.statut === 'INCOMPLET').length;
+        const complets    = stats.complets ?? _allDossiers.filter(d => d.statut === 'COMPLET').length;
+        const urgents     = stats.urgents  ?? _allDossiers.filter(d => d.urgence && d.urgence !== 'normal').length;
+        const bloques     = stats.bloques  ?? _allDossiers.filter(d => d.statut === 'BLOQUE').length;
+
+        document.getElementById('stat-total').textContent    = total;
+        document.getElementById('stat-actifs').textContent   = actifs;
+        document.getElementById('stat-incomplet').textContent = incomplets;
+        document.getElementById('stat-complet').textContent  = complets;
+        document.getElementById('stat-urgents').textContent  = urgents;
+        document.getElementById('stat-bloques').textContent  = bloques;
+        document.getElementById('stat-taux').textContent     = total ? Math.round(complets / total * 100) + '% de complétion' : '—';
+
+        updateQuotaIndicator(actifs);
+
+        // Nav badge urgents
+        const nb = document.getElementById('nav-badge-urgent');
+        if (nb) { nb.textContent = urgents; nb.style.display = urgents > 0 ? '' : 'none'; }
+
+        // Attention banner
+        const banner = document.getElementById('attention-banner');
+        const incList = _allDossiers.filter(d => d.statut === 'INCOMPLET');
+        if (incList.length) {
+          banner.classList.remove('hidden');
+          document.getElementById('attention-title').textContent =
+            incList.length === 1 ? '1 dossier nécessite votre attention'
+                                 : `${incList.length} dossiers nécessitent votre attention`;
+          const noms = incList.slice(0, 3).map(d => {
+            const n = ((d.prenom_enfant||'') + ' ' + (d.nom_enfant||'')).trim();
+            return n || d.dossier_id.substring(0, 8) + '…';
+          }).join(', ');
+          document.getElementById('attention-body').innerHTML =
+            `Cliquez sur <strong>Voir</strong> pour accéder au guide d'action. Concernés : <strong>${noms}${incList.length > 3 ? ' et d\'autres…' : ''}</strong>.`;
+        } else {
+          banner.classList.add('hidden');
+        }
+
+        renderDossiers();
+      } catch (e) {
+        document.getElementById('dossiers-tbody').innerHTML =
+          `<tr><td colspan="6" style="text-align:center;padding:2rem;color:var(--red);">Erreur : ${e.message}</td></tr>`;
+      }
+    }
+
+    // ── Supprimer ──────────────────────────────────────────────────────────────
+    async function supprimerDossier(id) {
+      if (!confirm('Supprimer définitivement ce dossier ?')) return;
+      const res = await fetch(`/api/v1/dossiers/${id}`, { method: 'DELETE', credentials: 'include' });
+      if (res.ok) loadDossiers(); else alert('Impossible de supprimer ce dossier.');
+    }
+
+    // ── Forcer relance ─────────────────────────────────────────────────────────
+    async function forceRelance(id, btn) {
+      btn.disabled = true; btn.textContent = '…';
+      try {
+        const res  = await fetch(`/api/v1/dossiers/${id}/force-relance`, { method: 'POST', credentials: 'include' });
+        const data = await res.json();
+        if (res.ok) { loadDossiers(); btn.textContent = '✓ Envoyée'; }
+        else { btn.textContent = 'Erreur'; alert(data.detail || 'Erreur'); }
+      } catch { btn.textContent = 'Erreur réseau'; }
+      setTimeout(() => { if(btn){ btn.textContent = 'Relancer'; btn.disabled = false; } }, 3000);
+    }
+
+    async function forceRelanceFromDetail() {
+      if (!_currentDetailDossierId) return;
+      const btn = document.getElementById('btn-force-relance-detail');
+      btn.disabled = true; btn.textContent = '…';
+      try {
+        const res  = await fetch(`/api/v1/dossiers/${_currentDetailDossierId}/force-relance`, { method: 'POST', credentials: 'include' });
+        const data = await res.json();
+        if (res.ok) {
+          btn.textContent = '✓ Relance envoyée';
+          loadDossiers();
+          setTimeout(() => openDetailModal(_currentDetailDossierId), 800);
+        } else { alert(data.detail || 'Erreur'); btn.textContent = '📱 Relancer WA'; btn.disabled = false; }
+      } catch { btn.textContent = 'Erreur'; btn.disabled = false; }
+    }
+
+    // ── Modal création ─────────────────────────────────────────────────────────
+    function openModal()  { document.getElementById('modal').classList.add('open'); }
+    function closeModal() {
+      document.getElementById('modal').classList.remove('open');
+      ['texte-brut','telephone','email_famille','nom_enfant','prenom_enfant',
+       'ddn_enfant','adresse_enfant','cp_enfant','commune_enfant'].forEach(id => {
+        const el = document.getElementById(id); if (el) el.value = '';
+      });
+      document.getElementById('dept').value = '';
+      document.getElementById('langue-preferee').value = 'fr';
+      document.getElementById('chk-urgent').checked  = false;
+      document.getElementById('chk-critique').checked = false;
+      document.getElementById('lbl-urgent').classList.remove('checked-urgent');
+      document.getElementById('lbl-critique').classList.remove('checked-critique');
+      document.getElementById('file-list').textContent = '';
+      _fichiersSelectionnes = [];
+    }
+
+    function switchTab(tab, el) {
+      document.querySelectorAll('#modal .tab').forEach(t => t.classList.remove('active'));
+      el.classList.add('active');
+      document.getElementById('tab-text').classList.toggle('hidden', tab !== 'text');
+      document.getElementById('tab-upload').classList.toggle('hidden', tab !== 'upload');
+    }
+
+    document.getElementById('file-input').addEventListener('change', function() {
+      _fichiersSelectionnes = Array.from(this.files);
+      document.getElementById('file-list').textContent = _fichiersSelectionnes.map(f => f.name).join(', ');
+    });
+
+    async function submitDossier() {
+      const dept           = document.getElementById('dept').value;
+      const telephone      = document.getElementById('telephone').value.trim();
+      const email_famille  = document.getElementById('email_famille').value.trim();
+      const nom_enfant     = document.getElementById('nom_enfant').value.trim();
+      const prenom_enfant  = document.getElementById('prenom_enfant').value.trim();
+      const ddn_enfant     = document.getElementById('ddn_enfant').value.trim();
+      const adresse_enfant = document.getElementById('adresse_enfant').value.trim();
+      const cp_enfant      = document.getElementById('cp_enfant').value.trim();
+      const commune_enfant = document.getElementById('commune_enfant').value.trim();
+      const langue         = document.getElementById('langue-preferee').value;
+      const urgent         = document.getElementById('chk-urgent').checked;
+      const critique       = document.getElementById('chk-critique').checked;
+      const urgence        = critique ? 'critique' : urgent ? 'urgent' : 'normal';
+
+      if (!dept || !telephone) { alert('Département et téléphone WhatsApp sont obligatoires.'); return; }
+
+      const btn = document.getElementById('btn-submit-dossier');
+      btn.textContent = 'Analyse en cours…'; btn.disabled = true;
+
+      const ongletUpload = !document.getElementById('tab-upload').classList.contains('hidden');
+      let texte = '';
+
+      try {
+        if (ongletUpload) {
+          if (!_fichiersSelectionnes.length) { alert('Sélectionnez au moins un fichier.'); btn.textContent = "Lancer l'analyse IA →"; btn.disabled = false; return; }
+          document.getElementById('upload-progress').classList.remove('hidden');
+          const textesParts = [];
+          for (const f of _fichiersSelectionnes) {
+            const fd = new FormData(); fd.append('file', f);
+            const r  = await fetch('/api/v1/extract-text', { method: 'POST', body: fd, credentials: 'include' });
+            if (r.ok) { const d = await r.json(); if (d.texte) textesParts.push(d.texte); }
+          }
+          texte = textesParts.join('\n\n---\n\n');
+          document.getElementById('upload-progress').classList.add('hidden');
+          if (!texte.trim()) { alert('Aucun texte exploitable extrait.'); btn.textContent = "Lancer l'analyse IA →"; btn.disabled = false; return; }
+        } else {
+          texte = document.getElementById('texte-brut').value.trim();
+          if (!texte) { alert('Veuillez saisir les éléments du dossier.'); btn.textContent = "Lancer l'analyse IA →"; btn.disabled = false; return; }
+        }
+
+        const res = await fetch('/api/v1/dossiers/initiate', {
+          method: 'POST', headers: {'Content-Type': 'application/json'}, credentials: 'include',
+          body: JSON.stringify({
+            texte_brut: texte, telephone_famille: telephone,
+            email_famille: email_famille || null,
+            nom_enfant: nom_enfant || null, prenom_enfant: prenom_enfant || null,
+            ddn_enfant: ddn_enfant || null, adresse_enfant: adresse_enfant || null,
+            cp_enfant: cp_enfant || null, commune_enfant: commune_enfant || null,
+            departement_code: dept, langue_preferee: langue,
+            urgence: urgence, source_type: 'text'
+          })
+        });
+
+        if (res.ok) { closeModal(); loadDossiers(); }
+        else {
+          const err = await res.json();
+          if (res.status === 429 && err.detail?.code === 'QUOTA_ATTEINT') showQuotaError(err.detail);
+          else alert('Erreur : ' + (typeof err.detail === 'string' ? err.detail : err.detail?.message || 'Veuillez réessayer.'));
+        }
+      } catch { alert('Impossible de joindre le serveur.'); }
+      finally { btn.textContent = "Lancer l'analyse IA →"; btn.disabled = false; document.getElementById('upload-progress').classList.add('hidden'); }
+    }
+
+    // ── Modal Score Maya ───────────────────────────────────────────────────────
+    function openScoreModal(id) {
+      _currentScoreDossierId = id;
+      document.getElementById('modal-score').classList.add('open');
+      document.getElementById('score-loading').style.display = 'block';
+      document.getElementById('score-body').classList.add('hidden');
+      loadScoreData(id);
+    }
+    function closeScoreModal() { document.getElementById('modal-score').classList.remove('open'); }
+
+    async function loadScoreData(id) {
+      try {
+        const res  = await fetch(`/api/v1/dossiers/${id}/score`, { credentials: 'include' });
+        const data = await res.json();
+        document.getElementById('sc-actuel').textContent    = (data.score_actuel ?? 0) + '/100';
+        document.getElementById('sc-potentiel').textContent = (data.score_potentiel ?? data.score_actuel ?? 0) + '/100';
+        document.getElementById('sc-justif').textContent    = data.justification || '—';
+        document.getElementById('sc-taux').textContent      = data.taux_incapacite ? `Taux d'incapacité estimé : ${data.taux_incapacite} — ${data.taux_justification || ''}` : '';
+        const sources = Array.isArray(data.rag_sources) ? data.rag_sources : [];
+        document.getElementById('sc-sources').textContent   = sources.length ? 'Sources : ' + sources.join(' · ') : '';
+        document.getElementById('sc-suggestion').textContent = data.suggestion || 'Aucune suggestion disponible.';
+        const droits = data.droits_identifies || [];
+        if (droits.length) {
+          document.getElementById('sc-droits-section').style.display = '';
+          document.getElementById('sc-droits').innerHTML = droits.map(d => `<li>${d}</li>`).join('');
+        } else { document.getElementById('sc-droits-section').style.display = 'none'; }
+        document.getElementById('score-loading').style.display = 'none';
+        document.getElementById('score-body').classList.remove('hidden');
+      } catch (e) {
+        document.getElementById('score-loading').innerHTML = `<div style="color:var(--red);font-size:13px;">Erreur : ${e.message}</div>`;
+      }
+    }
+
+    async function recalculerScore() {
+      if (!_currentScoreDossierId) return;
+      const btn = document.getElementById('btn-recalcul');
+      btn.disabled = true; btn.textContent = 'Calcul…';
+      document.getElementById('score-loading').style.display = 'block';
+      document.getElementById('score-body').classList.add('hidden');
+      try {
+        const res = await fetch(`/api/v1/dossiers/${_currentScoreDossierId}/score/recalcul`, { method: 'POST', credentials: 'include' });
+        if (res.ok) await loadScoreData(_currentScoreDossierId);
+        else document.getElementById('score-loading').innerHTML = '<div style="color:var(--red);font-size:13px;">Erreur lors du recalcul.</div>';
+      } catch (e) { document.getElementById('score-loading').innerHTML = `<div style="color:var(--red);font-size:13px;">Erreur réseau.</div>`; }
+      btn.disabled = false; btn.textContent = 'Recalculer';
+    }
+
+    // ── Modal détail ───────────────────────────────────────────────────────────
+    function closeDetailModal() { document.getElementById('modal-detail').classList.remove('open'); }
+
+    function toggleSection(id) {
+      const el  = document.getElementById(id);
+      const arr = document.getElementById(id + '-arrow');
+      if (!el) return;
+      const isHidden = el.classList.toggle('hidden');
+      if (arr) { arr.textContent = isHidden ? '▶' : '▼'; arr.classList.toggle('open', !isHidden); }
+    }
+
+    function toggleExpand(uid) {
+      const row = document.getElementById('expand-' + uid);
+      const arr = document.getElementById('exp-arr-' + uid);
+      if (!row) return;
+      const isHidden = row.classList.toggle('hidden');
+      if (arr) arr.textContent = isHidden ? '↓' : '↑';
+    }
+
+    function enrichFromDetail() {
+      if (_currentDetailDossierId) { closeDetailModal(); openEnrichModal(_currentDetailDossierId); }
+    }
+
+    let _nextActionType = null;
+    function executeNextAction() {
+      if (_nextActionType === 'enrich') enrichFromDetail();
+      else if (_nextActionType === 'relance') forceRelanceFromDetail();
+    }
+
+    function classifierManquant(item) {
+      const s = item.toLowerCase();
+      if (s.includes('description') || s.includes('narrative') || s.includes('difficulté') || s.includes('geva') || s.includes('probant'))
+        return { type: 'enrich', label: 'Ajouter un bilan ou compte-rendu médical' };
+      if (s.includes('diagnostic') || s.includes('traitement') || s.includes('médecin') || s.includes('sécurité sociale') || s.includes('nir') || s.includes('taux'))
+        return { type: 'email',  label: 'Fournir via email (données médicales — canal sécurisé requis)' };
+      if (s.includes('droit') || s.includes('demande') || s.includes('aah') || s.includes('pch') || s.includes('rqth') || s.includes('aeeh'))
+        return { type: 'enrich', label: 'Préciser les droits demandés dans "Enrichir"' };
+      return { type: 'relance', label: 'Demander à la famille via WhatsApp' };
+    }
+
+    async function openDetailModal(dossierId) {
+      _currentDetailDossierId = dossierId;
+      document.getElementById('modal-detail').classList.add('open');
+      document.getElementById('detail-title').textContent = 'Dossier ' + dossierId.substring(0, 8) + '…';
+      document.getElementById('detail-subtitle').textContent = '';
+      document.getElementById('detail-loading').style.display = 'block';
+      document.getElementById('detail-body').classList.add('hidden');
+      document.getElementById('btn-force-relance-detail').textContent = '📱 Relancer WA';
+      document.getElementById('btn-force-relance-detail').disabled = false;
+      try {
+        const [res1, res2, res3] = await Promise.all([
+          fetch(`/api/v1/dossiers/${dossierId}`, { credentials: 'include' }),
+          fetch(`/api/v1/dossiers`, { credentials: 'include' }),
+          fetch(`/api/v1/dossiers/${dossierId}/relances`, { credentials: 'include' }),
+        ]);
+        const a       = await res1.json();
+        const dRaw    = await res2.json();
+        const relData = res3.ok ? await res3.json() : { relances: [] };
+        const d       = (dRaw.dossiers || []).find(x => x.dossier_id === dossierId) || {};
+
+        const nomBenef = ((d.prenom_enfant || '') + ' ' + (d.nom_enfant || '')).trim();
+        document.getElementById('detail-title').textContent    = nomBenef || 'Dossier ' + dossierId.substring(0, 8) + '…';
+        document.getElementById('detail-subtitle').textContent = 'Réf. ' + dossierId.substring(0, 8) + '… · ' + formatDate(a.updated_at);
+
+        // Score
+        document.getElementById('detail-badge').innerHTML = badgeHtml(a.statut);
+        const score    = d.score_actuel ?? a.score_global ?? 0;
+        const scoreNum = parseInt(score) || 0;
+        document.getElementById('detail-score-label').textContent = `Complétude : ${scoreNum}/100`;
+        document.getElementById('detail-score-fill').style.width      = scoreNum + '%';
+        document.getElementById('detail-score-fill').style.background = scoreColor(scoreNum);
+
+        const manq = a.elements_manquants || [];
+        const isIncomplet = ['INCOMPLET', 'EN_COURS'].includes(a.statut);
+
+        // Guide d'action
+        const guideSection = document.getElementById('section-guide');
+        if (isIncomplet && manq.length) {
+          guideSection.classList.remove('hidden');
+          document.getElementById('detail-score-hint').textContent = `${manq.length} point(s) manquant(s) — voir le guide ci-dessous`;
+
+          let hasRelance = false, hasEnrich = false;
+          const checkHtml = manq.map(item => {
+            const cat = classifierManquant(item);
+            if (cat.type === 'relance') hasRelance = true;
+            if (cat.type === 'enrich')  hasEnrich  = true;
+            const actionBtn = cat.type === 'relance'
+              ? `<button class="cl-action cl-action-wa" onclick="forceRelanceFromDetail()">📱 Relancer WA</button>`
+              : cat.type === 'enrich'
+              ? `<button class="cl-action cl-action-enrich" onclick="enrichFromDetail()">📄 Enrichir</button>`
+              : `<span style="font-size:11px;color:var(--text-3);font-style:italic;">📧 Email sécurisé</span>`;
+            return `<div class="cl-item cl-bad">
+              <span class="cl-ico">❌</span>
+              <span class="cl-label">${item}</span>
+              ${actionBtn}
+            </div>`;
+          }).join('');
+
+          const droitsOk = (a.droits_identifies || []).length > 0;
+          const checkOkHtml = droitsOk
+            ? `<div class="cl-item cl-ok"><span class="cl-ico">✅</span><span class="cl-label">Droits identifiés : ${(a.droits_identifies || []).join(', ')}</span></div>`
+            : '';
+
+          document.getElementById('d-checklist').innerHTML = checkHtml + checkOkHtml;
+
+          const nextBox  = document.getElementById('next-action-box');
+          const nextText = document.getElementById('next-action-text');
+          const nextBtn  = document.getElementById('btn-next-action');
+          nextBox.classList.remove('hidden');
+          nextBtn.style.display = '';
+
+          if (hasEnrich) {
+            _nextActionType = 'enrich';
+            nextText.textContent = "Ajoutez un bilan, compte-rendu ou texte libre. L'analyse sera relancée automatiquement.";
+            nextBtn.textContent  = '📄 Enrichir le dossier maintenant';
+          } else if (hasRelance) {
+            _nextActionType = 'relance';
+            nextText.textContent = 'Envoyez une relance WhatsApp à la famille pour les informations manquantes.';
+            nextBtn.textContent  = '📱 Envoyer une relance WhatsApp';
+          } else {
+            _nextActionType = null;
+            nextText.innerHTML = '📧 Les informations manquantes sont des <strong>données médicales confidentielles</strong>. Elles doivent être transmises par email ou messagerie sécurisée.';
+            nextBtn.style.display = 'none';
+          }
+        } else if (a.statut === 'COMPLET') {
+          guideSection.classList.add('hidden');
+          document.getElementById('detail-score-hint').textContent = '✅ Dossier complet — PDF + CERFA envoyés par email.';
+        } else {
+          guideSection.classList.add('hidden');
+          document.getElementById('detail-score-hint').textContent = '';
+        }
+
+        // Droits
+        const droits = a.droits_identifies || [];
+        document.getElementById('section-droits').style.display = droits.length ? '' : 'none';
+        if (droits.length) document.getElementById('d-droits').innerHTML = droits.map(x => `<li>${x}</li>`).join('');
+
+        // Recommandation
+        const reco = a.recommandation_finale || '';
+        document.getElementById('section-reco').style.display = reco ? '' : 'none';
+        if (reco) document.getElementById('d-reco').textContent = reco;
+
+        // Infos
+        document.getElementById('d-id').textContent    = dossierId.substring(0, 8) + '…';
+        document.getElementById('d-dept').textContent  = d.departement_code || '—';
+        document.getElementById('d-tel').textContent   = d.telephone_famille || '[supprimé]';
+        document.getElementById('d-email').textContent = d.email_famille || '—';
+        document.getElementById('d-enfant').textContent = nomBenef || '—';
+        document.getElementById('d-date').textContent  = formatDate(a.updated_at);
+
+        // Relances
+        const relances = relData.relances || [];
+        const rDiv = document.getElementById('d-relances-liste');
+        if (relances.length) {
+          rDiv.innerHTML = relances.map(r => `
+            <div style="background:var(--orange-light);border:1px solid #FDE68A;border-radius:7px;padding:9px 12px;margin-bottom:6px;font-size:12px;">
+              <strong>Relance #${r.numero_relance}</strong> · ${r.statut} · ${formatDate(r.envoyee_le || r.created_at)}
+              ${r.forcee_par ? '<span style="color:#B45309;font-size:11px;"> (forcée manuellement)</span>' : ''}
+            </div>`).join('');
+        } else {
+          rDiv.innerHTML = '<span style="font-size:12px;color:var(--text-3);">Aucune relance envoyée.</span>';
+        }
+
+        // Historique
+        const hist = d.historique_reponses || [];
+        document.getElementById('section-historique').style.display = hist.length ? '' : 'none';
+        if (hist.length) document.getElementById('d-historique').innerHTML = hist.filter(r => r.role !== 'assistant').map(r => `
+          <div class="detail-history-item">
+            <div class="h-meta">${formatDate(r.timestamp)} — ${r.type || 'texte'}${r.langue ? ' (' + r.langue + ')' : ''}</div>
+            <div class="h-text">${(r.reponse || r.content || '').substring(0, 300)}</div>
+          </div>`).join('');
+
+        // Boutons footer
+        document.getElementById('btn-force-relance-detail').style.display = ['EN_COURS','INCOMPLET'].includes(a.statut) ? '' : 'none';
+        document.getElementById('btn-enrich-from-detail').style.display   = a.statut !== 'ERREUR' ? '' : 'none';
+
+        document.getElementById('detail-loading').style.display = 'none';
+        document.getElementById('detail-body').classList.remove('hidden');
+      } catch (e) {
+        document.getElementById('detail-loading').innerHTML = `<div style="text-align:center;padding:2rem;color:var(--red);font-size:13px;">Erreur : ${e.message}</div>`;
+      }
+    }
+
+    // ── Modal enrichissement ───────────────────────────────────────────────────
+    function openEnrichModal(dossierId) {
+      document.getElementById('enrich-dossier-id').value = dossierId;
+      document.getElementById('enrich-texte').value = '';
+      document.getElementById('enrich-file-name').textContent = '';
+      document.getElementById('enrich-result').classList.add('hidden');
+      _enrichFile = null; _enrichTab = 'text';
+      document.querySelectorAll('#modal-enrich .tab').forEach((t, i) => t.classList.toggle('active', i === 0));
+      document.getElementById('enrich-tab-text').classList.remove('hidden');
+      document.getElementById('enrich-tab-file').classList.add('hidden');
+      document.getElementById('modal-enrich').classList.add('open');
+    }
+    function closeEnrichModal() { document.getElementById('modal-enrich').classList.remove('open'); }
+
+    function switchEnrichTab(tab, el) {
+      _enrichTab = tab;
+      document.querySelectorAll('#modal-enrich .tab').forEach(t => t.classList.remove('active'));
+      el.classList.add('active');
+      document.getElementById('enrich-tab-text').classList.toggle('hidden', tab !== 'text');
+      document.getElementById('enrich-tab-file').classList.toggle('hidden', tab !== 'file');
+    }
+
+    function afficherFichierEnrich(files) {
+      if (!files || !files.length) return;
+      _enrichFile = files[0];
+      document.getElementById('enrich-file-name').textContent = '📎 ' + _enrichFile.name;
+    }
+
+    async function submitEnrich() {
+      const dossierId = document.getElementById('enrich-dossier-id').value;
+      const btn  = document.getElementById('btn-enrich-submit');
+      const rDiv = document.getElementById('enrich-result');
+
+      function showErr(msg) { rDiv.className = 'enrich-result err'; rDiv.textContent = msg; rDiv.classList.remove('hidden'); }
+      function showOk(msg)  { rDiv.className = 'enrich-result ok';  rDiv.textContent = msg; rDiv.classList.remove('hidden'); }
+
+      btn.disabled = true; btn.textContent = 'Traitement…'; rDiv.classList.add('hidden');
+
+      let response;
+      try {
+        const fd = new FormData();
+        if (_enrichTab === 'file' && _enrichFile) {
+          if (_enrichFile.size > 50 * 1024 * 1024) { showErr(`Fichier trop volumineux (${(_enrichFile.size/1024/1024).toFixed(1)} Mo). Limite : 50 Mo.`); btn.disabled = false; btn.textContent = 'Ajouter et relancer l\'analyse'; return; }
+          fd.append('file', _enrichFile);
+        } else {
+          const texte = document.getElementById('enrich-texte').value.trim();
+          if (!texte) { showErr('Saisissez du texte avant de valider.'); btn.disabled = false; btn.textContent = 'Ajouter et relancer l\'analyse'; return; }
+          fd.append('texte_libre', texte);
+        }
+        response = await fetch(`/api/v1/dossiers/${dossierId}/enrich`, { method: 'POST', credentials: 'include', body: fd });
+      } catch (netErr) {
+        showErr(`Impossible de joindre le serveur. (${netErr.message})`); btn.disabled = false; btn.textContent = 'Ajouter et relancer l\'analyse'; return;
+      }
+
+      let data = {};
+      try { data = await response.json(); } catch {
+        const label = {400:'Requête invalide',401:'Session expirée',403:'Accès refusé',404:'Dossier introuvable',413:'Fichier trop volumineux',500:'Erreur serveur'}[response.status] || `Erreur HTTP ${response.status}`;
+        showErr(label); btn.disabled = false; btn.textContent = 'Ajouter et relancer l\'analyse'; return;
+      }
+
+      if (!response.ok) { showErr(data.detail || data.message || `Erreur ${response.status}.`); }
+      else { showOk(`✓ Dossier mis à jour — Statut : ${data.statut ?? data.nouveau_statut ?? '—'} | Score : ${data.score_global ?? '—'}/100`); await loadDossiers(); setTimeout(closeEnrichModal, 2200); }
+
+      btn.disabled = false; btn.textContent = 'Ajouter et relancer l\'analyse';
+    }
+
+    // ── Init ───────────────────────────────────────────────────────────────────
+    loadDossiers();
+    setInterval(loadDossiers, 15000);
+
+    // Set user info in sidebar
+    fetch('/api/v1/dossiers', { credentials: 'include' })
+      .then(r => {
+        if (r.ok) {
+          const email = 'nasskamli@gmail.com';
+          const navUser = document.getElementById('nav-user');
+          if (navUser) navUser.textContent = email;
+          const userAvatar = document.getElementById('user-avatar');
+          if (userAvatar) userAvatar.textContent = email.charAt(0).toUpperCase();
+          const userName = document.getElementById('user-name');
+          if (userName) userName.textContent = email.split('@')[0];
+        }
+      })
+      .catch(() => {});
+
+    document.getElementById('logoutBtn').addEventListener('click', async e => {
+      e.preventDefault();
+      await fetch('/api/v1/auth/logout', { method: 'POST' });
+      window.location.href = '/login';
+    });
+  </script>
+</body>
+</html>

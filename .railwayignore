@@ -1,0 +1,12 @@
+# Base de données SQLite locale — NE PAS déployer
+# La base de production vit sur le serveur Railway et ne doit pas être écrasée
+mdph_dossiers.db
+*.db-shm
+*.db-wal
+
+# Fichiers de dev
+.env
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store

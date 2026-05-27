@@ -1,0 +1,28 @@
+# Données sensibles — NE JAMAIS pousser
+.env
+*.db
+*.sqlite
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+dist/
+build/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Node
+node_modules/
+package-lock.json
+
+# PPTX générés
+static/*.pptx
+static/generate_pptx.js

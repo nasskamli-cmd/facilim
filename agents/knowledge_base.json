@@ -1,0 +1,80 @@
+[
+  {
+    "id": "aah_taux_80",
+    "tags": ["AAH", "taux_incapacite", "80pct", "ressources", "L821-1"],
+    "texte": "Art. L821-1 CSS : L'AAH est accordée aux personnes dont le taux d'incapacité permanent est au moins égal à 80%, sous condition de résidence stable et régulière en France et de ressources inférieures au plafond annuel (environ 12 000 €/an pour une personne seule, majoré par enfant à charge).",
+    "source": "CSS L821-1"
+  },
+  {
+    "id": "aah_rsdae",
+    "tags": ["AAH", "RSDAE", "emploi", "50pct", "L821-2"],
+    "texte": "Art. L821-2 CSS : Pour un taux d'incapacité entre 50% et 79%, l'AAH peut être accordée si la personne présente une restriction substantielle et durable d'accès à l'emploi (RSDAE), reconnus par la CDAPH. La RSDAE est appréciée en tenant compte du handicap, non de la situation du marché du travail.",
+    "source": "CSS L821-2"
+  },
+  {
+    "id": "aah_non_eligible",
+    "tags": ["AAH", "taux_incapacite", "refus"],
+    "texte": "Un taux d'incapacité inférieur à 50% rend la personne non éligible à l'AAH, même en présence d'une RSDAE. Il n'existe aucune dérogation réglementaire à ce seuil minimal.",
+    "source": "CSS L821-1 a contrario"
+  },
+  {
+    "id": "pch_criteres",
+    "tags": ["PCH", "aide_humaine", "aide_technique", "taux_incapacite", "GEVA", "L245-1"],
+    "texte": "Art. L245-1 CASF : La PCH est ouverte aux personnes présentant une difficulté absolue pour la réalisation d'une activité ou une difficulté grave pour au moins deux activités des domaines suivants : mobilité, entretien personnel, communication, tâches et exigences générales, relations et interactions avec autrui. Le taux d'incapacité doit être ≥ 80% ou les difficultés correspondre aux niveaux du référentiel GEVA.",
+    "source": "CASF L245-1 + arrêté référentiel GEVA"
+  },
+  {
+    "id": "pch_enfant_aeeh",
+    "tags": ["PCH", "AEEH", "enfant", "cumul"],
+    "texte": "Le cumul PCH/AEEH est partiellement possible : l'AEEH de base reste versée ; les compléments AEEH 3 à 6 peuvent se cumuler avec la PCH aide humaine selon les conditions fixées par décret. Ce cumul est exceptionnel et strictement encadré.",
+    "source": "CASF L245-1 al. 2 + CSS L541-4"
+  },
+  {
+    "id": "aeeh_criteres",
+    "tags": ["AEEH", "enfant", "taux_incapacite", "scolarité", "L541-1"],
+    "texte": "Art. L541-1 CSS : L'AEEH est versée pour les enfants et adolescents de moins de 20 ans présentant un taux d'incapacité ≥ 80%, ou entre 50% et 79% si l'enfant fréquente un établissement d'éducation spéciale ou un centre de rééducation, ou s'il reçoit des soins continus. Elle comprend une allocation de base et des compléments (1 à 6) selon le niveau de dépendance.",
+    "source": "CSS L541-1"
+  },
+  {
+    "id": "rqth_criteres",
+    "tags": ["RQTH", "emploi", "travailleur_handicape", "L5213-1"],
+    "texte": "Art. L5213-1 Code du travail : Est reconnu travailleur handicapé toute personne dont les possibilités d'obtenir ou de conserver un emploi sont effectivement réduites par suite d'une altération d'une ou plusieurs fonctions physique, sensorielle, mentale ou psychique. Il n'existe pas de seuil de taux d'incapacité minimum, mais la CDAPH dispose d'un pouvoir d'appréciation. En pratique, un taux ≥ 50% conduit quasi-systématiquement à l'attribution.",
+    "source": "Code du travail L5213-1"
+  },
+  {
+    "id": "cmi_invalide",
+    "tags": ["CMI", "taux_incapacite", "mobilite", "L241-3"],
+    "texte": "Art. L241-3 CASF : La CMI invalidité est délivrée aux personnes présentant un taux d'incapacité permanente d'au moins 80%. La CMI priorité est accordée aux personnes dont la capacité et l'autonomie sont réduites de façon importante et durable, rendant la station debout pénible. La CMI stationnement requiert une impossibilité ou une grande difficulté à marcher.",
+    "source": "CASF L241-3"
+  },
+  {
+    "id": "taux_bareme",
+    "tags": ["taux_incapacite", "barème", "cotation", "guide_bareme"],
+    "texte": "Guide-barème (annexe 2-4 CASF, décret 2004-1136) : Le taux d'incapacité est évalué par domaines (mobilité, orientation, communication, comportement, viscéral, métabolique). Chaque domaine est coté 0 (aucune atteinte) à 4 (atteinte totale). Le taux global est calculé par la CDAPH sur la base du tableau-barème ; un taux ≥ 50% est le seuil minimal pour la quasi-totalité des droits MDPH.",
+    "source": "CASF annexe 2-4 décret 2004-1136"
+  },
+  {
+    "id": "ime_criteres",
+    "tags": ["IME", "enfant", "orientation", "troubles_cognitifs"],
+    "texte": "L'IME (Institut Médico-Éducatif) accueille les enfants et adolescents présentant une déficience intellectuelle (QI < 70 en général) ou des troubles du spectre autistique nécessitant un accompagnement médico-éducatif spécialisé. L'orientation relève d'une décision CDAPH.",
+    "source": "CASF L312-1 + référentiel CNSA"
+  },
+  {
+    "id": "esat_criteres",
+    "tags": ["ESAT", "adulte", "travail", "capacite_reduite"],
+    "texte": "L'ESAT (Établissement et Service d'Aide par le Travail) accueille les adultes dont la capacité de travail est inférieure au tiers de la capacité normale. L'orientation est prononcée par la CDAPH. L'ESAT est incompatible avec un emploi en milieu ordinaire à plein temps.",
+    "source": "CASF L344-2"
+  },
+  {
+    "id": "sessad_criteres",
+    "tags": ["SESSAD", "enfant", "milieu_ordinaire", "ambulatoire"],
+    "texte": "Le SESSAD (Service d'Éducation Spéciale et de Soins à Domicile) propose un accompagnement ambulatoire aux enfants maintenus en milieu ordinaire (école, famille). Il intervient à domicile, à l'école ou dans les locaux du service. L'orientation est prononcée par la CDAPH.",
+    "source": "CASF L312-1 VII"
+  },
+  {
+    "id": "aah_ressources_couple",
+    "tags": ["AAH", "ressources", "couple", "conjoint"],
+    "texte": "Depuis le 1er octobre 2023, les ressources du conjoint ne sont plus prises en compte pour le calcul de l'AAH (déconjugalisation). Chaque membre du couple est désormais évalué individuellement sur la base de ses revenus personnels.",
+    "source": "CSS L821-1 mod. loi 2021-1754 art. 94"
+  }
+]

@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Facilim — Poste de pilotage ESSMS</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            facilim: { 50:'#f0f9ff', 100:'#e0f2fe', 500:'#0ea5e9', 700:'#0369a1', 900:'#0c4a6e' },
+            alerte: { bg:'#fef2f2', border:'#fca5a5', text:'#991b1b' },
+            warning: { bg:'#fffbeb', border:'#fcd34d', text:'#92400e' },
+            success: { bg:'#f0fdf4', border:'#86efac', text:'#166534' },
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .stat-card { transition: box-shadow .15s; }
+    .stat-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,.08); }
+    .badge-urgent { animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:.6 } }
+    .completude-bar { transition: width .4s ease-in-out; }
+    .row-flag { border-left: 3px solid #ef4444; }
+    .row-urgent { border-left: 3px solid #f97316; }
+    .row-ok { border-left: 3px solid #22c55e; }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+<!-- ── Navigation ─────────────────────────────────────────────────────────── -->
+<nav class="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between sticky top-0 z-40 shadow-sm">
+  <div class="flex items-center gap-3">
+    <div class="w-8 h-8 bg-facilim-700 rounded-lg flex items-center justify-center">
+      <span class="text-white text-xs font-bold">F</span>
+    </div>
+    <div>
+      <span class="font-semibold text-gray-900 text-sm">Facilim</span>
+      <span class="text-gray-400 text-xs ml-2">Poste de pilotage ESSMS</span>
+    </div>
+  </div>
+  <div class="flex items-center gap-4">
+    <span id="alertes-count" class="hidden items-center gap-1 bg-red-100 text-red-700 text-xs font-semibold px-2.5 py-1 rounded-full badge-urgent">
+      <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+      <span id="alertes-num">0</span> alertes
+    </span>
+    <button onclick="refreshData()" class="text-gray-500 hover:text-gray-700 text-sm flex items-center gap-1.5">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+      Actualiser
+    </button>
+    <a href="/logout" class="text-sm text-gray-500 hover:text-red-600">Déconnexion</a>
+  </div>
+</nav>
+
+<!-- ── Corps principal ────────────────────────────────────────────────────── -->
+<main class="max-w-7xl mx-auto px-4 py-6">
+
+  <!-- KPI -->
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+    <div class="bg-white rounded-xl border border-gray-100 p-4 stat-card">
+      <div class="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Dossiers actifs</div>
+      <div class="text-2xl font-bold text-gray-900" id="kpi-actifs">–</div>
+      <div class="text-xs text-gray-400 mt-1">EN_COLLECTE + INCOMPLET</div>
+    </div>
+    <div class="bg-white rounded-xl border border-gray-100 p-4 stat-card">
+      <div class="text-xs font-medium text-red-600 uppercase tracking-wide mb-1">Flags humains</div>
+      <div class="text-2xl font-bold text-red-600" id="kpi-flags">–</div>
+      <div class="text-xs text-gray-400 mt-1">Validation requise</div>
+    </div>
+    <div class="bg-white rounded-xl border border-gray-100 p-4 stat-card">
+      <div class="text-xs font-medium text-orange-600 uppercase tracking-wide mb-1">Urgences</div>
+      <div class="text-2xl font-bold text-orange-600" id="kpi-urgences">–</div>
+      <div class="text-xs text-gray-400 mt-1">Priorité critique</div>
+    </div>
+    <div class="bg-white rounded-xl border border-gray-100 p-4 stat-card">
+      <div class="text-xs font-medium text-green-600 uppercase tracking-wide mb-1">Complets</div>
+      <div class="text-2xl font-bold text-green-600" id="kpi-complets">–</div>
+      <div class="text-xs text-gray-400 mt-1">Prêts à soumettre</div>
+    </div>
+  </div>
+
+  <!-- Filtres -->
+  <div class="bg-white rounded-xl border border-gray-100 p-4 mb-5 flex flex-wrap gap-3 items-center">
+    <div class="flex-1 min-w-48">
+      <input id="search" type="text" placeholder="Rechercher un dossier, une référence…"
+        class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-facilim-500"
+        oninput="filterTable()">
+    </div>
+    <select id="filter-statut" onchange="filterTable()"
+      class="text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-facilim-500">
+      <option value="">Tous les statuts</option>
+      <option value="EN_COLLECTE">En collecte</option>
+      <option value="EN_ANALYSE">En analyse</option>
+      <option value="INCOMPLET">Incomplet</option>
+      <option value="COMPLET">Complet</option>
+      <option value="SOUMIS">Soumis</option>
+    </select>
+    <label class="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+      <input type="checkbox" id="filter-flags" onchange="filterTable()" class="rounded">
+      Flags humains uniquement
+    </label>
+    <label class="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+      <input type="checkbox" id="filter-urgences" onchange="filterTable()" class="rounded">
+      Urgences uniquement
+    </label>
+  </div>
+
+  <!-- Tableau des dossiers -->
+  <div class="bg-white rounded-xl border border-gray-100 overflow-hidden mb-6">
+    <div class="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+      <h2 class="font-semibold text-gray-900 text-sm">Dossiers MDPH</h2>
+      <button onclick="openNewDossierModal()"
+        class="bg-facilim-700 hover:bg-facilim-900 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors">
+        + Nouveau dossier
+      </button>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50">
+          <tr>
+            <th class="text-left text-xs font-medium text-gray-500 uppercase px-5 py-3 tracking-wide">Référence</th>
+            <th class="text-left text-xs font-medium text-gray-500 uppercase px-3 py-3 tracking-wide">Statut</th>
+            <th class="text-left text-xs font-medium text-gray-500 uppercase px-3 py-3 tracking-wide">Complétude</th>
+            <th class="text-left text-xs font-medium text-gray-500 uppercase px-3 py-3 tracking-wide">Droits identifiés</th>
+            <th class="text-left text-xs font-medium text-gray-500 uppercase px-3 py-3 tracking-wide">Dernière activité</th>
+            <th class="text-left text-xs font-medium text-gray-500 uppercase px-3 py-3 tracking-wide">Alertes</th>
+            <th class="px-3 py-3"></th>
+          </tr>
+        </thead>
+        <tbody id="dossiers-tbody" class="divide-y divide-gray-50">
+          <tr><td colspan="7" class="text-center text-gray-400 py-10 text-sm">Chargement…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Section Alertes + Flags humains -->
+  <div class="grid md:grid-cols-2 gap-5 mb-6">
+
+    <div class="bg-white rounded-xl border border-gray-100 overflow-hidden">
+      <div class="px-5 py-3 border-b border-red-50 bg-red-50/50">
+        <h2 class="font-semibold text-red-800 text-sm flex items-center gap-2">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+          Validations humaines requises
+        </h2>
+      </div>
+      <div id="flags-list" class="divide-y divide-gray-50 max-h-80 overflow-y-auto">
+        <div class="text-center text-gray-400 py-8 text-sm">Chargement…</div>
+      </div>
+    </div>
+
+    <div class="bg-white rounded-xl border border-gray-100 overflow-hidden">
+      <div class="px-5 py-3 border-b border-orange-50 bg-orange-50/50">
+        <h2 class="font-semibold text-orange-800 text-sm flex items-center gap-2">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
+          Pièces manquantes & relances
+        </h2>
+      </div>
+      <div id="relances-list" class="divide-y divide-gray-50 max-h-80 overflow-y-auto">
+        <div class="text-center text-gray-400 py-8 text-sm">Chargement…</div>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<!-- ── Modal Détail Dossier ────────────────────────────────────────────────── -->
+<div id="modal-dossier" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+      <h3 id="modal-titre" class="font-semibold text-gray-900">Dossier</h3>
+      <button onclick="closeModal('modal-dossier')" class="text-gray-400 hover:text-gray-700">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div id="modal-content" class="flex-1 overflow-y-auto px-6 py-4 space-y-5">
+      <!-- Contenu dynamique injecté par JS -->
+    </div>
+    <div class="px-6 py-4 border-t border-gray-100 flex gap-3 justify-end">
+      <button onclick="closeModal('modal-dossier')" class="text-sm text-gray-600 px-4 py-2 border border-gray-200 rounded-lg hover:bg-gray-50">Fermer</button>
+      <button id="btn-validate-flag" onclick="validateFlag()" class="hidden text-sm bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-colors">
+        Valider — Lever le flag
+      </button>
+      <button id="btn-send-relance" onclick="sendRelance()" class="text-sm bg-facilim-700 hover:bg-facilim-900 text-white px-4 py-2 rounded-lg transition-colors">
+        Envoyer une relance
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Scripts ────────────────────────────────────────────────────────────── -->
+<script>
+let allDossiers = [];
+let currentDossierId = null;
+
+async function refreshData() {
+  await Promise.all([loadDossiers(), loadAlertes()]);
+}
+
+async function loadDossiers() {
+  try {
+    const res = await fetch('/api/v1/dashboard/dossiers', { credentials: 'include' });
+    if (!res.ok) { window.location = '/login'; return; }
+    const data = await res.json();
+    allDossiers = data.dossiers || [];
+    renderKPIs(allDossiers);
+    renderTable(allDossiers);
+  } catch(e) { console.error('Erreur chargement dossiers:', e); }
+}
+
+async function loadAlertes() {
+  try {
+    const res = await fetch('/api/v1/dashboard/alertes', { credentials: 'include' });
+    const data = await res.json();
+    renderFlags(data.flags || []);
+    renderRelances(data.relances || []);
+    const total = (data.flags || []).length + (data.relances || []).length;
+    const el = document.getElementById('alertes-count');
+    const num = document.getElementById('alertes-num');
+    if (total > 0) { el.classList.remove('hidden'); el.classList.add('flex'); num.textContent = total; }
+    else { el.classList.add('hidden'); }
+  } catch(e) { console.error('Erreur chargement alertes:', e); }
+}
+
+function renderKPIs(dossiers) {
+  const actifs   = dossiers.filter(d => ['EN_COLLECTE','EN_ANALYSE','INCOMPLET'].includes(d.statut)).length;
+  const flags    = dossiers.filter(d => d.flag_humain_requis).length;
+  const urgences = dossiers.filter(d => d.urgence >= 2).length;
+  const complets = dossiers.filter(d => d.statut === 'COMPLET').length;
+  document.getElementById('kpi-actifs').textContent   = actifs;
+  document.getElementById('kpi-flags').textContent    = flags;
+  document.getElementById('kpi-urgences').textContent = urgences;
+  document.getElementById('kpi-complets').textContent = complets;
+}
+
+const STATUT_LABELS = {
+  BROUILLON: { label: 'Brouillon',    cls: 'bg-gray-100 text-gray-600' },
+  EN_COLLECTE: { label: 'En collecte', cls: 'bg-blue-100 text-blue-700' },
+  EN_ANALYSE: { label: 'En analyse',  cls: 'bg-purple-100 text-purple-700' },
+  INCOMPLET:  { label: 'Incomplet',   cls: 'bg-orange-100 text-orange-700' },
+  COMPLET:    { label: 'Complet',     cls: 'bg-green-100 text-green-700' },
+  SOUMIS:     { label: 'Soumis',      cls: 'bg-facilim-100 text-facilim-700' },
+  CLOS:       { label: 'Clos',        cls: 'bg-gray-100 text-gray-500' },
+};
+
+function renderTable(dossiers) {
+  const tbody = document.getElementById('dossiers-tbody');
+  if (!dossiers.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400 py-10 text-sm">Aucun dossier trouvé</td></tr>';
+    return;
+  }
+  tbody.innerHTML = dossiers.map(d => {
+    const st = STATUT_LABELS[d.statut] || { label: d.statut, cls: 'bg-gray-100 text-gray-600' };
+    const score = d.score_completude || 0;
+    const scoreColor = score >= 80 ? 'bg-green-500' : score >= 50 ? 'bg-orange-400' : 'bg-red-400';
+    const rowCls = d.flag_humain_requis ? 'row-flag' : d.urgence >= 2 ? 'row-urgent' : 'row-ok';
+    const droits = Array.isArray(d.droits_identifies) ? d.droits_identifies.join(', ') : '–';
+    const dateStr = d.updated_at ? new Date(d.updated_at).toLocaleDateString('fr-FR', {day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'}) : '–';
+    const flagBadge = d.flag_humain_requis
+      ? '<span class="inline-flex items-center gap-1 text-xs bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-medium">⚠ Flag</span>'
+      : '';
+    const urgBadge = d.urgence >= 2
+      ? '<span class="inline-flex items-center gap-1 text-xs bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded font-medium">🔴 Urgent</span>'
+      : '';
+    return `
+      <tr class="${rowCls} hover:bg-gray-50 cursor-pointer" onclick="openDossier('${d.id}')">
+        <td class="px-5 py-3 font-mono text-xs text-gray-700 font-medium">${d.reference || d.id?.slice(0,8) || '–'}</td>
+        <td class="px-3 py-3"><span class="text-xs font-medium px-2 py-0.5 rounded-full ${st.cls}">${st.label}</span></td>
+        <td class="px-3 py-3 w-40">
+          <div class="flex items-center gap-2">
+            <div class="flex-1 bg-gray-100 rounded-full h-1.5">
+              <div class="completude-bar ${scoreColor} h-1.5 rounded-full" style="width:${score}%"></div>
+            </div>
+            <span class="text-xs text-gray-500 w-8 text-right">${score}%</span>
+          </div>
+        </td>
+        <td class="px-3 py-3 text-xs text-gray-600">${droits || '–'}</td>
+        <td class="px-3 py-3 text-xs text-gray-500">${dateStr}</td>
+        <td class="px-3 py-3">${flagBadge}${urgBadge}</td>
+        <td class="px-3 py-3 text-right">
+          <button class="text-xs text-facilim-700 hover:underline">Voir</button>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function filterTable() {
+  const q        = document.getElementById('search').value.toLowerCase();
+  const statut   = document.getElementById('filter-statut').value;
+  const onlyFlag = document.getElementById('filter-flags').checked;
+  const onlyUrg  = document.getElementById('filter-urgences').checked;
+  const filtered = allDossiers.filter(d => {
+    const matchQ = !q || (d.reference||'').toLowerCase().includes(q) || (d.id||'').includes(q);
+    const matchS = !statut || d.statut === statut;
+    const matchF = !onlyFlag || d.flag_humain_requis;
+    const matchU = !onlyUrg || d.urgence >= 2;
+    return matchQ && matchS && matchF && matchU;
+  });
+  renderTable(filtered);
+}
+
+function renderFlags(flags) {
+  const el = document.getElementById('flags-list');
+  if (!flags.length) { el.innerHTML = '<p class="text-center text-gray-400 py-6 text-sm">Aucune validation requise</p>'; return; }
+  el.innerHTML = flags.map(f => `
+    <div class="px-4 py-3 hover:bg-red-50/30 cursor-pointer" onclick="openDossier('${f.dossier_id}')">
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <div class="text-xs font-semibold text-red-800">${f.titre || 'Validation requise'}</div>
+          <div class="text-xs text-gray-500 mt-0.5">${f.description || ''}</div>
+          <div class="text-xs text-gray-400 mt-1">${f.dossier_reference || f.dossier_id?.slice(0,8) || ''}</div>
+        </div>
+        <span class="text-xs text-red-600 font-medium whitespace-nowrap">${f.severite || 'HAUTE'}</span>
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderRelances(relances) {
+  const el = document.getElementById('relances-list');
+  if (!relances.length) { el.innerHTML = '<p class="text-center text-gray-400 py-6 text-sm">Aucune relance planifiée</p>'; return; }
+  el.innerHTML = relances.map(r => `
+    <div class="px-4 py-3 hover:bg-orange-50/30 cursor-pointer" onclick="openDossier('${r.dossier_id}')">
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <div class="text-xs font-semibold text-orange-800">${r.type_relance?.replace('_',' ') || 'Relance'}</div>
+          <div class="text-xs text-gray-400 mt-0.5">Planifiée le ${r.planifiee_le ? new Date(r.planifiee_le).toLocaleDateString('fr-FR') : '–'}</div>
+        </div>
+        <span class="text-xs px-1.5 py-0.5 rounded ${r.statut === 'ENVOYEE' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}">${r.statut}</span>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function openDossier(id) {
+  currentDossierId = id;
+  document.getElementById('modal-dossier').classList.remove('hidden');
+  document.getElementById('modal-content').innerHTML = '<div class="text-center text-gray-400 py-8">Chargement…</div>';
+  try {
+    const res = await fetch(`/api/v1/dashboard/dossiers/${id}`, { credentials: 'include' });
+    const d = await res.json();
+    renderModalContent(d);
+  } catch(e) {
+    document.getElementById('modal-content').innerHTML = '<div class="text-center text-red-500 py-8">Erreur de chargement</div>';
+  }
+}
+
+function renderModalContent(d) {
+  document.getElementById('modal-titre').textContent = `Dossier ${d.reference || d.id?.slice(0,8)}`;
+  const st = STATUT_LABELS[d.statut] || { label: d.statut, cls: 'bg-gray-100 text-gray-600' };
+  const score = d.score_completude || 0;
+  const scoreColor = score >= 80 ? 'bg-green-500' : score >= 50 ? 'bg-orange-400' : 'bg-red-400';
+  const droits = Array.isArray(d.droits_identifies) ? d.droits_identifies : (JSON.parse(d.droits_identifies_json||'[]'));
+  const synthese = typeof d.synthese === 'object' ? d.synthese : {};
+  const questions = Array.isArray(d.questions) ? d.questions : (JSON.parse(d.questions_json||'[]'));
+  const hasFlag = d.flag_humain_requis;
+
+  // Activer/désactiver bouton validation flag
+  const btnFlag = document.getElementById('btn-validate-flag');
+  if (hasFlag) btnFlag.classList.remove('hidden'); else btnFlag.classList.add('hidden');
+
+  document.getElementById('modal-content').innerHTML = `
+    <!-- En-tête statut -->
+    <div class="flex items-center gap-3 flex-wrap">
+      <span class="text-sm font-medium px-3 py-1 rounded-full ${st.cls}">${st.label}</span>
+      ${hasFlag ? '<span class="text-xs bg-red-100 text-red-700 px-2 py-1 rounded-full font-semibold">⚠ Validation humaine requise</span>' : ''}
+      ${d.urgence >= 2 ? '<span class="text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded-full font-semibold">🔴 Urgence</span>' : ''}
+    </div>
+
+    <!-- Complétude -->
+    <div class="bg-gray-50 rounded-xl p-4">
+      <div class="flex items-center justify-between mb-2">
+        <span class="text-xs font-semibold text-gray-700 uppercase tracking-wide">Niveau de complétude</span>
+        <span class="text-lg font-bold ${score >= 60 ? 'text-green-700' : 'text-orange-600'}">${score}/100</span>
+      </div>
+      <div class="bg-gray-200 rounded-full h-2">
+        <div class="${scoreColor} h-2 rounded-full completude-bar" style="width:${score}%"></div>
+      </div>
+      ${d.raison_flag ? `<p class="text-xs text-red-600 mt-2 italic">${d.raison_flag}</p>` : ''}
+    </div>
+
+    <!-- Droits identifiés -->
+    ${droits.length ? `
+    <div>
+      <div class="text-xs font-semibold text-gray-700 uppercase tracking-wide mb-2">Droits identifiés</div>
+      <div class="flex flex-wrap gap-2">
+        ${droits.map(dr => `<span class="text-xs bg-facilim-100 text-facilim-700 px-2.5 py-1 rounded-full font-medium">${dr}</span>`).join('')}
+      </div>
+    </div>` : ''}
+
+    <!-- Données collectées -->
+    ${Object.keys(synthese).length ? `
+    <div>
+      <div class="text-xs font-semibold text-gray-700 uppercase tracking-wide mb-2">Informations collectées</div>
+      <div class="grid grid-cols-2 gap-2">
+        ${Object.entries(synthese).map(([k,v]) => v ? `
+          <div class="bg-white border border-gray-100 rounded-lg px-3 py-2">
+            <div class="text-xs text-gray-400 capitalize">${k.replace(/_/g,' ')}</div>
+            <div class="text-xs font-medium text-gray-800 mt-0.5">${v}</div>
+          </div>
+        ` : '').filter(Boolean).join('')}
+      </div>
+    </div>` : ''}
+
+    <!-- Questions manquantes -->
+    ${questions.length ? `
+    <div class="bg-orange-50 border border-orange-100 rounded-xl p-4">
+      <div class="text-xs font-semibold text-orange-800 uppercase tracking-wide mb-2">Informations encore manquantes</div>
+      <ul class="space-y-1">
+        ${questions.map(q => `<li class="text-xs text-orange-700 flex gap-2"><span>•</span><span>${q}</span></li>`).join('')}
+      </ul>
+    </div>` : ''}
+
+    <!-- Consentement -->
+    ${d.consent ? `
+    <div class="bg-gray-50 rounded-xl p-4">
+      <div class="text-xs font-semibold text-gray-700 uppercase tracking-wide mb-2">Consentement RGPD</div>
+      <div class="flex items-center gap-2 text-xs">
+        <span class="${d.consent.statut === 'ACTIF' ? 'text-green-600' : 'text-red-600'} font-medium">${d.consent.statut}</span>
+        <span class="text-gray-400">·</span>
+        <span class="text-gray-500">Canal : ${d.consent.canal || '–'}</span>
+        <span class="text-gray-400">·</span>
+        <span class="text-gray-500">Le ${d.consent.accorde_le ? new Date(d.consent.accorde_le).toLocaleDateString('fr-FR') : '–'}</span>
+      </div>
+    </div>` : ''}
+  `;
+}
+
+async function validateFlag() {
+  if (!currentDossierId) return;
+  if (!confirm('Confirmer la validation humaine de ce dossier ?')) return;
+  try {
+    const res = await fetch(`/api/v1/dashboard/dossiers/${currentDossierId}/validate-flag`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ justification: 'Validation manuelle dashboard' }),
+    });
+    if (res.ok) {
+      closeModal('modal-dossier');
+      await refreshData();
+    }
+  } catch(e) { alert('Erreur lors de la validation.'); }
+}
+
+async function sendRelance() {
+  if (!currentDossierId) return;
+  try {
+    const res = await fetch(`/api/v1/dashboard/dossiers/${currentDossierId}/relance`, {
+      method: 'POST', credentials: 'include',
+    });
+    if (res.ok) {
+      alert('Relance envoyée avec succès.');
+      closeModal('modal-dossier');
+    }
+  } catch(e) { alert('Erreur lors de l\'envoi de la relance.'); }
+}
+
+function openNewDossierModal() {
+  window.location = '/api/v1/dashboard/nouveau-dossier';
+}
+
+function closeModal(id) {
+  document.getElementById(id).classList.add('hidden');
+  currentDossierId = null;
+}
+
+// Fermeture clic extérieur
+document.getElementById('modal-dossier').addEventListener('click', function(e) {
+  if (e.target === this) closeModal('modal-dossier');
+});
+
+// Chargement initial + actualisation auto toutes les 60s
+refreshData();
+setInterval(refreshData, 60000);
+</script>
+</body>
+</html>

@@ -1,0 +1,206 @@
+{
+  "version": "2.0",
+  "description": "Configuration des agents Facilim — Architecture 4 niveaux",
+  "agents": [
+    {
+      "nom": "Léa",
+      "niveau": "N-1",
+      "module": "agents.lea_agent",
+      "classe": "LeaAgent",
+      "role": "Validation entrée dossier",
+      "description": "Valide la DDN, le type de dossier, l'email famille et le WhatsApp. Rejette les dossiers invalides.",
+      "dependances": [],
+      "queue": "queue:accueil",
+      "actif": true
+    },
+    {
+      "nom": "Thomas",
+      "niveau": "N-1",
+      "module": "agents.thomas_agent",
+      "classe": "ThomasAgent",
+      "role": "Dispatch & priorisation",
+      "description": "Dispatche vers la cellule appropriée (enfant/jeune/adulte) et priorise les urgences.",
+      "dependances": ["Léa"],
+      "queue": "queue:dispatch",
+      "actif": true
+    },
+    {
+      "nom": "Emma",
+      "niveau": "N0",
+      "module": "services.conversation_agent",
+      "classe": "ConversationAgent",
+      "role": "Collecte conversationnelle — Cellule Enfance",
+      "description": "Agent WhatsApp de collecte pour les dossiers enfant (0-15 ans). Manager : Sarah.",
+      "dependances": ["Thomas"],
+      "queue": "queue:enfant",
+      "actif": true
+    },
+    {
+      "nom": "Mathilde",
+      "niveau": "N0",
+      "module": "agents.mathilde_agent",
+      "classe": "MathildeAgent",
+      "role": "Relances automatiques famille",
+      "description": "Relance les familles à J+1, J+2, J+3. Notifie l'éducateur. Bloque après 3 échecs.",
+      "dependances": [],
+      "queue": "queue:relances",
+      "actif": true,
+      "scheduler": {
+        "actif": true,
+        "intervalle_check_heures": 1,
+        "delais_relance_heures": [24, 48, 72],
+        "max_relances": 3
+      }
+    },
+    {
+      "nom": "Ibrahim",
+      "niveau": "N0",
+      "module": "agents.ibrahim_agent",
+      "classe": "IbrahimAgent",
+      "role": "Traduction & détection de langue",
+      "description": "Détecte la langue de la famille (langdetect + GPT) et traduit les messages FALC.",
+      "dependances": [],
+      "queue": "queue:traduction",
+      "actif": true,
+      "langues_supportees": ["fr", "ar", "tr", "en", "es", "pt", "ro", "wo", "ti"]
+    },
+    {
+      "nom": "Camille",
+      "niveau": "N1",
+      "module": "agents.camille_agent",
+      "classe": "CamilleAgent",
+      "role": "Instruction, OCR & normalisation JSON",
+      "description": "Extrait et normalise les données en JSON CERFA depuis tout texte brut ou fichier.",
+      "dependances": ["Inès"],
+      "queue": "queue:instruction",
+      "actif": true
+    },
+    {
+      "nom": "Lucas",
+      "niveau": "N1",
+      "module": "agents.lucas_agent",
+      "classe": "LucasAgent",
+      "role": "Correction documents illisibles",
+      "description": "Tente une extraction vision (GPT-4o) sur les documents flous. Demande re-téléversement si insuffisant.",
+      "dependances": [],
+      "queue": "queue:correction_docs",
+      "actif": true,
+      "seuil_confiance": 0.6
+    },
+    {
+      "nom": "Baptiste",
+      "niveau": "N1",
+      "module": null,
+      "classe": null,
+      "role": "Validation de cohérence",
+      "description": "Valide la cohérence DDN vs type de dossier et droits demandés. Intégré dans CamilleAgent.",
+      "dependances": ["Camille"],
+      "queue": "queue:validation",
+      "actif": true,
+      "note": "Logique intégrée dans CamilleAgent._valider_coherence()"
+    },
+    {
+      "nom": "Inès",
+      "niveau": "N2",
+      "module": "agents.ines_agent",
+      "classe": "InesAgent",
+      "role": "Anonymisation & chiffrement AES",
+      "description": "Anonymise les PII avant envoi LLM. Chiffre les données sensibles en AES-256-GCM.",
+      "dependances": [],
+      "queue": "queue:anonymisation",
+      "actif": true,
+      "chiffrement": "AES-256-GCM",
+      "cle_env": "AES_SECRET_KEY"
+    },
+    {
+      "nom": "Maya",
+      "niveau": "N2",
+      "module": "agents.maya_agent",
+      "classe": "MayaAgent",
+      "role": "Scoring prédictif RAG",
+      "description": "Score 0-100 basé sur RAG légal (CASF/CSS/Code du travail). Suggère des droits supplémentaires.",
+      "dependances": ["Inès", "Camille"],
+      "queue": "queue:scoring",
+      "actif": true,
+      "knowledge_base": "agents/knowledge_base.json",
+      "vector_store": null,
+      "modele_llm": "gpt-4o-mini"
+    },
+    {
+      "nom": "Sarah",
+      "niveau": "N0-manager",
+      "role": "Manager Cellule Enfance",
+      "description": "Supervise Emma et Lucas sur les dossiers enfant. Escalade à Hugo après 3 échecs.",
+      "actif": true
+    },
+    {
+      "nom": "Karim",
+      "niveau": "N0-manager",
+      "role": "Manager Cellule Jeunes (16-25)",
+      "description": "Supervise Chloé et Noah sur les dossiers jeunes adultes.",
+      "actif": true
+    },
+    {
+      "nom": "Aïcha",
+      "niveau": "N0-manager",
+      "role": "Manager Cellule Adultes",
+      "description": "Supervise Paul et Sofia sur les dossiers adultes.",
+      "actif": true
+    },
+    {
+      "nom": "Hugo",
+      "niveau": "N3",
+      "role": "Directeur Enfance — Supervision",
+      "description": "Supervise les managers de la cellule Enfance. Gère les escalades et conflits.",
+      "actif": true
+    },
+    {
+      "nom": "Nina",
+      "niveau": "N3",
+      "role": "Directrice Jeunes & Adultes",
+      "description": "Supervise les managers des cellules Jeunes et Adultes.",
+      "actif": true
+    },
+    {
+      "nom": "Samuel",
+      "niveau": "N3",
+      "role": "Directeur Dossiers Prioritaires",
+      "description": "Gère les dossiers urgents et critiques toutes cellules confondues.",
+      "actif": true
+    },
+    {
+      "nom": "Elsa",
+      "niveau": "N4",
+      "role": "Juriste conformité MDPH",
+      "description": "Vérifie la conformité des dossiers au guide-barème MDPH. Alerte en cas de violation réglementaire.",
+      "actif": true
+    },
+    {
+      "nom": "Raphaël",
+      "niveau": "N4",
+      "role": "Stratégique & tendances",
+      "description": "Analyse les tendances de dossiers, propose des améliorations de workflow.",
+      "actif": true
+    },
+    {
+      "nom": "Mehdi",
+      "niveau": "N4",
+      "role": "Cybersécurité & logs SIEM",
+      "description": "Surveille les logs d'accès, détecte les anomalies, maintient le SIEM léger.",
+      "actif": true
+    }
+  ],
+  "files_attente": {
+    "queue:accueil":        {"priorite": 1, "description": "Validation entrée (Léa)"},
+    "queue:dispatch":       {"priorite": 2, "description": "Dispatch (Thomas)"},
+    "queue:enfant":         {"priorite": 3, "description": "Collecte Enfance (Emma)"},
+    "queue:jeune":          {"priorite": 3, "description": "Collecte Jeunes (Chloé/Noah)"},
+    "queue:adulte":         {"priorite": 3, "description": "Collecte Adultes (Paul/Sofia)"},
+    "queue:traduction":     {"priorite": 4, "description": "Traduction (Ibrahim)"},
+    "queue:correction_docs":{"priorite": 4, "description": "Correction documents (Lucas)"},
+    "queue:anonymisation":  {"priorite": 5, "description": "Anonymisation (Inès)"},
+    "queue:instruction":    {"priorite": 6, "description": "Instruction (Camille)"},
+    "queue:scoring":        {"priorite": 7, "description": "Scoring RAG (Maya)"},
+    "queue:relances":       {"priorite": 8, "description": "Relances (Mathilde)", "cron": "toutes_1h"}
+  }
+}

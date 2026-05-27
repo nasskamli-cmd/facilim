@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Facilim — Connexion</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: #F0F4F8;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+    }
+
+    .card {
+      display: flex;
+      width: 100%;
+      max-width: 860px;
+      min-height: 520px;
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 4px 32px rgba(0,0,0,0.10);
+    }
+
+    /* ── Panneau gauche ── */
+    .left {
+      background: #1B3A6B;
+      width: 42%;
+      padding: 2.5rem 2rem;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .brand { display: flex; align-items: center; gap: 10px; }
+    .logo-mark {
+      width: 38px; height: 38px;
+      background: #2ECC9A;
+      border-radius: 9px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 16px; font-weight: 600; color: #0F3D2E;
+    }
+    .brand-name { color: #fff; font-size: 20px; font-weight: 600; letter-spacing: -0.3px; }
+    .brand-tag  { color: rgba(255,255,255,0.45); font-size: 12px; margin-top: 2px; }
+
+    .quote {
+      color: rgba(255,255,255,0.8);
+      font-size: 14px;
+      line-height: 1.75;
+      font-style: italic;
+    }
+    .author {
+      display: flex; align-items: center; gap: 10px;
+      margin-top: 1rem;
+    }
+    .avatar {
+      width: 30px; height: 30px; border-radius: 50%;
+      background: rgba(255,255,255,0.15);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; color: rgba(255,255,255,0.7); font-weight: 500;
+    }
+    .author-name  { color: rgba(255,255,255,0.8); font-size: 12px; font-weight: 500; }
+    .author-role  { color: rgba(255,255,255,0.4); font-size: 11px; }
+
+    .stats { display: flex; gap: 2rem; margin-top: 1.5rem; }
+    .stat-num   { color: #2ECC9A; font-size: 22px; font-weight: 600; }
+    .stat-label { color: rgba(255,255,255,0.45); font-size: 11px; margin-top: 2px; }
+
+    /* ── Panneau droit ── */
+    .right {
+      background: #fff;
+      flex: 1;
+      padding: 3rem 2.5rem;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+
+    .step-dots { display: flex; gap: 6px; margin-bottom: 2rem; }
+    .dot { width: 6px; height: 6px; border-radius: 50%; background: #E2E8F0; }
+    .dot.active { width: 20px; border-radius: 3px; background: #1B3A6B; }
+
+    h2 { font-size: 20px; font-weight: 600; color: #1A202C; margin-bottom: 0.25rem; }
+    .subtitle { font-size: 13px; color: #718096; margin-bottom: 2rem; }
+
+    .field { margin-bottom: 1.1rem; }
+    .field label {
+      display: block;
+      font-size: 11px; font-weight: 600;
+      color: #718096;
+      text-transform: uppercase; letter-spacing: 0.5px;
+      margin-bottom: 6px;
+    }
+    .field input {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #E2E8F0;
+      border-radius: 8px;
+      font-size: 14px;
+      color: #1A202C;
+      background: #F8FAFC;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .field input:focus { border-color: #1B3A6B; background: #fff; }
+
+    .forgot {
+      text-align: right;
+      font-size: 12px;
+      color: #1B3A6B;
+      text-decoration: none;
+      display: block;
+      margin-top: -0.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .btn-primary {
+      width: 100%;
+      padding: 12px;
+      background: #1B3A6B;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-primary:hover { background: #14305a; }
+
+    .footer-note {
+      margin-top: 2rem;
+      padding-top: 1.25rem;
+      border-top: 1px solid #F0F4F8;
+      font-size: 11px;
+      color: #A0AEC0;
+      text-align: center;
+      line-height: 1.6;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+
+    <div class="left">
+      <div>
+        <div class="brand">
+          <div class="logo-mark">F</div>
+          <div>
+            <div class="brand-name">Facilim</div>
+            <div class="brand-tag">Le dossier MDPH, enfin simple.</div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <p class="quote">"Facilim nous a permis de réduire de 60 % le temps de traitement des dossiers incomplets."</p>
+        <div class="author">
+          <div class="avatar">SC</div>
+          <div>
+            <div class="author-name">Sophie C.</div>
+            <div class="author-role">Éducatrice spécialisée, MDPH 75</div>
+          </div>
+        </div>
+        <div class="stats">
+          <div><div class="stat-num">3 200+</div><div class="stat-label">Dossiers traités</div></div>
+          <div><div class="stat-num">94 %</div><div class="stat-label">Taux de complétion</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="right">
+      <div class="step-dots">
+        <div class="dot active"></div>
+        <div class="dot"></div>
+        <div class="dot"></div>
+      </div>
+
+      <h2>Connexion à votre espace</h2>
+      <p class="subtitle">Réservé aux professionnels habilités.</p>
+
+      <form id="loginForm">
+        <div class="field">
+          <label>Adresse e-mail</label>
+          <input type="email" id="email" name="email" placeholder="prenom.nom@structure.fr" required />
+        </div>
+        <div class="field">
+          <label>Mot de passe</label>
+          <input type="password" id="password" name="password" placeholder="••••••••" required />
+        </div>
+        <a class="forgot" href="#">Mot de passe oublié ?</a>
+        <div id="errorMsg" style="display:none;margin-bottom:1rem;padding:10px 12px;background:#FFF5F5;border:1px solid #FED7D7;border-radius:8px;font-size:13px;color:#C53030;"></div>
+        <button class="btn-primary" type="submit" id="submitBtn">Continuer</button>
+      </form>
+
+      <p class="footer-note">
+        Connexion sécurisée &nbsp;·&nbsp; Données hébergées en France &nbsp;·&nbsp; Conforme RGPD
+      </p>
+
+  <script>
+    document.getElementById('loginForm').addEventListener('submit', async function(e) {
+      e.preventDefault();
+
+      const email    = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value;
+      const btn      = document.getElementById('submitBtn');
+      const errDiv   = document.getElementById('errorMsg');
+
+      btn.textContent = 'Envoi en cours…';
+      btn.disabled    = true;
+      errDiv.style.display = 'none';
+
+      try {
+        const res = await fetch('/auth/login', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ email, password }),
+        });
+
+        if (res.ok) {
+          // Succès : on redirige vers la page de vérification du code
+          sessionStorage.setItem('auth_email', email);
+          window.location.href = '/verify';
+        } else {
+          const data = await res.json();
+          errDiv.textContent   = data.detail || 'Identifiants incorrects.';
+          errDiv.style.display = 'block';
+          btn.textContent = 'Continuer';
+          btn.disabled    = false;
+        }
+      } catch (err) {
+        errDiv.textContent   = 'Erreur réseau. Vérifiez votre connexion.';
+        errDiv.style.display = 'block';
+        btn.textContent = 'Continuer';
+        btn.disabled    = false;
+      }
+    });
+  </script>
+    </div>
+
+  </div>
+</body>
+</html>

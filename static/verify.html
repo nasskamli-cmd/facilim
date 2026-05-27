@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Facilim — Vérification</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: #F0F4F8;
+      min-height: 100vh;
+      display: flex; align-items: center; justify-content: center;
+      padding: 1rem;
+    }
+
+    .card {
+      display: flex;
+      width: 100%; max-width: 860px; min-height: 520px;
+      border-radius: 16px; overflow: hidden;
+      box-shadow: 0 4px 32px rgba(0,0,0,0.10);
+    }
+
+    .left {
+      background: #1B3A6B; width: 42%;
+      padding: 2.5rem 2rem;
+      display: flex; flex-direction: column; justify-content: space-between;
+    }
+    .brand { display: flex; align-items: center; gap: 10px; }
+    .logo-mark {
+      width: 38px; height: 38px; background: #2ECC9A; border-radius: 9px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 16px; font-weight: 600; color: #0F3D2E;
+    }
+    .brand-name { color: #fff; font-size: 20px; font-weight: 600; }
+    .brand-tag  { color: rgba(255,255,255,0.45); font-size: 12px; margin-top: 2px; }
+
+    .shield-icon {
+      width: 64px; height: 64px; background: rgba(46,204,154,0.15);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      margin-bottom: 1.25rem;
+    }
+    .shield-icon svg { width: 32px; height: 32px; }
+    .left-title { color: #fff; font-size: 17px; font-weight: 600; margin-bottom: 0.75rem; }
+    .left-desc  { color: rgba(255,255,255,0.55); font-size: 13px; line-height: 1.7; }
+
+    .right {
+      background: #fff; flex: 1;
+      padding: 3rem 2.5rem;
+      display: flex; flex-direction: column; justify-content: center;
+    }
+
+    .step-dots { display: flex; gap: 6px; margin-bottom: 2rem; }
+    .dot { width: 6px; height: 6px; border-radius: 50%; background: #E2E8F0; }
+    .dot.done   { background: #2ECC9A; }
+    .dot.active { width: 20px; border-radius: 3px; background: #1B3A6B; }
+
+    h2 { font-size: 20px; font-weight: 600; color: #1A202C; margin-bottom: 0.25rem; }
+    .subtitle { font-size: 13px; color: #718096; margin-bottom: 2rem; }
+    .email-highlight { color: #1B3A6B; font-weight: 500; }
+
+    .code-row {
+      display: flex; gap: 10px;
+      justify-content: center;
+      margin-bottom: 1.25rem;
+    }
+    .code-input {
+      width: 48px; height: 56px;
+      border: 1.5px solid #E2E8F0;
+      border-radius: 10px;
+      font-size: 22px; font-weight: 600;
+      text-align: center;
+      color: #1A202C;
+      background: #F8FAFC;
+      outline: none;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .code-input:focus { border-color: #1B3A6B; background: #fff; }
+
+    .resend {
+      text-align: center; font-size: 13px; color: #718096;
+      margin-bottom: 1.75rem;
+    }
+    .resend a { color: #1B3A6B; text-decoration: none; font-weight: 500; }
+    .resend a:hover { text-decoration: underline; }
+
+    .btn-green {
+      width: 100%; padding: 12px;
+      background: #2ECC9A; color: #0F3D2E;
+      border: none; border-radius: 8px;
+      font-size: 14px; font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-green:hover { background: #28b888; }
+
+    .back-link {
+      display: block; text-align: center;
+      margin-top: 1rem;
+      font-size: 13px; color: #718096;
+      text-decoration: none;
+    }
+    .back-link:hover { color: #1B3A6B; }
+
+    .footer-note {
+      margin-top: 2rem; padding-top: 1.25rem;
+      border-top: 1px solid #F0F4F8;
+      font-size: 11px; color: #A0AEC0;
+      text-align: center; line-height: 1.6;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+
+    <div class="left">
+      <div class="brand">
+        <div class="logo-mark">F</div>
+        <div>
+          <div class="brand-name">Facilim</div>
+          <div class="brand-tag">Le dossier MDPH, enfin simple.</div>
+        </div>
+      </div>
+      <div>
+        <div class="shield-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#2ECC9A" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2L3 7v5c0 5.25 3.75 10.15 9 11.35C17.25 22.15 21 17.25 21 12V7L12 2z"/>
+            <polyline points="9 12 11 14 15 10"/>
+          </svg>
+        </div>
+        <div class="left-title">Double authentification</div>
+        <div class="left-desc">
+          Votre espace contient des données sensibles. Nous vérifions votre identité à chaque connexion pour garantir la sécurité des dossiers.
+        </div>
+      </div>
+    </div>
+
+    <div class="right">
+      <div class="step-dots">
+        <div class="dot done"></div>
+        <div class="dot active"></div>
+        <div class="dot"></div>
+      </div>
+
+      <h2>Entrez votre code</h2>
+      <p class="subtitle">
+        Un code à 6 chiffres a été envoyé à<br/>
+        <span class="email-highlight" id="email-display">votre adresse e-mail</span>
+      </p>
+
+      <div class="code-row">
+        <input class="code-input" type="text" maxlength="1" inputmode="numeric" id="c1" />
+        <input class="code-input" type="text" maxlength="1" inputmode="numeric" id="c2" />
+        <input class="code-input" type="text" maxlength="1" inputmode="numeric" id="c3" />
+        <input class="code-input" type="text" maxlength="1" inputmode="numeric" id="c4" />
+        <input class="code-input" type="text" maxlength="1" inputmode="numeric" id="c5" />
+        <input class="code-input" type="text" maxlength="1" inputmode="numeric" id="c6" />
+      </div>
+
+      <p class="resend">Vous n'avez pas reçu le code ? <a href="#" id="resend-link">Renvoyer</a></p>
+
+      <button class="btn-green" id="verify-btn" onclick="verifyCode()">Accéder à mon espace</button>
+      <a class="back-link" href="/login">Revenir à la connexion</a>
+
+      <p class="footer-note">
+        Connexion sécurisée &nbsp;·&nbsp; Données hébergées en France &nbsp;·&nbsp; Conforme RGPD
+      </p>
+    </div>
+
+  </div>
+
+  <script>
+    // Récupération de l'email sauvegardé lors de l'étape 1 (login.html)
+    const userEmail = sessionStorage.getItem('auth_email') || '';
+    if (!userEmail) {
+      // Si on arrive ici sans passer par le login, on redirige
+      window.location.href = '/login';
+    }
+    document.getElementById('email-display').textContent = userEmail;
+
+    const inputs = document.querySelectorAll('.code-input');
+
+    inputs.forEach((input, i) => {
+      input.addEventListener('input', () => {
+        // Filtrer les caractères non numériques
+        input.value = input.value.replace(/\D/, '');
+        if (input.value && i < inputs.length - 1) {
+          inputs[i + 1].focus();
+        }
+        // Auto-validation si les 6 cases sont remplies
+        const code = Array.from(inputs).map(el => el.value).join('');
+        if (code.length === 6) verifyCode();
+      });
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Backspace' && !input.value && i > 0) {
+          inputs[i - 1].focus();
+        }
+      });
+    });
+
+    inputs[0].focus();
+
+    async function verifyCode() {
+      const code = Array.from(inputs).map(el => el.value).join('');
+      if (code.length < 6) {
+        inputs.forEach(el => { el.style.borderColor = '#E53E3E'; });
+        setTimeout(() => inputs.forEach(el => { el.style.borderColor = '#E2E8F0'; }), 1000);
+        return;
+      }
+
+      const btn = document.getElementById('verify-btn');
+      btn.textContent = 'Vérification…';
+      btn.disabled    = true;
+
+      try {
+        const res = await fetch('/auth/verify', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ email: userEmail, code }),
+        });
+
+        if (res.ok) {
+          sessionStorage.removeItem('auth_email');
+          window.location.href = '/dashboard';
+        } else {
+          const data = await res.json();
+          inputs.forEach(el => { el.style.borderColor = '#E53E3E'; el.value = ''; });
+          inputs[0].focus();
+          btn.textContent = data.detail || 'Code incorrect — réessayez.';
+          setTimeout(() => {
+            btn.textContent = 'Accéder à mon espace';
+            btn.disabled = false;
+          }, 2000);
+        }
+      } catch (err) {
+        btn.textContent = 'Erreur réseau.';
+        setTimeout(() => { btn.textContent = 'Accéder à mon espace'; btn.disabled = false; }, 2000);
+      }
+    }
+
+    // Bouton "Renvoyer"
+    document.getElementById('resend-link').addEventListener('click', async function(e) {
+      e.preventDefault();
+      this.textContent = 'Envoi…';
+      // On retourne au login pour re-soumettre — le plus simple
+      window.location.href = '/login';
+    });
+  </script>
+</body>
+</html>
