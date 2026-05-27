@@ -5,12 +5,15 @@ Protocole CERFA 15692 : collecte strictement ordonnée, sans répétition.
 Chaque message entrant tente d'extraire la valeur du champ en cours ;
 le champ suivant est déterminé par CERFA_FIELD_ORDER.
 
-Sécurité des données de santé :
-  Les champs médicaux (NIR, diagnostic, traitements, médecin, impact, taux)
-  ne sont JAMAIS collectés via WhatsApp (canal non chiffré hébergé par Meta).
-  Quand ces champs sont atteints, un message de redirection est envoyé une
-  seule fois, invitant la famille à transmettre ces informations par email
-  ou via la messagerie sécurisée de l'éducateur.
+Architecture documentaire MDPH :
+  Le CERFA 15692 (dossier administratif) porte sur les RETENTISSEMENTS
+  FONCTIONNELS du handicap dans la vie quotidienne : ce que la personne
+  ne peut pas faire seule, ses difficultés concrètes, ses besoins de
+  compensation. C'est ce que collecte le bot WhatsApp.
+
+  Le certificat médical (rempli par le médecin) contient : diagnostics,
+  traitements, examens, taux. Ces données ne transitent JAMAIS par WhatsApp
+  (canal non chiffré hébergé par Meta, incompatible avec l'art. 9 RGPD).
 """
 
 import logging
@@ -19,15 +22,16 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Champs médicaux — jamais collectés via WhatsApp (secret médical + RGPD)
+# Champs strictement médicaux — jamais collectés via WhatsApp
+# ATTENTION : "impact_quotidien" n'est PAS ici — les difficultés fonctionnelles
+# sont le cœur du CERFA et peuvent être collectées via WhatsApp.
 # ---------------------------------------------------------------------------
 MEDICAL_FIELDS: frozenset[str] = frozenset({
-    "numero_securite_sociale",   # NIR 15 chiffres — donnée sensible de 1er rang
-    "diagnostic_principal",      # donnée de santé (art. 9 RGPD)
+    "numero_securite_sociale",   # NIR 15 chiffres — donnée sensible de 1er rang (art. 9 RGPD)
+    "diagnostic_principal",      # donnée de santé stricto sensu (art. 9 RGPD)
     "medecin_traitant",          # information médicale identifiante
-    "impact_quotidien",          # description des limitations fonctionnelles
-    "traitements_en_cours",      # médicaments et thérapies
-    "taux_incapacite",           # taux reconnu par la MDPH
+    "traitements_en_cours",      # médicaments et thérapies — secret médical
+    "taux_incapacite",           # taux MDPH — donnée médicale certifiée
 })
 
 # Clé sentinel dans cerfa_reponses — indique que le message de redirection a été envoyé
@@ -36,67 +40,82 @@ _MEDICAL_REDIRECT_SENT_KEY = "__medical_redirect_sent__"
 _MEDICAL_VIA_EMAIL = "__via_email__"
 
 _MESSAGE_CANAL_SECURISE = (
-    "🔒 Pour protéger vos données de santé, certaines informations confidentielles "
-    "ne peuvent pas être partagées par WhatsApp.\n\n"
+    "🔒 Pour protéger vos données de santé, certaines informations médicales "
+    "confidentielles ne peuvent pas être partagées par WhatsApp.\n\n"
     "Merci de transmettre les éléments suivants *par email* à votre accompagnateur "
     "ou *via la messagerie sécurisée* de votre structure :\n\n"
     "• Numéro de sécurité sociale (NIR)\n"
-    "• Diagnostic médical et date d'apparition\n"
+    "• Diagnostic médical précis et date d'apparition\n"
     "• Nom et coordonnées du médecin traitant\n"
     "• Traitements en cours (médicaments, thérapies)\n"
-    "• Impact du handicap sur le quotidien\n"
     "• Taux d'incapacité (si renouvellement)\n\n"
-    "Votre accompagnateur intégrera ces informations directement dans le dossier "
-    "à partir des documents médicaux. Je continue à collecter les autres informations."
+    "Votre accompagnateur intégrera ces éléments directement dans le dossier "
+    "à partir des documents médicaux. Toutes les autres informations sont déjà collectées. "
+    "Merci pour votre précieuse collaboration !"
 )
 
 # ---------------------------------------------------------------------------
-# Ordre strict CERFA 15692 — immuable, jamais modifié par le LLM
-# Les champs médicaux restent dans la liste pour le CERFA PDF,
-# mais sont IGNORÉS lors de la collecte WhatsApp.
+# Ordre strict CERFA 15692 — immuable, jamais modifié par le LLM.
+#
+# ARCHITECTURE : Le CERFA principal porte sur le FONCTIONNEL (sections A-E).
+# Les champs fonctionnels sont collectés via WhatsApp (sections marquées ✓).
+# Les champs strictement médicaux (marqués [MED]) restent hors WhatsApp.
 # ---------------------------------------------------------------------------
 CERFA_FIELD_ORDER: list[str] = [
-    "type_demande",            # première demande ou renouvellement
-    "nom_prenom",              # nom et prénom du bénéficiaire
-    "date_naissance",          # JJ/MM/AAAA
-    "genre",                   # homme / femme
-    "adresse_complete",        # numéro, rue, CP, ville  (NIR retiré — canal non sécurisé)
-    "situation_familiale",     # célibataire, marié·e, en couple…
-    "enfants_a_charge",        # nombre (0 si aucun)
-    "type_droits",             # AAH, RQTH, PCH, AEEH, CMI, IME/ESAT…
-    "situation_pro_scolaire",  # emploi, scolarité, sans activité…
-    "historique_mdph",         # première demande ou renouvellement + date notif
-    # Champs médicaux ci-dessous — collectés hors WhatsApp par l'éducateur
-    "numero_securite_sociale",
-    "diagnostic_principal",
-    "medecin_traitant",
-    "impact_quotidien",
-    "traitements_en_cours",
-    "taux_incapacite",
+    # ── Section A — Identité ────────────────────────────────────────────────
+    "type_demande",               # ✓ première demande ou renouvellement
+    "nom_prenom",                 # ✓ nom et prénom du bénéficiaire
+    "date_naissance",             # ✓ JJ/MM/AAAA
+    "genre",                      # ✓ homme / femme
+    "adresse_complete",           # ✓ numéro, rue, CP, ville
+    "situation_familiale",        # ✓ célibataire, marié·e, en couple…
+    "enfants_a_charge",           # ✓ nombre (0 si aucun)
+    # ── Section B — Vie quotidienne & retentissements fonctionnels ──────────
+    "difficultes_quotidiennes",   # ✓ ce que la personne ne peut pas faire seule
+    "besoins_aide",               # ✓ type d'aide humaine/technique nécessaire
+    # ── Section C/D — Parcours scolaire / professionnel ────────────────────
+    "situation_pro_scolaire",     # ✓ emploi, scolarité, sans activité…
+    # ── Section E — Demandes ───────────────────────────────────────────────
+    "type_droits",                # ✓ AAH, RQTH, PCH, AEEH, CMI, IME/ESAT…
+    "historique_mdph",            # ✓ seulement si renouvellement
+    # ── Données médicales — collectées HORS WhatsApp par l'éducateur [MED] ─
+    "numero_securite_sociale",    # [MED] NIR
+    "diagnostic_principal",       # [MED] pathologie certifiée
+    "medecin_traitant",           # [MED] coordonnées médecin
+    "traitements_en_cours",       # [MED] médicaments et thérapies
+    "taux_incapacite",            # [MED] taux MDPH si renouvellement
 ]
 
 CERFA_FIELD_LABELS: dict[str, str] = {
-    "type_demande":            "s'il s'agit d'une première demande MDPH ou d'un renouvellement",
-    "nom_prenom":              "le nom et prénom complet du bénéficiaire",
-    "date_naissance":          "la date de naissance du bénéficiaire (format JJ/MM/AAAA)",
-    "genre":                   "le genre du bénéficiaire (homme ou femme)",
-    "numero_securite_sociale": "le numéro de sécurité sociale (15 chiffres)",
-    "adresse_complete":        "l'adresse complète (numéro, rue, code postal, ville)",
-    "situation_familiale":     "la situation familiale (célibataire, marié·e, en couple, divorcé·e…)",
-    "enfants_a_charge":        "le nombre d'enfants à charge (indiquez 0 si aucun)",
-    "type_droits":             "le ou les types de droits demandés (AAH, RQTH, PCH, AEEH, CMI, orientation IME/ESAT/SESSAD…)",
-    "situation_pro_scolaire":  "la situation professionnelle ou scolaire actuelle",
-    "diagnostic_principal":    "le diagnostic précis (pathologie, depuis quand, confirmé par quel médecin)",
-    "medecin_traitant":        "le nom et la ville du médecin traitant",
-    "impact_quotidien":        "l'impact du handicap sur la vie quotidienne (ce que la personne ne peut pas faire seule)",
-    "traitements_en_cours":    "les traitements médicaux en cours (médicaments, thérapies, fréquence)",
-    "historique_mdph":         "l'historique MDPH (première demande ou renouvellement, date de la dernière notification si renouvellement)",
-    "taux_incapacite":         "le taux d'incapacité reconnu par la MDPH (indiqué sur la dernière notification)",
+    # Identité
+    "type_demande":               "s'il s'agit d'une première demande MDPH ou d'un renouvellement",
+    "nom_prenom":                 "le nom et prénom complet du bénéficiaire",
+    "date_naissance":             "la date de naissance du bénéficiaire (format JJ/MM/AAAA)",
+    "genre":                      "le genre du bénéficiaire (homme ou femme)",
+    "adresse_complete":           "l'adresse complète (numéro, rue, code postal, ville)",
+    "situation_familiale":        "la situation familiale (célibataire, marié·e, en couple, divorcé·e…)",
+    "enfants_a_charge":           "le nombre d'enfants à charge (indiquez 0 si aucun)",
+    # Fonctionnel — cœur du CERFA
+    "difficultes_quotidiennes":   "les principales difficultés dans la vie de tous les jours (ce que la personne ne peut pas faire seule, ce qui lui est difficile ou épuisant)",
+    "besoins_aide":               "les aides dont la personne a besoin (aide humaine, aide technique, aménagement du logement, accompagnement…)",
+    # Parcours
+    "situation_pro_scolaire":     "la situation professionnelle ou scolaire actuelle (emploi, scolarité, formation, recherche d'emploi, inactivité…)",
+    # Demandes
+    "type_droits":                "le ou les types de droits demandés à la MDPH (AAH, RQTH, PCH, AEEH, CMI, orientation IME/ESAT/SESSAD…)",
+    "historique_mdph":            "la date de la dernière notification MDPH (uniquement si renouvellement)",
+    # Médical — hors WhatsApp
+    "numero_securite_sociale":    "le numéro de sécurité sociale (15 chiffres)",
+    "diagnostic_principal":       "le diagnostic médical précis (pathologie, depuis quand, confirmé par quel médecin)",
+    "medecin_traitant":           "le nom et la ville du médecin traitant",
+    "traitements_en_cours":       "les traitements médicaux en cours (médicaments, thérapies, fréquence)",
+    "taux_incapacite":            "le taux d'incapacité reconnu par la MDPH (indiqué sur la dernière notification)",
 }
 
 _TAUX_FIELD    = "taux_incapacite"
 _HISTORIQUE    = "historique_mdph"
 _TYPE_DEMANDE  = "type_demande"
+_DIFFICULTES   = "difficultes_quotidiennes"
+_BESOINS       = "besoins_aide"
 
 
 # ---------------------------------------------------------------------------
@@ -157,6 +176,21 @@ def prepopuler_cerfa_depuis_dossier(cerfa_reponses: dict, dossier: dict) -> None
 
     # Historique MDPH
     _set("historique_mdph", ds.get("historique_mdph"))
+
+    # Pré-remplissage fonctionnel depuis la synthèse GEVA
+    # Si l'analyse a produit une synthèse GEVA-Pro, on la réutilise
+    # pour éviter de reposer la question sur les difficultés quotidiennes.
+    syntheses = analyse.get("synthese_agents") or {}
+    geva_pro  = str(syntheses.get("geva_pro") or "").strip()
+    if geva_pro and len(geva_pro) > 40:
+        _set("difficultes_quotidiennes", geva_pro[:500])
+
+    # Besoins d'aide — depuis les données structurées
+    aides = ds.get("aides_actuelles") or []
+    if isinstance(aides, list) and aides:
+        _set("besoins_aide", " / ".join(str(a) for a in aides[:5]))
+    elif ds.get("besoins_aide_humaine"):
+        _set("besoins_aide", "Aide humaine nécessaire")
 
 
 # ---------------------------------------------------------------------------
@@ -300,10 +334,11 @@ def generer_reponse_agent(
 
     if next_field is None:
         return (
-            "Toutes les informations administratives ont bien été collectées. "
-            "Le dossier va être finalisé et envoyé à l'adresse email indiquée. "
-            "Les informations médicales transmises à votre accompagnateur seront "
-            "intégrées par ses soins. Bien cordialement, l'équipe Facilim."
+            "✅ Toutes les informations ont bien été collectées.\n\n"
+            "Le dossier est en cours de finalisation. Vous recevrez le CERFA pré-rempli "
+            "et le résumé du dossier par email sous peu.\n\n"
+            "Votre accompagnateur complétera les éléments médicaux directement à partir "
+            "des documents du médecin. Bien cordialement, l'équipe Facilim."
         )
 
     next_label = CERFA_FIELD_LABELS[next_field]
@@ -326,11 +361,16 @@ def generer_reponse_agent(
         f"Tu es l'Assistant Facilim, spécialisé dans la constitution de dossiers MDPH.\n"
         f"Tu discutes via WhatsApp pour constituer le dossier MDPH {sujet}.\n"
         f"Langue : français simple, bienveillant, FALC (phrases courtes, mots courants).\n\n"
+        f"RÔLE DU CERFA : Le formulaire MDPH porte sur les conséquences concrètes du\n"
+        f"handicap dans la vie quotidienne — pas sur les données médicales.\n"
+        f"NE JAMAIS demander : diagnostic, médicaments, nom du médecin, taux d'incapacité.\n\n"
         f"CHAMPS DÉJÀ COLLECTÉS :\n{answered_ctx}\n\n"
         f"PROCHAIN CHAMP À COLLECTER : {next_label}\n\n"
-        f"RÈGLES :\n"
+        f"RÈGLES ABSOLUES :\n"
         f"- Accuse d'abord réception en 1 phrase courte et chaleureuse\n"
         f"- Pose UNIQUEMENT la question sur : {next_label}\n"
+        f"- Pour les champs fonctionnels (difficultés, besoins) : formule en termes\n"
+        f"  de vie quotidienne, pas médicaux. Ex : 'Qu'est-ce qui est difficile au quotidien ?'\n"
         f"- Ne demande PAS d'autres informations dans ce message\n"
         f"- Ne répète jamais une question déjà posée et répondue\n"
         f"- N'invente jamais d'information\n"
