@@ -571,13 +571,16 @@
     /* Upload */
     .upload-zone {
       border: 2px dashed var(--border); border-radius: var(--radius);
-      padding: 28px; text-align: center; cursor: pointer; transition: all var(--transition);
+      padding: 36px 28px; text-align: center; cursor: pointer; transition: all var(--transition);
+      background: var(--bg); user-select: none;
     }
-    .upload-zone:hover { border-color: var(--green); background: var(--green-light); }
-    .upload-icon { font-size: 28px; margin-bottom: 8px; }
-    .upload-text { font-size: 13px; color: var(--text-2); }
-    .upload-text span { color: var(--green); font-weight: 600; }
-    .upload-sub { font-size: 11px; color: var(--text-3); margin-top: 4px; }
+    .upload-zone:hover, .upload-zone.drag-over {
+      border-color: var(--green); background: var(--green-light);
+    }
+    .upload-icon { font-size: 36px; margin-bottom: 10px; }
+    .upload-text { font-size: 14px; color: var(--text-2); }
+    .upload-text span { color: var(--green); font-weight: 700; text-decoration: underline; }
+    .upload-sub { font-size: 11px; color: var(--text-3); margin-top: 6px; }
 
     /* Buttons */
     .btn-cancel {
@@ -1047,17 +1050,21 @@
 
       <div id="tab-upload" class="hidden" style="padding:14px 24px;">
         <div class="upload-zone" id="upload-zone"
-             onclick="document.getElementById('file-input').click()"
-             ondragover="event.preventDefault(); this.style.borderColor='var(--green)'; this.style.background='var(--green-light)';"
-             ondragleave="this.style.borderColor=''; this.style.background='';"
-             ondrop="event.preventDefault(); this.style.borderColor=''; this.style.background=''; handleFileDrop(event.dataTransfer.files);">
-          <div class="upload-icon">📄</div>
-          <div class="upload-text"><span>Cliquez pour importer</span> ou glissez vos fichiers ici</div>
-          <div class="upload-sub">PDF, Word (.docx), image (.jpg, .png) — 50 Mo max</div>
+             ondragover="event.preventDefault(); this.classList.add('drag-over');"
+             ondragleave="this.classList.remove('drag-over');"
+             ondrop="event.preventDefault(); this.classList.remove('drag-over'); handleFileDrop(event.dataTransfer.files);">
+          <div class="upload-icon">📁</div>
+          <div class="upload-text">
+            <button type="button" onclick="document.getElementById('file-input').click()"
+                    style="background:var(--green);color:#fff;border:none;border-radius:6px;padding:8px 18px;font-size:13px;font-weight:600;cursor:pointer;">
+              Choisir un fichier
+            </button>
+          </div>
+          <div class="upload-sub" style="margin-top:10px;">ou glissez-déposez ici · PDF, Word (.docx), image — 20 Mo max</div>
           <input type="file" id="file-input" accept=".pdf,.docx,.jpg,.jpeg,.png" multiple class="hidden" />
         </div>
-        <div id="file-list" style="margin-top:8px;font-size:13px;color:var(--green);text-align:center;"></div>
-        <div id="upload-progress" class="hidden" style="margin-top:6px;font-size:12px;color:var(--text-3);text-align:center;">Extraction en cours…</div>
+        <div id="file-list" style="margin-top:10px;font-size:13px;color:var(--green);text-align:center;font-weight:600;min-height:20px;"></div>
+        <div id="upload-progress" class="hidden" style="margin-top:6px;font-size:12px;color:var(--text-3);text-align:center;">⏳ Extraction du texte en cours…</div>
       </div>
 
       <div class="modal-footer">
@@ -1248,13 +1255,17 @@
 
       <div id="enrich-tab-file" class="hidden" style="padding:14px 24px;">
         <div class="upload-zone" id="enrich-upload-zone"
-             onclick="document.getElementById('enrich-file-input').click()"
-             ondragover="event.preventDefault(); this.style.borderColor='var(--green)'; this.style.background='var(--green-light)';"
-             ondragleave="this.style.borderColor=''; this.style.background='';"
-             ondrop="event.preventDefault(); this.style.borderColor=''; this.style.background=''; afficherFichierEnrich(event.dataTransfer.files);">
-          <div class="upload-icon">📎</div>
-          <div class="upload-text"><span>Cliquez pour importer</span> ou glissez le fichier ici</div>
-          <div class="upload-sub">PDF, Word (.docx), image (.jpg, .png) — 50 Mo max</div>
+             ondragover="event.preventDefault(); this.classList.add('drag-over');"
+             ondragleave="this.classList.remove('drag-over');"
+             ondrop="event.preventDefault(); this.classList.remove('drag-over'); afficherFichierEnrich(event.dataTransfer.files);">
+          <div class="upload-icon">📁</div>
+          <div class="upload-text">
+            <button type="button" onclick="document.getElementById('enrich-file-input').click()"
+                    style="background:var(--green);color:#fff;border:none;border-radius:6px;padding:8px 18px;font-size:13px;font-weight:600;cursor:pointer;">
+              Choisir un fichier
+            </button>
+          </div>
+          <div class="upload-sub" style="margin-top:10px;">ou glissez-déposez ici · PDF, Word (.docx), image — 20 Mo max</div>
           <input type="file" id="enrich-file-input" accept=".pdf,.docx,.jpg,.jpeg,.png" class="hidden"
                  onchange="afficherFichierEnrich(this.files)" />
         </div>
@@ -2060,6 +2071,38 @@
       e.preventDefault();
       await fetch('/api/v1/auth/logout', { method: 'POST' });
       window.location.href = '/login';
+    });
+
+    // ── Protection page entière contre le drag-and-drop navigateur ──────────────
+    // Sans ces handlers, glisser un fichier EN DEHORS de la zone d'upload cause
+    // la navigation du navigateur vers le fichier (la page disparaît).
+    document.addEventListener('dragover',  e => e.preventDefault());
+    document.addEventListener('drop', e => {
+      e.preventDefault();
+      const files = e.dataTransfer?.files;
+      if (!files || !files.length) return;
+
+      // Si la modal "Nouveau dossier" est ouverte → charger dans la zone fichier
+      if (document.getElementById('modal').classList.contains('open')) {
+        // Forcer l'onglet "Importer un fichier"
+        const tabUpload = document.querySelector('#modal .tab:last-child');
+        if (tabUpload && document.getElementById('tab-upload').classList.contains('hidden')) {
+          switchTab('upload', tabUpload);
+        }
+        handleFileDrop(files);
+        return;
+      }
+
+      // Si la modal "Enrichir" est ouverte → charger dans la zone fichier enrich
+      if (document.getElementById('modal-enrich').classList.contains('open')) {
+        // Forcer l'onglet "Fichier"
+        const tabFile = document.querySelector('#modal-enrich .tab:last-child');
+        if (tabFile && document.getElementById('enrich-tab-file').classList.contains('hidden')) {
+          switchEnrichTab('file', tabFile);
+        }
+        afficherFichierEnrich(files);
+        return;
+      }
     });
   </script>
 </body>
