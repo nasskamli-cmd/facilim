@@ -1670,14 +1670,27 @@
           })
         });
 
-        if (res.ok) { closeModal(); loadDossiers(); }
-        else {
-          const err = await res.json();
-          if (res.status === 429 && err.detail?.code === 'QUOTA_ATTEINT') showQuotaError(err.detail);
-          else alert('Erreur : ' + (typeof err.detail === 'string' ? err.detail : err.detail?.message || 'Veuillez réessayer.'));
+        if (res.ok) {
+          closeModal();
+          loadDossiers();
+        } else {
+          let errMsg = 'Erreur inconnue — veuillez réessayer.';
+          try {
+            const err = await res.json();
+            if (res.status === 429 && err.detail?.code === 'QUOTA_ATTEINT') { showQuotaError(err.detail); return; }
+            errMsg = typeof err.detail === 'string'
+              ? err.detail
+              : (err.detail?.message || `Erreur serveur ${res.status}`);
+          } catch (_) {}
+          alert('Erreur lors de la création :\n' + errMsg);
         }
-      } catch { alert('Impossible de joindre le serveur.'); }
-      finally { btn.textContent = "Lancer l'analyse IA →"; btn.disabled = false; document.getElementById('upload-progress').classList.add('hidden'); }
+      } catch (netErr) {
+        alert('Impossible de joindre le serveur.\n\nDétail : ' + netErr.message + '\n\nVérifiez votre connexion ou contactez le support.');
+      } finally {
+        btn.textContent = "Lancer l'analyse IA →";
+        btn.disabled = false;
+        document.getElementById('upload-progress').classList.add('hidden');
+      }
     }
 
     // ── Modal Score Maya ───────────────────────────────────────────────────────

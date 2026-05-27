@@ -1,0 +1,35 @@
+# Données sensibles
+.env
+
+# Python envs
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
+package.json
+package-lock.json
+
+# Git
+.git/
+.gitignore
+
+# SQLite local (Railway utilise un volume ou repart à zéro)
+*.db
+*.sqlite
+
+# Fichiers générés
+static/*.pptx
+static/generate_pptx.js
+
+# IDE
+.vscode/
+.idea/
+*.swp

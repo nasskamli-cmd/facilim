@@ -265,7 +265,10 @@ async def page_dashboard(request: Request, session_token: str | None = Cookie(de
     try:
         if not session_token or not _auth_module.is_valid_session(session_token):
             return RedirectResponse(url="/login", status_code=302)
-        return FileResponse("static/dashboard.html")
+        return FileResponse(
+            "static/dashboard.html",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"},
+        )
     except Exception as e:
         import logging
         logging.getLogger(__name__).error(f"Erreur dashboard: {e}", exc_info=True)
