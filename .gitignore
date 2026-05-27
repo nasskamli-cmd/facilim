@@ -21,6 +21,7 @@ build/
 
 # Node
 node_modules/
+package.json
 package-lock.json
 
 # PPTX générés
