@@ -267,55 +267,93 @@ def _mapper_droits(
     besoins_aide_humaine: bool,
 ) -> list[str]:
     """
-    Traduit la liste de droits identifiés par l'IA en noms de cases CERFA
-    pour les pages P17 (allocations), P18 (orientations), P19 (cartes/RQTH).
+    Traduit la liste de droits identifiés par l'IA en noms de cases CERFA.
 
-    Détection robuste par tokens (insensible à la casse, aux tirets, aux variantes).
-    Fallback besoins_aide_humaine → PCH si aucun droit adulte explicite.
-    Les noms de cases inconnus du PDF sont silencieusement ignorés par _cocher_case.
+    Mapping vérifié par inspection directe des positions Y/X dans le PDF 15692*01 :
+
+    ── PAGE 17 (E1 — Allocations et droits vie quotidienne) ──
+      P17 1  = AEEH            (enfants < 20 ans)
+      P17 2  = PCH             (enfants < 20 ans)
+      P17 3  = CMI invalidité  (enfants < 20 ans)
+      P17 4  = CMI stationnement (enfants < 20 ans)
+      P17 5  = AVPF            (enfants < 20 ans)
+      P17 6  = AAH             (adultes ≥ 20 ans)
+      P17 7  = Complément de ressources
+      P17 8  = Orientation ESMS adultes  (case unique — IME/SESSAD/ESAT/SAVS/SAMSAH/FAM/MAS)
+      P17 9  = Maintien Creton
+      P17 10 = ACTP
+      P17 11 = ACFP
+      P17 12 = PCH             (adultes ≥ 20 ans)
+      P17 13 = CMI invalidité  (adultes ≥ 20 ans)
+      P17 14 = CMI stationnement (adultes ≥ 20 ans)
+      P17 15 = AVPF            (adultes ≥ 20 ans)
+      P17 16 = E2 scolarisation avec ESMS (enfants)
+
+    ── PAGE 18 (E3 — Travail, emploi, formation professionnelle) ──
+      P18 1  = RQTH                        (Reconnaissance qualité travailleur handicapé)
+      P18 2  = Orientation professionnelle  (ORP — case parente)
+      P18 3  = └─ CRP / CPO / UEROS        (sous-type ORP, indenté)
+      P18 4  = └─ ESAT                     (sous-type ORP, indenté)
+      P18 5  = └─ Marché du travail        (sous-type ORP, indenté)
+      P18 6  = └──── Emploi accompagné     (sous-option marché du travail)
     """
     cases: list[str] = []
-    # Normalisation : on tokenise en majuscules pour la détection robuste
+    # Normalisation : tokens majuscules, tirets → espaces (ex. "RQTH" = "R-Q-T-H" → "RQTH")
     droits_str = " ".join(str(d).upper().replace("-", " ") for d in droits)
 
-    # ── Page 17 — Allocations ────────────────────────────────────────────────
-    # AEEH : Allocation d'Éducation de l'Enfant Handicapé (enfants uniquement)
+    # ── PAGE 17 — E1 Allocations ─────────────────────────────────────────────
+
+    # AEEH : Allocation d'Éducation de l'Enfant Handicapé (enfants < 20 ans uniquement)
     if is_enfant and "AEEH" in droits_str:
         cases.append("Case à cocher P17 1")
 
-    # PCH : Prestation de Compensation du Handicap (adultes, ou enfants avec aide humaine)
-    if "PCH" in droits_str or (besoins_aide_humaine and not is_enfant):
+    # PCH enfant (< 20 ans) — case PCH enfants, distincte de la case PCH adulte
+    if is_enfant and ("PCH" in droits_str or besoins_aide_humaine):
         cases.append("Case à cocher P17 2")
 
-    # AAH : Allocation aux Adultes Handicapés
-    if "AAH" in droits_str:
-        cases.append("Case à cocher P17 3")
-
-    # ── Page 18 — Orientations établissements / services ─────────────────────
-    if "IME" in droits_str:
-        cases.append("Case à cocher P18 1")
-    if "SESSAD" in droits_str:
-        cases.append("Case à cocher P18 2")
-    if "ITEP" in droits_str:
-        cases.append("Case à cocher P18 3")
-    if "ULIS" in droits_str:
-        cases.append("Case à cocher P18 4")
-    if "ESAT" in droits_str:
-        cases.append("Case à cocher P18 5")
-    if "SAVS" in droits_str:
-        cases.append("Case à cocher P18 6")
-    if "SAMSAH" in droits_str:
-        cases.append("Case à cocher P18 7")
-    if "FAM" in droits_str:
-        cases.append("Case à cocher P18 8")
-    if "MAS" in droits_str:
-        cases.append("Case à cocher P18 9")
-
-    # ── Page 19 — Cartes et RQTH ─────────────────────────────────────────────
+    # CMI (Carte Mobilité Inclusion) — cases séparées < 20 ans vs ≥ 20 ans
     if any(t in droits_str for t in ("CMI", "CARTE MOBILITE", "CARTE INVALIDITE")):
-        cases.append("Case à cocher P19 1")
+        if is_enfant:
+            cases.append("Case à cocher P17 3")   # CMI invalidité (<20)
+            cases.append("Case à cocher P17 4")   # CMI stationnement (<20)
+        else:
+            cases.append("Case à cocher P17 13")  # CMI invalidité (≥20)
+            cases.append("Case à cocher P17 14")  # CMI stationnement (≥20)
+
+    # AAH : Allocation aux Adultes Handicapés (≥ 20 ans)
+    if "AAH" in droits_str:
+        cases.append("Case à cocher P17 6")
+
+    # PCH adulte (≥ 20 ans)
+    if not is_enfant and ("PCH" in droits_str or besoins_aide_humaine):
+        cases.append("Case à cocher P17 12")
+
+    # Orientation ESMS adultes (case unique regroupant IME/SESSAD/ITEP/ESAT/SAVS/SAMSAH/FAM/MAS)
+    # Le type précis d'établissement est précisé dans le texte narratif (page 8) — pas de case individuelle dans ce PDF
+    _esms_tokens = ("IME", "SESSAD", "ITEP", "ULIS", "ESAT", "SAVS", "SAMSAH", "FAM", "MAS")
+    if not is_enfant and any(t in droits_str for t in _esms_tokens):
+        cases.append("Case à cocher P17 8")   # Orientation ESMS adultes (single checkbox)
+    if is_enfant and any(t in droits_str for t in _esms_tokens):
+        cases.append("Case à cocher P17 16")  # Scolarisation avec ESMS (enfants)
+
+    # ── PAGE 18 — E3 Travail, emploi, formation professionnelle ─────────────
+
+    # RQTH (case P18 1, PDF page 17, formulaire page 18/20)
     if "RQTH" in droits_str:
-        cases.append("Case à cocher P19 2")
+        cases.append("Case à cocher P18 1")
+
+    # ORP : Orientation Professionnelle (case P18 2 = case parente + sous-type)
+    _orp_tokens = ("ORP", "ORIENTATION PROFESSIONNELLE", "ORIENTATION PRO",
+                   "RECLASSEMENT PROFESSIONNEL", "INSERTION PROFESSIONNELLE")
+    if any(t in droits_str for t in _orp_tokens):
+        cases.append("Case à cocher P18 2")  # Case parente ORP
+        # Sous-type selon la situation professionnelle
+        if any(t in droits_str for t in ("CRP", "CPO", "UEROS", "REEDUCATION PROFESSIONNELLE")):
+            cases.append("Case à cocher P18 3")   # CRP / CPO / UEROS
+        elif "ESAT" in droits_str and not is_enfant:
+            cases.append("Case à cocher P18 4")   # ESAT (orientation pro)
+        else:
+            cases.append("Case à cocher P18 5")   # Marché du travail (défaut)
 
     logger.debug(f"_mapper_droits | droits={droits} | cases={cases}")
     return cases

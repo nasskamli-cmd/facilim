@@ -187,6 +187,17 @@ def get_next_cerfa_field(cerfa_reponses: dict[str, str]) -> str | None:
             medical_pending = True
             continue
 
+        # Règle spéciale historique_mdph : inutile pour une première demande
+        # (la date de la dernière notification n'existe pas encore)
+        if field == _HISTORIQUE:
+            type_d   = cerfa_reponses.get(_TYPE_DEMANDE, "").lower()
+            is_first = any(
+                w in type_d
+                for w in ["première", "premier", "premiere", "jamais", "nouveau", "1ere", "1ère"]
+            )
+            if is_first:
+                continue  # Ne pas demander l'historique MDPH pour une première demande
+
         # Règle spéciale taux_incapacite (en plus du filtre MEDICAL_FIELDS)
         if field == _TAUX_FIELD:
             type_d   = cerfa_reponses.get(_TYPE_DEMANDE, "").lower()

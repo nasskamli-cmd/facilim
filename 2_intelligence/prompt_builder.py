@@ -63,6 +63,16 @@ RQTH (Art. L5213-1 Code du travail) :
   Accordé quasi-systématiquement si taux >= 50%
   Accordé possible en dessous si impact emploi documenté
 
+ORP — Orientation et Reclassement Professionnel (Art. L5213-2 et L5213-3 Code du travail) :
+  Complémentaire ou alternative à la RQTH
+  Accordée quand la personne a besoin d'un accompagnement spécifique vers l'emploi :
+    - CRP (Centre de Rééducation Professionnelle) ou CPO (Centre de Pré-Orientation)
+    - ESAT (Établissement Service Aide par le Travail) si capacité travail < 1/3
+    - Marché du travail ordinaire avec ou sans dispositif Emploi Accompagné
+  Demandée explicitement par la personne ou suggérée si situation pro fragile + handicap
+  IMPORTANT : Si la personne mentionne "ORP", "orientation professionnelle", "reclassement",
+  "je veux travailler mais j'ai des difficultés liées au handicap", ajouter "ORP" dans droits_identifies
+
 CMI-invalidité (Art. L241-3 CASF) : taux >= 80%
 CMI-priorité : taux >= 80% OU restriction importante déplacement prouvée
 CMI-stationnement : taux >= 80% OU impossibilité/grande difficulté de marcher
@@ -127,6 +137,13 @@ Réponds UNIQUEMENT en JSON valide. NE JAMAIS omettre une clé.
     "RQTH": {{
       "probabilite": <0-100>,
       "base_reglementaire": "Art. L5213-1 Code du travail",
+      "facteurs_favorables": [],
+      "facteurs_defavorables": [],
+      "recommandation": ""
+    }},
+    "ORP": {{
+      "probabilite": <0-100>,
+      "base_reglementaire": "Art. L5213-2 et L5213-3 Code du travail",
       "facteurs_favorables": [],
       "facteurs_defavorables": [],
       "recommandation": ""

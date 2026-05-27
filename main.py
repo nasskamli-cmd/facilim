@@ -1531,7 +1531,7 @@ def _extraire_donnees_depuis_texte(dossier: dict, texte_brut: str) -> dict:
         "Si une information n'est pas dans le document, laisse la valeur en chaîne vide.\n"
         "Ne devine jamais — extrais uniquement ce qui est explicitement écrit.\n"
     )
-    user_message = f"Extrais les données personnelles du bénéficiaire depuis ce document :\n\n{texte_brut[:3000]}"
+    user_message = f"Extrais les données personnelles du bénéficiaire depuis ce document :\n\n{texte_brut[:8000]}"
 
     try:
         _llm_mod = importlib.import_module("4_llm_client.openai_client")
