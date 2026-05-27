@@ -258,6 +258,70 @@ def _cocher_option_nth(writer: PdfWriter, field_name: str, n: int) -> bool:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  Mapping droits → cases P17 / P18 / P19
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _mapper_droits(
+    droits: list,
+    is_enfant: bool,
+    besoins_aide_humaine: bool,
+) -> list[str]:
+    """
+    Traduit la liste de droits identifiés par l'IA en noms de cases CERFA
+    pour les pages P17 (allocations), P18 (orientations), P19 (cartes/RQTH).
+
+    Détection robuste par tokens (insensible à la casse, aux tirets, aux variantes).
+    Fallback besoins_aide_humaine → PCH si aucun droit adulte explicite.
+    Les noms de cases inconnus du PDF sont silencieusement ignorés par _cocher_case.
+    """
+    cases: list[str] = []
+    # Normalisation : on tokenise en majuscules pour la détection robuste
+    droits_str = " ".join(str(d).upper().replace("-", " ") for d in droits)
+
+    # ── Page 17 — Allocations ────────────────────────────────────────────────
+    # AEEH : Allocation d'Éducation de l'Enfant Handicapé (enfants uniquement)
+    if is_enfant and "AEEH" in droits_str:
+        cases.append("Case à cocher P17 1")
+
+    # PCH : Prestation de Compensation du Handicap (adultes, ou enfants avec aide humaine)
+    if "PCH" in droits_str or (besoins_aide_humaine and not is_enfant):
+        cases.append("Case à cocher P17 2")
+
+    # AAH : Allocation aux Adultes Handicapés
+    if "AAH" in droits_str:
+        cases.append("Case à cocher P17 3")
+
+    # ── Page 18 — Orientations établissements / services ─────────────────────
+    if "IME" in droits_str:
+        cases.append("Case à cocher P18 1")
+    if "SESSAD" in droits_str:
+        cases.append("Case à cocher P18 2")
+    if "ITEP" in droits_str:
+        cases.append("Case à cocher P18 3")
+    if "ULIS" in droits_str:
+        cases.append("Case à cocher P18 4")
+    if "ESAT" in droits_str:
+        cases.append("Case à cocher P18 5")
+    if "SAVS" in droits_str:
+        cases.append("Case à cocher P18 6")
+    if "SAMSAH" in droits_str:
+        cases.append("Case à cocher P18 7")
+    if "FAM" in droits_str:
+        cases.append("Case à cocher P18 8")
+    if "MAS" in droits_str:
+        cases.append("Case à cocher P18 9")
+
+    # ── Page 19 — Cartes et RQTH ─────────────────────────────────────────────
+    if any(t in droits_str for t in ("CMI", "CARTE MOBILITE", "CARTE INVALIDITE")):
+        cases.append("Case à cocher P19 1")
+    if "RQTH" in droits_str:
+        cases.append("Case à cocher P19 2")
+
+    logger.debug(f"_mapper_droits | droits={droits} | cases={cases}")
+    return cases
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  Point d'entrée public
 # ─────────────────────────────────────────────────────────────────────────────
 
