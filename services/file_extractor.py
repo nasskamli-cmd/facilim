@@ -85,10 +85,21 @@ def _extraire_pdf(contenu: bytes) -> dict[str, Any]:
 
 
 def _extraire_docx(contenu: bytes) -> dict[str, Any]:
-    """Extraction texte depuis un fichier Word (.docx) via python-docx."""
+    """Extraction texte depuis un fichier Word (.docx) via python-docx.
+    Note : python-docx ne supporte QUE le format .docx (XML). Le format .doc
+    binaire (Word 97-2003) n'est pas supporté et lèvera une erreur claire.
+    """
     import docx
 
-    doc      = docx.Document(io.BytesIO(contenu))
+    try:
+        doc = docx.Document(io.BytesIO(contenu))
+    except Exception as e:
+        raise ValueError(
+            "Impossible d'ouvrir ce fichier Word. "
+            "Assurez-vous qu'il s'agit d'un fichier .docx (Word 2007+). "
+            "Les anciens fichiers .doc (Word 97-2003) ne sont pas supportés — "
+            "ouvrez-le dans Word et enregistrez-le en .docx."
+        ) from e
     parties  = []
 
     # Paragraphes normaux

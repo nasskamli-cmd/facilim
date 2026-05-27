@@ -1046,7 +1046,11 @@
       </div>
 
       <div id="tab-upload" class="hidden" style="padding:14px 24px;">
-        <div class="upload-zone" id="upload-zone" onclick="document.getElementById('file-input').click()">
+        <div class="upload-zone" id="upload-zone"
+             onclick="document.getElementById('file-input').click()"
+             ondragover="event.preventDefault(); this.style.borderColor='var(--green)'; this.style.background='var(--green-light)';"
+             ondragleave="this.style.borderColor=''; this.style.background='';"
+             ondrop="event.preventDefault(); this.style.borderColor=''; this.style.background=''; handleFileDrop(event.dataTransfer.files);">
           <div class="upload-icon">📄</div>
           <div class="upload-text"><span>Cliquez pour importer</span> ou glissez vos fichiers ici</div>
           <div class="upload-sub">PDF, Word (.docx), image (.jpg, .png) — 50 Mo max</div>
@@ -1243,10 +1247,14 @@
       </div>
 
       <div id="enrich-tab-file" class="hidden" style="padding:14px 24px;">
-        <div class="upload-zone" onclick="document.getElementById('enrich-file-input').click()">
+        <div class="upload-zone" id="enrich-upload-zone"
+             onclick="document.getElementById('enrich-file-input').click()"
+             ondragover="event.preventDefault(); this.style.borderColor='var(--green)'; this.style.background='var(--green-light)';"
+             ondragleave="this.style.borderColor=''; this.style.background='';"
+             ondrop="event.preventDefault(); this.style.borderColor=''; this.style.background=''; afficherFichierEnrich(event.dataTransfer.files);">
           <div class="upload-icon">📎</div>
-          <div class="upload-text"><span>Cliquez pour importer</span></div>
-          <div class="upload-sub">PDF, Word, image (.jpg, .png) — 50 Mo max</div>
+          <div class="upload-text"><span>Cliquez pour importer</span> ou glissez le fichier ici</div>
+          <div class="upload-sub">PDF, Word (.docx), image (.jpg, .png) — 50 Mo max</div>
           <input type="file" id="enrich-file-input" accept=".pdf,.docx,.jpg,.jpeg,.png" class="hidden"
                  onchange="afficherFichierEnrich(this.files)" />
         </div>
@@ -1616,6 +1624,25 @@
       document.getElementById('file-list').textContent = _fichiersSelectionnes.map(f => f.name).join(', ');
     });
 
+    function handleFileDrop(files) {
+      if (!files || !files.length) return;
+      const EXTS_OK = ['.pdf', '.docx', '.jpg', '.jpeg', '.png'];
+      const valides = Array.from(files).filter(f => {
+        const ext = f.name.substring(f.name.lastIndexOf('.')).toLowerCase();
+        return EXTS_OK.includes(ext);
+      });
+      const rejetes = Array.from(files).filter(f => {
+        const ext = f.name.substring(f.name.lastIndexOf('.')).toLowerCase();
+        return !EXTS_OK.includes(ext);
+      });
+      if (rejetes.length) {
+        alert('Format non supporté : ' + rejetes.map(f => f.name).join(', ') + '\n\nFormats acceptés : PDF, Word (.docx), image (.jpg, .png)');
+      }
+      if (!valides.length) return;
+      _fichiersSelectionnes = valides;
+      document.getElementById('file-list').textContent = '📎 ' + valides.map(f => f.name).join(', ');
+    }
+
     async function submitDossier() {
       const dept           = document.getElementById('dept').value;
       const telephone      = document.getElementById('telephone').value.trim();
@@ -1646,12 +1673,33 @@
           const textesParts = [];
           for (const f of _fichiersSelectionnes) {
             const fd = new FormData(); fd.append('file', f);
-            const r  = await fetch('/api/v1/extract-text', { method: 'POST', body: fd, credentials: 'include' });
-            if (r.ok) { const d = await r.json(); if (d.texte) textesParts.push(d.texte); }
+            let r;
+            try {
+              r = await fetch('/api/v1/extract-text', { method: 'POST', body: fd, credentials: 'include' });
+            } catch (netErr) {
+              document.getElementById('upload-progress').classList.add('hidden');
+              alert('Impossible de joindre le serveur lors de l\'extraction.\n\nVérifiez votre connexion.');
+              btn.textContent = "Lancer l'analyse IA →"; btn.disabled = false; return;
+            }
+            if (r.ok) {
+              const d = await r.json();
+              if (d.texte) textesParts.push(d.texte);
+              if (d.avertissement) console.warn('[extract-text] ' + d.avertissement);
+            } else {
+              let errDetail = `Erreur ${r.status}`;
+              try { const e = await r.json(); errDetail = typeof e.detail === 'string' ? e.detail : JSON.stringify(e.detail); } catch(_) {}
+              const libelle = {401:'Session expirée — rechargez la page et reconnectez-vous.', 413:'Fichier trop volumineux (limite 20 Mo).', 422:'Format non supporté ou fichier vide.', 500:'Erreur serveur lors de l\'extraction.'}[r.status] || errDetail;
+              document.getElementById('upload-progress').classList.add('hidden');
+              alert('Impossible d\'extraire le fichier "' + f.name + '" :\n\n' + libelle);
+              btn.textContent = "Lancer l'analyse IA →"; btn.disabled = false; return;
+            }
           }
           texte = textesParts.join('\n\n---\n\n');
           document.getElementById('upload-progress').classList.add('hidden');
-          if (!texte.trim()) { alert('Aucun texte exploitable extrait.'); btn.textContent = "Lancer l'analyse IA →"; btn.disabled = false; return; }
+          if (!texte.trim()) {
+            alert('Aucun texte exploitable extrait du fichier.\n\nSi c\'est un PDF scanné, passez par l\'onglet "Saisie libre" et copiez-collez le contenu.');
+            btn.textContent = "Lancer l'analyse IA →"; btn.disabled = false; return;
+          }
         } else {
           texte = document.getElementById('texte-brut').value.trim();
           if (!texte) { alert('Veuillez saisir les éléments du dossier.'); btn.textContent = "Lancer l'analyse IA →"; btn.disabled = false; return; }
