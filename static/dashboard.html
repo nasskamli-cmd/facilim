@@ -356,6 +356,8 @@
     .badge-archive   .badge-dot { background: #CBD5E1; }
     .badge-bloque    { background: #FDF4FF; color: #6B21A8; }
     .badge-bloque    .badge-dot { background: #A855F7; }
+    .badge-valider   { background: #FFF7ED; color: #C2410C; }
+    .badge-valider   .badge-dot { background: #F97316; animation: pdot 1.2s infinite; }
     .badge-urgent    { background: #FEF2F2; color: #991B1B; }
     .badge-urgent    .badge-dot { background: var(--red); animation: pdot 1.4s infinite; }
     .badge-critique  { background: var(--red); color: #fff; }
@@ -852,6 +854,7 @@
         <button class="filter-pill active" onclick="setFilter('all',this)">Tous</button>
         <button class="filter-pill" onclick="setFilter('INCOMPLET',this)">⚠ Incomplets</button>
         <button class="filter-pill" onclick="setFilter('EN_COURS',this)">● En cours</button>
+        <button class="filter-pill" id="pill-valider" onclick="setFilter('DROITS_A_VALIDER',this)">🔶 À valider</button>
         <button class="filter-pill" onclick="setFilter('COMPLET',this)">✓ Complets</button>
         <button class="filter-pill" onclick="setFilter('BLOQUE',this)">⊘ Bloqués</button>
       </div>
@@ -1165,16 +1168,46 @@
           </div>
         </div>
 
-        <!-- Droits identifiés -->
+        <!-- Alertes moteur (FACILIM_MDPH_ENGINE v2) -->
+        <div class="detail-section" id="section-alertes" style="display:none;">
+          <div class="detail-section-title" style="color:#C2410C;">⚠ Alertes moteur</div>
+          <div id="d-alertes" style="display:flex;flex-direction:column;gap:6px;"></div>
+        </div>
+
+        <!-- Droits identifiés + droits oubliés -->
         <div class="detail-section" id="section-droits">
           <div class="detail-section-title">Droits identifiés</div>
           <ul class="detail-list" id="d-droits"></ul>
+        </div>
+        <div class="detail-section" id="section-droits-oublies" style="display:none;">
+          <div class="detail-section-title" style="color:#7C3AED;">💡 Droits oubliés à explorer</div>
+          <ul class="detail-list" id="d-droits-oublies" style="color:#7C3AED;"></ul>
+        </div>
+
+        <!-- Risques de refus -->
+        <div class="detail-section" id="section-risques" style="display:none;">
+          <div class="detail-section-title" style="color:#B45309;">🔴 Risques de refus détectés</div>
+          <div id="d-risques" style="display:flex;flex-direction:column;gap:6px;"></div>
         </div>
 
         <!-- Recommandation -->
         <div class="detail-section" id="section-reco">
           <div class="detail-section-title">Recommandation finale</div>
           <div class="detail-reco" id="d-reco"></div>
+        </div>
+
+        <!-- Expressions libres (collapsible) -->
+        <div class="detail-section" id="section-expr-libres" style="display:none;">
+          <div class="detail-section-toggle" onclick="toggleSection('expr-body')">
+            <div class="detail-section-title" style="margin-bottom:0;">📝 Textes rédigés (CERFA / Projet de vie)</div>
+            <span class="toggle-arr" id="expr-body-arrow">▼</span>
+          </div>
+          <div id="expr-body" class="hidden" style="margin-top:10px;display:flex;flex-direction:column;gap:10px;">
+            <div id="d-expr-projet"     style="display:none;"></div>
+            <div id="d-expr-quotidien"  style="display:none;"></div>
+            <div id="d-expr-emploi"     style="display:none;"></div>
+            <div id="d-expr-autonomie"  style="display:none;"></div>
+          </div>
         </div>
 
         <!-- Infos générales (collapsible) -->
@@ -1223,6 +1256,51 @@
         <button class="btn-relance-sm" id="btn-force-relance-detail" onclick="forceRelanceFromDetail()" style="display:none;">📱 Relancer WA</button>
         <button class="btn-enrich-sm"  id="btn-enrich-from-detail"  onclick="enrichFromDetail()"       style="display:none;">+ Enrichir</button>
         <button class="btn-cancel" onclick="closeDetailModal()">Fermer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ MODAL — VALIDATION DROITS ════════════════════════════════════════════ -->
+  <div class="modal-overlay" id="modal-validation" onclick="if(event.target===this)closeValidationModal()">
+    <div class="modal" style="max-width:580px;">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title">🔶 Droits proposés — à valider</div>
+          <div class="modal-sub" id="val-sub">Vérifiez et ajustez la liste avant l'envoi du CERFA</div>
+        </div>
+        <button class="modal-close" onclick="closeValidationModal()">✕</button>
+      </div>
+
+      <div style="padding:8px 24px 0;">
+        <div style="background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;padding:12px 16px;font-size:13px;color:#1E40AF;line-height:1.6;">
+          <strong>ℹ Posture :</strong> L'IA a analysé la situation et <em>propose</em> les droits
+          auxquels la personne pourrait <strong>prétendre</strong>. Votre rôle est de valider cette
+          liste avec la famille. Vous pouvez ajouter ou retirer des droits selon votre jugement professionnel.
+          Un droit est une <em>ouverture de droit possible</em> — c'est la MDPH qui décide in fine.
+        </div>
+      </div>
+
+      <div style="padding:16px 24px;" id="val-droits-container">
+        <div style="font-size:12px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;">
+          Droits auxquels la personne pourrait prétendre (proposition IA)
+        </div>
+        <div id="val-droits-list" style="display:flex;flex-direction:column;gap:6px;"></div>
+
+        <div style="font-size:12px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;margin:16px 0 10px;">
+          Ajouter un droit
+        </div>
+        <div id="val-droits-extra" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
+      </div>
+
+      <div id="val-warning" style="display:none;margin:0 24px 8px;padding:10px 14px;background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;font-size:12px;color:#991B1B;line-height:1.5;"></div>
+
+      <div class="modal-footer" style="justify-content:space-between;align-items:center;">
+        <button onclick="closeValidationModal()" style="padding:8px 16px;border:1px solid var(--border);background:var(--surface);border-radius:8px;font-size:13px;cursor:pointer;font-family:inherit;">
+          Annuler
+        </button>
+        <button id="val-send-btn" onclick="confirmerValidationDroits()" style="padding:8px 20px;background:#1B3A6B;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;">
+          ✓ Confirmer et générer le CERFA
+        </button>
       </div>
     </div>
   </div>
@@ -1338,12 +1416,13 @@
 
     function badgeHtml(statut) {
       const map = {
-        'COMPLET':   `<span class="badge badge-complet"><span class="badge-dot"></span>Complet</span>`,
-        'INCOMPLET': `<span class="badge badge-incomplet"><span class="badge-dot"></span>Incomplet</span>`,
-        'EN_COURS':  `<span class="badge badge-cours"><span class="badge-dot"></span>En cours</span>`,
-        'ERREUR':    `<span class="badge badge-erreur"><span class="badge-dot"></span>Erreur</span>`,
-        'ARCHIVE':   `<span class="badge badge-archive"><span class="badge-dot"></span>Archivé</span>`,
-        'BLOQUE':    `<span class="badge badge-bloque"><span class="badge-dot"></span>Bloqué</span>`,
+        'COMPLET':          `<span class="badge badge-complet"><span class="badge-dot"></span>Complet</span>`,
+        'INCOMPLET':        `<span class="badge badge-incomplet"><span class="badge-dot"></span>Incomplet</span>`,
+        'EN_COURS':         `<span class="badge badge-cours"><span class="badge-dot"></span>En cours</span>`,
+        'ERREUR':           `<span class="badge badge-erreur"><span class="badge-dot"></span>Erreur</span>`,
+        'ARCHIVE':          `<span class="badge badge-archive"><span class="badge-dot"></span>Archivé</span>`,
+        'BLOQUE':           `<span class="badge badge-bloque"><span class="badge-dot"></span>Bloqué</span>`,
+        'DROITS_A_VALIDER': `<span class="badge badge-valider"><span class="badge-dot"></span>Droits à valider</span>`,
       };
       return map[statut] || `<span class="badge">${statut}</span>`;
     }
@@ -1501,6 +1580,10 @@
               ${['INCOMPLET','EN_COURS'].includes(d.statut)
                 ? `<button class="btn-act ba-relance" onclick="forceRelance('${d.dossier_id}', this)">Relancer</button>`
                 : ''}
+              ${d.statut === 'DROITS_A_VALIDER'
+                ? `<button class="btn-act" style="background:#FFF7ED;color:#C2410C;border:1px solid #FED7AA;font-weight:700;"
+                           onclick="openValidationModal('${d.dossier_id}')">🔶 Valider droits</button>`
+                : ''}
               <button class="btn-act ba-score"  onclick="openScoreModal('${d.dossier_id}')">Score</button>
               <button class="ba-del" onclick="supprimerDossier('${d.dossier_id}')" title="Supprimer">🗑</button>
             </div>
@@ -1531,6 +1614,7 @@
         const complets    = stats.complets ?? _allDossiers.filter(d => d.statut === 'COMPLET').length;
         const urgents     = stats.urgents  ?? _allDossiers.filter(d => d.urgence && d.urgence !== 'normal').length;
         const bloques     = stats.bloques  ?? _allDossiers.filter(d => d.statut === 'BLOQUE').length;
+        const aValider    = _allDossiers.filter(d => d.statut === 'DROITS_A_VALIDER').length;
 
         document.getElementById('stat-total').textContent    = total;
         document.getElementById('stat-actifs').textContent   = actifs;
@@ -1540,14 +1624,38 @@
         document.getElementById('stat-bloques').textContent  = bloques;
         document.getElementById('stat-taux').textContent     = total ? Math.round(complets / total * 100) + '% de complétion' : '—';
 
+        // Pill droits à valider — afficher uniquement si > 0
+        const pillValider = document.getElementById('pill-valider');
+        if (pillValider) {
+          pillValider.innerHTML = aValider > 0
+            ? `🔶 À valider <span style="background:#F97316;color:#fff;border-radius:10px;padding:1px 6px;font-size:10px;margin-left:4px;">${aValider}</span>`
+            : '🔶 À valider';
+        }
+
         updateQuotaIndicator(actifs);
 
         // Nav badge urgents
         const nb = document.getElementById('nav-badge-urgent');
         if (nb) { nb.textContent = urgents; nb.style.display = urgents > 0 ? '' : 'none'; }
 
-        // Attention banner
+        // Bannière droits à valider (prioritaire sur incomplets)
         const banner = document.getElementById('attention-banner');
+        const validerList = _allDossiers.filter(d => d.statut === 'DROITS_A_VALIDER');
+        if (validerList.length) {
+          banner.classList.remove('hidden');
+          document.getElementById('attention-title').textContent =
+            validerList.length === 1
+              ? '1 dossier est prêt — validez les droits avant envoi'
+              : `${validerList.length} dossiers prêts — validez les droits avant envoi`;
+          const noms = validerList.slice(0, 3).map(d => {
+            const n = ((d.prenom_enfant||'') + ' ' + (d.nom_enfant||'')).trim();
+            return n || d.dossier_id?.slice(0, 6) || '—';
+          });
+          const extra = validerList.length > 3 ? ` et ${validerList.length - 3} autre(s)` : '';
+          document.getElementById('attention-body').innerHTML =
+            `Cliquez sur <strong>🔶 Valider droits</strong> pour confirmer les droits IA et envoyer le CERFA. Concernés : <strong>${noms.join(', ')}${extra}</strong>.`;
+        } else {
+          // Attention banner incomplets (fallback)
         const incList = _allDossiers.filter(d => d.statut === 'INCOMPLET');
         if (incList.length) {
           banner.classList.remove('hidden');
@@ -1563,6 +1671,7 @@
         } else {
           banner.classList.add('hidden');
         }
+        } // fin else (pas de droits à valider)
 
         renderDossiers();
       } catch (e) {
@@ -1931,10 +2040,69 @@
           document.getElementById('detail-score-hint').textContent = '';
         }
 
-        // Droits
+        // Droits identifiés
         const droits = a.droits_identifies || [];
         document.getElementById('section-droits').style.display = droits.length ? '' : 'none';
         if (droits.length) document.getElementById('d-droits').innerHTML = droits.map(x => `<li>${x}</li>`).join('');
+
+        // ── FACILIM_MDPH_ENGINE v2 — nouveaux champs ────────────────────────
+
+        // Alertes moteur
+        const alertes = a.alertes || [];
+        const secAlertes = document.getElementById('section-alertes');
+        if (alertes.length) {
+          secAlertes.style.display = '';
+          document.getElementById('d-alertes').innerHTML = alertes.map(al => {
+            const cls = al.includes('REFUS') ? 'style="background:#FEF2F2;border:1px solid #FECACA;border-radius:7px;padding:8px 11px;font-size:12.5px;color:#B91C1C;"'
+                      : al.includes('MANQUANTE') ? 'style="background:#FFFBEB;border:1px solid #FDE68A;border-radius:7px;padding:8px 11px;font-size:12.5px;color:#92400E;"'
+                      : 'style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:7px;padding:8px 11px;font-size:12.5px;"';
+            return `<div ${cls}>${al}</div>`;
+          }).join('');
+        } else { secAlertes.style.display = 'none'; }
+
+        // Droits oubliés
+        const droitsOublies = a.droits_oublies_detectes || [];
+        const secOublies = document.getElementById('section-droits-oublies');
+        if (droitsOublies.length) {
+          secOublies.style.display = '';
+          document.getElementById('d-droits-oublies').innerHTML = droitsOublies.map(x => `<li>💡 ${x}</li>`).join('');
+        } else { secOublies.style.display = 'none'; }
+
+        // Risques de refus
+        const risques = a.risques_refus || [];
+        const secRisques = document.getElementById('section-risques');
+        if (risques.length) {
+          secRisques.style.display = '';
+          document.getElementById('d-risques').innerHTML = risques.map(r => {
+            const droit = typeof r === 'object' ? (r.droit || '') : '';
+            const risque = typeof r === 'object' ? (r.risque || r) : r;
+            const remed  = typeof r === 'object' ? (r.remédiation || r.remediation || '') : '';
+            return `<div style="background:#FFFBEB;border:1px solid #FDE68A;border-radius:7px;padding:9px 12px;font-size:12.5px;">
+              <b style="color:#92400E;">${droit ? droit + ' — ' : ''}${risque}</b>
+              ${remed ? `<div style="margin-top:4px;color:#78350F;">→ ${remed}</div>` : ''}
+            </div>`;
+          }).join('');
+        } else { secRisques.style.display = 'none'; }
+
+        // Expressions libres
+        const el = a.expressions_libres || {};
+        const hasExpr = el.projet_de_vie || el.vie_quotidienne || el.emploi_formation || el.autonomie;
+        const secExpr = document.getElementById('section-expr-libres');
+        if (hasExpr) {
+          secExpr.style.display = '';
+          const _renderExpr = (id, label, txt) => {
+            const el2 = document.getElementById(id);
+            if (txt) {
+              el2.style.display = '';
+              el2.innerHTML = `<div style="font-size:12px;font-weight:600;color:var(--text-2);margin-bottom:4px;">${label}</div>
+                <div style="background:#F8FAFC;border:1px solid var(--border);border-radius:7px;padding:10px 12px;font-size:12.5px;line-height:1.6;white-space:pre-wrap;">${txt}</div>`;
+            } else { el2.style.display = 'none'; }
+          };
+          _renderExpr('d-expr-projet',    '🎯 Projet de vie',        el.projet_de_vie);
+          _renderExpr('d-expr-quotidien', '🏠 Vie quotidienne',      el.vie_quotidienne);
+          _renderExpr('d-expr-emploi',    '💼 Emploi / Formation',   el.emploi_formation);
+          _renderExpr('d-expr-autonomie', '🤲 Autonomie',            el.autonomie);
+        } else { secExpr.style.display = 'none'; }
 
         // Recommandation
         const reco = a.recommandation_finale || '';
@@ -1979,6 +2147,143 @@
         document.getElementById('detail-body').classList.remove('hidden');
       } catch (e) {
         document.getElementById('detail-loading').innerHTML = `<div style="text-align:center;padding:2rem;color:var(--red);font-size:13px;">Erreur : ${e.message}</div>`;
+      }
+    }
+
+    // ── Modal validation droits ────────────────────────────────────────────────
+    const DROITS_CATALOGUE = [
+      'AAH', 'PCH', 'AEEH', 'RQTH', 'ORP', 'CRP', 'CPO', 'CMI',
+      'ESAT', 'IME', 'SESSAD', 'SAVS', 'SAMSAH', 'MAS', 'FAM',
+    ];
+    const DROITS_WARNINGS = {
+      'PCH': 'PCH : À inclure uniquement si une aide humaine régulière est documentée (auxiliaire, aidant, AVS…). Sans cela, la MDPH peut rejeter.',
+      'AAH': 'AAH : La MDPH vérifiera les ressources. Prévenez la famille que le plafond est strict.',
+      'AEEH': 'AEEH : Réservée aux moins de 20 ans. Pour un adulte, c\'est AAH qui s\'applique.',
+      'CMI': 'CMI : La MDPH peut refuser sans taux médical documenté. À confirmer avec le médecin.',
+      'PCH+ACTP': 'PCH et ACTP ne sont pas cumulables — retirez l\'un des deux.',
+    };
+
+    let _validationDossierId = null;
+    let _validationDroitsCoches = new Set();
+
+    function openValidationModal(dossierId) {
+      _validationDossierId = dossierId;
+      const dossier = (_allDossiers || []).find(d => d.dossier_id === dossierId);
+      const analyse = dossier?.analyse || {};
+      const droits  = analyse.droits_identifies || [];
+
+      // Sous-titre avec nom
+      const nom = [dossier?.prenom_enfant, dossier?.nom_enfant].filter(Boolean).join(' ') || dossierId.slice(0, 8);
+      document.getElementById('val-sub').textContent = `Dossier de ${nom} — confirmez les droits avant envoi du CERFA`;
+
+      // Initialiser les droits cochés
+      _validationDroitsCoches = new Set(droits);
+
+      // Afficher les droits proposés (avec checkboxes)
+      const listEl = document.getElementById('val-droits-list');
+      listEl.innerHTML = droits.length
+        ? droits.map(d => `
+            <label style="display:flex;align-items:center;gap:10px;padding:8px 12px;border:1px solid var(--border-light);border-radius:8px;cursor:pointer;font-size:13px;background:var(--surface);">
+              <input type="checkbox" checked data-droit="${d}"
+                     onchange="_toggleDroit('${d}', this.checked)"
+                     style="width:16px;height:16px;accent-color:#1B3A6B;cursor:pointer;">
+              <strong style="color:var(--text-1);">${d}</strong>
+              ${DROITS_WARNINGS[d] ? `<span style="font-size:11px;color:#92400E;margin-left:auto;">⚠ Vérifier</span>` : ''}
+            </label>`).join('')
+        : `<div style="font-size:13px;color:var(--text-3);font-style:italic;">Aucun droit proposé — ajoutez-en ci-dessous.</div>`;
+
+      // Afficher les droits supplémentaires non cochés
+      const extraEl = document.getElementById('val-droits-extra');
+      extraEl.innerHTML = DROITS_CATALOGUE
+        .filter(d => !droits.includes(d))
+        .map(d => `
+          <button onclick="_addDroit('${d}', this)"
+                  style="padding:5px 12px;background:#F8FAFC;border:1px solid var(--border);border-radius:20px;font-size:12px;font-weight:600;color:var(--text-2);cursor:pointer;font-family:inherit;transition:all 0.15s;">
+            + ${d}
+          </button>`).join('');
+
+      // Avertissements
+      _majWarnings();
+
+      document.getElementById('modal-validation').classList.add('open');
+    }
+
+    function closeValidationModal() {
+      document.getElementById('modal-validation').classList.remove('open');
+      _validationDossierId = null;
+    }
+
+    function _toggleDroit(droit, checked) {
+      if (checked) _validationDroitsCoches.add(droit);
+      else _validationDroitsCoches.delete(droit);
+      _majWarnings();
+    }
+
+    function _addDroit(droit, btn) {
+      if (_validationDroitsCoches.has(droit)) return;
+      _validationDroitsCoches.add(droit);
+      // Ajouter dans la liste principale
+      const listEl = document.getElementById('val-droits-list');
+      const item = document.createElement('label');
+      item.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 12px;border:1px solid var(--border-light);border-radius:8px;cursor:pointer;font-size:13px;background:#F0FFF4;';
+      item.innerHTML = `
+        <input type="checkbox" checked data-droit="${droit}"
+               onchange="_toggleDroit('${droit}', this.checked)"
+               style="width:16px;height:16px;accent-color:#1B3A6B;cursor:pointer;">
+        <strong style="color:var(--text-1);">${droit}</strong>
+        <span style="font-size:11px;color:#065F46;margin-left:auto;">Ajouté</span>`;
+      listEl.appendChild(item);
+      btn.disabled = true; btn.style.opacity = '0.4';
+      _majWarnings();
+    }
+
+    function _majWarnings() {
+      const warns = [..._validationDroitsCoches]
+        .filter(d => DROITS_WARNINGS[d])
+        .map(d => DROITS_WARNINGS[d]);
+      const wEl = document.getElementById('val-warning');
+      if (warns.length) {
+        wEl.style.display = '';
+        wEl.innerHTML = '<strong>Points d\'attention :</strong><ul style="margin:4px 0 0 16px;padding:0;">'
+          + warns.map(w => `<li>${w}</li>`).join('') + '</ul>';
+      } else {
+        wEl.style.display = 'none';
+      }
+    }
+
+    async function confirmerValidationDroits() {
+      if (!_validationDossierId) return;
+      const btn = document.getElementById('val-send-btn');
+      const droitsValides = [..._validationDroitsCoches];
+
+      if (!droitsValides.length) {
+        if (!confirm('Aucun droit sélectionné. Le CERFA sera généré sans demande de droit spécifique. Continuer ?')) return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = '⏳ Génération du CERFA…';
+
+      try {
+        const res = await fetch(`/api/v1/dossiers/${_validationDossierId}/valider-droits`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ droits_valides: droitsValides }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          closeValidationModal();
+          alert(`✅ CERFA généré et envoyé à la famille.\nDroits inclus dans le dossier : ${droitsValides.join(', ') || '(aucun)'}`);
+          loadDossiers();
+        } else {
+          alert(`❌ Erreur : ${data.detail || 'Une erreur est survenue.'}`);
+          btn.disabled = false;
+          btn.textContent = '✓ Valider et envoyer le CERFA';
+        }
+      } catch (e) {
+        alert(`❌ Erreur réseau : ${e.message}`);
+        btn.disabled = false;
+        btn.textContent = '✓ Valider et envoyer le CERFA';
       }
     }
 

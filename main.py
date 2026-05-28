@@ -51,6 +51,7 @@ from services.conversation_agent import (
     extract_cerfa_field_from_reply,
     get_next_cerfa_field,
     prepopuler_cerfa_depuis_dossier,
+    extraire_cerfa_depuis_bilan,
     MEDICAL_FIELDS,
     _MEDICAL_REDIRECT_SENT_KEY,
     _MESSAGE_CANAL_SECURISE,
@@ -277,7 +278,7 @@ async def page_dashboard(request: Request, session_token: str | None = Cookie(de
 
 @app.get("/")
 async def page_root(request: Request):
-    return FileResponse("static/login.html")
+    return FileResponse("static/index.html")
 
 
 # --------------------------------------------------------------------------- #
@@ -320,6 +321,49 @@ async def auth_logout(session_token: str | None = Cookie(default=None)):
     response = JSONResponse({"status": "logged_out"})
     response.delete_cookie("session_token")
     return response
+
+
+# --------------------------------------------------------------------------- #
+# ENDPOINT CONTACT — POST /api/v1/contact                                      #
+# --------------------------------------------------------------------------- #
+@app.post("/api/v1/contact", tags=["Public"])
+async def contact_form(body: dict = Body(embed=False)):
+    """
+    Réception du formulaire de contact depuis la homepage Facilim.
+    Envoie un email de notification interne et retourne 200.
+    """
+    prenom   = str(body.get("prenom", "")).strip()
+    nom      = str(body.get("nom", "")).strip()
+    email    = str(body.get("email", "")).strip()
+    structure = str(body.get("structure", "")).strip()
+    type_structure = str(body.get("type", "")).strip()
+    message  = str(body.get("message", "")).strip()
+
+    if not email or not message:
+        raise HTTPException(status_code=422, detail="Email et message requis.")
+
+    logger.info(
+        f"[CONTACT] Nouveau message | {prenom} {nom} <{email}> | "
+        f"structure={structure!r} | type={type_structure!r} | "
+        f"aperçu={message[:80]!r}"
+    )
+
+    # Tentative d'envoi d'un email de notification interne
+    try:
+        from services.email_client import send_contact_notification
+        send_contact_notification(
+            prenom=prenom,
+            nom=nom,
+            email=email,
+            structure=structure,
+            type_structure=type_structure,
+            message=message,
+        )
+    except Exception as mail_err:
+        # Non bloquant : on log et on retourne quand même 200
+        logger.warning(f"[CONTACT] Email de notification non envoyé : {mail_err}")
+
+    return {"status": "received", "message": "Votre message a bien été reçu. Nous vous répondrons sous 24h."}
 
 
 # --------------------------------------------------------------------------- #
@@ -401,11 +445,30 @@ async def initiate_dossier(request: InitiateDossierRequest):
 
         dossier["analyse"] = analyse
         dossier["statut"]  = analyse.get("statut", "INCOMPLET")
+
+        # ── Extraction des nouveaux champs FACILIM_MDPH_ENGINE v2 ───────────
+        # Stocker les champs enrichis directement dans l'analyse pour le dashboard
+        _enrich_analyse_v2(analyse)
+
+        # ── Extraction CERFA complète depuis le texte du bilan ───────────────
+        # AVANT tout envoi WhatsApp : on extrait le maximum de champs depuis
+        # le document uploadé pour ne poser via WhatsApp que ce qui manque réellement.
+        try:
+            _cerfa_rep_init = dossier.get("cerfa_reponses") or {}
+            prepopuler_cerfa_depuis_dossier(_cerfa_rep_init, dossier)
+            _cerfa_rep_init = extraire_cerfa_depuis_bilan(texte_anon, _cerfa_rep_init)
+            dossier["cerfa_reponses"] = _cerfa_rep_init
+            logger.info(
+                f"[CERFA-INIT] Pré-extraction bilan : "
+                f"{sum(1 for v in _cerfa_rep_init.values() if v)} champs renseignés"
+            )
+        except Exception as _cerfa_init_err:
+            logger.warning(f"[CERFA-INIT] Extraction bilan échouée (non bloquant) : {_cerfa_init_err}")
+
         database.save_dossier(dossier)
 
         questions_falc_envoyees: list[str] = []
         whatsapp_envoye = False
-        _is_enfant_intro = True  # valeur par defaut
         _is_enfant_intro = True  # valeur par defaut
 
         # ── Étape 4 : Gestion du cas INCOMPLET ─────────────────────────────
@@ -549,46 +612,13 @@ async def initiate_dossier(request: InitiateDossierRequest):
                     dossier["questions_en_attente"] = len(questions_falc_bloquage)
 
             else:
-                email_famille = dossier.get("email_famille")
-                if email_famille:
-                    try:
-                        pdf_bytes   = generer_pdf_dossier(dossier)
-                        cerfa_bytes = None
-                        try:
-                            cerfa_bytes = remplir_cerfa(dossier)
-                        except Exception as cerfa_err:
-                            logger.warning(
-                                f"CERFA non généré (initiation) : {cerfa_err}",
-                                exc_info=True,  # log complet → Railway logs
-                            )
-                        envoye = send_dossier_pdf(
-                            email_famille, pdf_bytes, dossier["dossier_id"],
-                            cerfa_bytes=cerfa_bytes,
-                        )
-                        logger.info(
-                            f"PDF + CERFA {'envoyés' if envoye else 'ÉCHEC envoi'} "
-                            f"| email={email_famille} | dossier={dossier_id}"
-                        )
-                        if envoye:
-                            try:
-                                phone = dossier.get("telephone_famille")
-                                if phone:
-                                    msg_complet = _construire_message_complet(dossier)
-                                    send_text_message(phone, msg_complet)
-                            except Exception as wa_err:
-                                logger.warning(f"Message scoring WhatsApp non envoyé (initiation) : {wa_err}")
-                        if envoye:
-                            try:
-                                purge_dossier_pii(dossier_id)
-                            except Exception as rgpd_err:
-                                logger.error(f"Purge RGPD échouée (initiation) : {rgpd_err}")
-                    except Exception as pdf_err:
-                        logger.error(f"Erreur génération/envoi PDF (initiation) : {pdf_err}")
-                else:
-                    logger.warning(
-                        f"Dossier COMPLET sans email famille — PDF NON ENVOYÉ | "
-                        f"id={dossier_id} | email_famille={dossier.get('email_famille')!r}"
-                    )
+                # ── Dossier prêt → en attente de validation des droits par l'éducateur ──
+                dossier["statut"] = "DROITS_A_VALIDER"
+                database.save_dossier(dossier)
+                logger.info(
+                    f"Dossier {dossier_id} → DROITS_A_VALIDER "
+                    f"| droits proposés={analyse.get('droits_identifies', [])}"
+                )
 
         dossier["questions_falc_envoyees"] = questions_falc_envoyees
         dossier["whatsapp_envoye"]         = whatsapp_envoye
@@ -682,6 +712,7 @@ async def _process_whatsapp_async(
             )
 
         dossier["analyse"] = nouvelle_analyse
+        _enrich_analyse_v2(nouvelle_analyse)
         nouveau_statut = nouvelle_analyse.get("statut", "INCOMPLET")
 
         if nouveau_statut == "COMPLET":
@@ -738,47 +769,13 @@ async def _process_whatsapp_async(
                 database.save_dossier(dossier)
 
             else:
-                email_famille = dossier.get("email_famille")
-                if email_famille:
-                    try:
-                        pdf_bytes   = await asyncio.to_thread(generer_pdf_dossier, dossier)
-                        cerca_bytes = None
-                        try:
-                            cerca_bytes = await asyncio.to_thread(remplir_cerfa, dossier)
-                        except Exception as cerfa_err:
-                            logger.warning(
-                                f"CERFA non généré (webhook) : {cerfa_err}",
-                                exc_info=True,  # log complet → Railway logs
-                            )
-                        envoye = await asyncio.to_thread(
-                            send_dossier_pdf,
-                            email_famille, pdf_bytes, dossier["dossier_id"],
-                            cerca_bytes,
-                        )
-                        logger.info(
-                            f"PDF + CERFA {'envoyés' if envoye else 'ÉCHEC'} "
-                            f"| email={email_famille} | dossier={dossier['dossier_id']}"
-                        )
-                        if envoye:
-                            try:
-                                phone = dossier.get("telephone_famille")
-                                if phone:
-                                    msg_complet = _construire_message_complet(dossier)
-                                    await asyncio.to_thread(send_text_message, phone, msg_complet)
-                            except Exception as wa_err:
-                                logger.warning(f"Message scoring WhatsApp non envoyé (webhook) : {wa_err}")
-                        if envoye:
-                            try:
-                                purge_dossier_pii(dossier["dossier_id"])
-                            except Exception as rgpd_err:
-                                logger.error(f"Purge RGPD échouée (webhook) : {rgpd_err}")
-                    except Exception as pdf_err:
-                        logger.error(f"Erreur génération/envoi PDF : {pdf_err}")
-                else:
-                    logger.warning(
-                        f"Dossier COMPLET sans email famille — PDF NON ENVOYÉ (webhook) | "
-                        f"id={dossier['dossier_id']} | email_famille={dossier.get('email_famille')!r}"
-                    )
+                # ── Dossier prêt → en attente de validation des droits par l'éducateur ──
+                dossier["statut"] = "DROITS_A_VALIDER"
+                database.save_dossier(dossier)
+                logger.info(
+                    f"Dossier {dossier['dossier_id']} → DROITS_A_VALIDER (webhook) "
+                    f"| droits proposés={nouvelle_analyse.get('droits_identifies', [])}"
+                )
 
         # ── Réponse intelligente via agent conversationnel ────────────────────
         if nouveau_statut == "INCOMPLET":
@@ -1020,6 +1017,110 @@ async def get_dossier(dossier_id: str):
         created_at=dossier.get("created_at", ""),
         updated_at=dossier.get("updated_at", ""),
     )
+
+
+# --------------------------------------------------------------------------- #
+# ENDPOINT 4b — POST /api/v1/dossiers/{dossier_id}/valider-droits             #
+# Validation des droits proposés par l'IA — déclenche la génération du CERFA  #
+# --------------------------------------------------------------------------- #
+@app.post(
+    "/api/v1/dossiers/{dossier_id}/valider-droits",
+    summary="Valider les droits proposés et envoyer le dossier CERFA",
+    tags=["Dossiers"],
+)
+async def valider_droits_dossier(
+    dossier_id: str,
+    body: dict = Body(embed=False),
+):
+    """
+    Permet à l'éducateur de valider (ajouter/retirer/confirmer) les droits identifiés
+    par l'IA avant l'envoi du CERFA à la famille.
+
+    Body JSON attendu :
+      { "droits_valides": ["AAH", "RQTH", "CRP"] }
+    """
+    dossier = database.get_dossier_by_id(dossier_id)
+    if not dossier:
+        raise HTTPException(status_code=404, detail=f"Dossier '{dossier_id}' introuvable.")
+
+    if dossier.get("statut") not in ("DROITS_A_VALIDER", "COMPLET", "INCOMPLET"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Le dossier est au statut '{dossier.get('statut')}' — validation des droits non applicable.",
+        )
+
+    droits_valides: list[str] = body.get("droits_valides", [])
+    if not isinstance(droits_valides, list):
+        raise HTTPException(status_code=422, detail="droits_valides doit être une liste.")
+
+    # Mise à jour des droits dans l'analyse
+    analyse = dossier.get("analyse") or {}
+    analyse["droits_identifies"]             = droits_valides
+    analyse["droits_valides_par_educateur"]  = True
+    analyse["droits_valides_at"]             = datetime.now(timezone.utc).isoformat()
+    dossier["analyse"]   = analyse
+    dossier["statut"]    = "COMPLET"
+    dossier["updated_at"] = datetime.now(timezone.utc).isoformat()
+    database.save_dossier(dossier)
+
+    logger.info(
+        f"[VALIDATION] Dossier {dossier_id} — droits validés par éducateur : {droits_valides}"
+    )
+
+    # ── Génération PDF + CERFA + envoi email ──────────────────────────────────
+    email_famille = dossier.get("email_famille")
+    if not email_famille:
+        return {
+            "status": "ok",
+            "message": "Droits validés. Aucun email famille renseigné — PDF non envoyé.",
+            "droits_valides": droits_valides,
+        }
+
+    try:
+        pdf_bytes   = await asyncio.to_thread(generer_pdf_dossier, dossier)
+        cerfa_bytes = None
+        pch_bytes   = None
+        rapo_bytes  = None
+        try:
+            cerfa_bytes = await asyncio.to_thread(remplir_cerfa, dossier)
+        except Exception as cerfa_err:
+            logger.warning(f"[VALIDATION] CERFA non généré : {cerfa_err}", exc_info=True)
+
+        envoye = await asyncio.to_thread(
+            send_dossier_pdf,
+            email_famille, pdf_bytes, dossier_id,
+            cerfa_bytes, pch_bytes, rapo_bytes,
+        )
+        logger.info(
+            f"[VALIDATION] PDF + CERFA {'envoyés' if envoye else 'ÉCHEC'} "
+            f"| email={email_famille} | dossier={dossier_id}"
+        )
+
+        if envoye:
+            # Notification WhatsApp à la famille
+            phone = dossier.get("telephone_famille")
+            if phone:
+                try:
+                    msg = _construire_message_complet(dossier)
+                    await asyncio.to_thread(send_text_message, phone, msg)
+                except Exception as wa_err:
+                    logger.warning(f"[VALIDATION] Message WhatsApp non envoyé : {wa_err}")
+            # Purge RGPD
+            try:
+                purge_dossier_pii(dossier_id)
+            except Exception as rgpd_err:
+                logger.error(f"[VALIDATION] Purge RGPD échouée : {rgpd_err}")
+
+        return {
+            "status":        "ok",
+            "message":       "Droits validés et dossier CERFA envoyé à la famille.",
+            "droits_valides": droits_valides,
+            "email_envoye":  envoye,
+        }
+
+    except Exception as pdf_err:
+        logger.error(f"[VALIDATION] Erreur génération PDF : {pdf_err}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la génération du PDF : {pdf_err}")
 
 
 # --------------------------------------------------------------------------- #
@@ -1332,27 +1433,31 @@ async def _enrich_dossier_impl(
 
     dossier["analyse"] = nouvelle_analyse
     dossier["statut"]  = nouvelle_analyse.get("statut", "INCOMPLET")
+
+    # ── Extraction CERFA depuis le nouveau texte enrichi ─────────────────────
+    try:
+        _cerfa_rep_enrich = dossier.get("cerfa_reponses") or {}
+        prepopuler_cerfa_depuis_dossier(_cerfa_rep_enrich, dossier)
+        _cerfa_rep_enrich = extraire_cerfa_depuis_bilan(texte_ajoute, _cerfa_rep_enrich)
+        dossier["cerfa_reponses"] = _cerfa_rep_enrich
+        logger.info(
+            f"[ENRICH-CERFA] {sum(1 for v in _cerfa_rep_enrich.values() if v)} "
+            f"champs CERFA après extraction bilan enrichi"
+        )
+    except Exception as _ce:
+        logger.warning(f"[ENRICH-CERFA] Extraction bilan échouée (non bloquant) : {_ce}")
+
     database.save_dossier(dossier)
     logger.info(f"[ENRICH] Dossier {dossier_id} enrichi | statut={dossier['statut']}")
 
-    # ── Envoi PDF si dossier complet ──────────────────────────────────────────
+    # ── Dossier complet enrichi → en attente de validation des droits ────────
     if dossier["statut"] == "COMPLET":
-        email_famille = dossier.get("email_famille")
-        if email_famille:
-            try:
-                pdf_bytes   = generer_pdf_dossier(dossier)
-                cerfa_bytes = None
-                try:
-                    cerfa_bytes = remplir_cerfa(dossier)
-                except Exception as cerfa_err:
-                    logger.warning(
-                        f"[ENRICH] CERFA non généré : {cerfa_err}",
-                        exc_info=True,
-                    )
-                if send_dossier_pdf(email_famille, pdf_bytes, dossier_id, cerfa_bytes=cerfa_bytes):
-                    purge_dossier_pii(dossier_id)
-            except Exception as pdf_err:
-                logger.error(f"[ENRICH] Erreur envoi PDF : {pdf_err}")
+        dossier["statut"] = "DROITS_A_VALIDER"
+        database.save_dossier(dossier)
+        logger.info(
+            f"[ENRICH] Dossier {dossier_id} → DROITS_A_VALIDER "
+            f"| droits={dossier.get('analyse', {}).get('droits_identifies', [])}"
+        )
 
     return {
         "dossier_id":  dossier_id,
@@ -1714,6 +1819,79 @@ def _verifier_donnees_personnelles(dossier: dict) -> list[str]:
         )
 
     return questions
+
+
+def _enrich_analyse_v2(analyse: dict) -> None:
+    """
+    Normalise et complète les champs FACILIM_MDPH_ENGINE v2 dans l'analyse.
+    Appelé immédiatement après chaque appel LLM pour garantir la présence des
+    nouveaux champs même si le modèle ne les a pas tous retournés.
+    Modifie le dict en place — pas de retour.
+    """
+    # ── Garantir présence des nouvelles clés avec valeurs par défaut ──────────
+    analyse.setdefault("module",  "FACILIM_MDPH_ENGINE")
+    analyse.setdefault("version", "2.0")
+
+    # Sous-objet analyse (distinct du dict analyse principal — renommé en analyse_meta)
+    _meta = analyse.setdefault("analyse", {})
+    _meta.setdefault("profil", {})
+    _meta.setdefault("limitations", [])
+    _meta.setdefault("besoins_compensation", [])
+    _meta.setdefault("vulnerabilites", [])
+
+    analyse.setdefault("droits_oublies_detectes", [])
+    analyse.setdefault("risques_refus", [])
+    analyse.setdefault("pieces_manquantes", [])
+
+    # Expressions libres — textes rédigés prêts à l'emploi
+    _el = analyse.setdefault("expressions_libres", {})
+    _el.setdefault("projet_de_vie", "")
+    _el.setdefault("vie_quotidienne", "")
+    _el.setdefault("emploi_formation", "")
+    _el.setdefault("autonomie", "")
+
+    analyse.setdefault("alertes", [])
+    analyse.setdefault("validation_humaine_requise", True)
+
+    _sd = analyse.setdefault("score_dossier", {})
+    # Rétrocompatibilité : si score_global déjà présent, l'utiliser comme base
+    _sg = analyse.get("score_global", 50)
+    _sd.setdefault("completude", _sg)
+    _sd.setdefault("coherence",  _sg)
+    _sd.setdefault("solidite_estimee", _sg)
+    _sd.setdefault("risque_refus", max(0, 100 - _sg))
+
+    _nc = analyse.setdefault("niveau_confiance", {})
+    _nc.setdefault("global", _sg)
+    _nc.setdefault("zones_incertaines", [])
+
+    # ── Peupler description_situation depuis expressions_libres si vide ───────
+    # (utilisé par cerfa_filler._composer_description_p8 en fallback)
+    ds = analyse.get("donnees_structurees") or {}
+    if not ds.get("difficultes_quotidiennes") and _el.get("vie_quotidienne"):
+        ds["difficultes_quotidiennes"] = _el["vie_quotidienne"]
+    if not ds.get("projet_professionnel") and _el.get("emploi_formation"):
+        ds["projet_professionnel"] = _el["emploi_formation"]
+    if not ds.get("besoins_aide_narrative") and _el.get("autonomie"):
+        ds["besoins_aide_narrative"] = _el["autonomie"]
+
+    # ── Enrichir alertes depuis risques_refus (dédupliqué) ───────────────────
+    alertes_existantes = set(analyse.get("alertes", []))
+    for risque in analyse.get("risques_refus", []):
+        if isinstance(risque, dict):
+            msg = f"[RISQUE DE REFUS] {risque.get('droit', '')} : {risque.get('risque', '')}"
+        else:
+            msg = f"[RISQUE DE REFUS] {risque}"
+        if msg not in alertes_existantes:
+            alertes_existantes.add(msg)
+    for piece in analyse.get("pieces_manquantes", []):
+        if isinstance(piece, dict):
+            msg = f"[PIÈCE MANQUANTE] {piece.get('type', '')} ({piece.get('urgence', 'moyenne')})"
+        else:
+            msg = f"[PIÈCE MANQUANTE] {piece}"
+        if msg not in alertes_existantes:
+            alertes_existantes.add(msg)
+    analyse["alertes"] = sorted(alertes_existantes)[:10]  # max 10
 
 
 # --------------------------------------------------------------------------- #
