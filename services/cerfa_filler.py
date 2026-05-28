@@ -4,31 +4,33 @@ cerfa_filler.py — Pré-remplissage automatique du CERFA 15692*01 (MDPH nationa
 Couvre l'intégralité des sections remplissables sans intervention médicale,
 pour les dossiers enfants ET adultes :
 
-  Page 1  : Département MDPH + type de demande (1ère demande)
+  Page 1  : Département MDPH + type de demande + procédure simplifiée
   Page 2  : Identité complète (nom, prénom, DDN, NSS, genre, adresse, contact)
-  Page 3  : Représentant légal (uniquement si enfant ou adulte sous tutelle)
-  Page 4  : Situation familiale
-  Page 7  : Vie professionnelle (situation actuelle + projet professionnel)
-  Page 8  : Description narrative des difficultés (1ère pers. adulte / 3ème pers. enfant)
-  Page 9  : Aides et accompagnements déjà en place
-  Page 10 : Besoins en aide humaine
-  Page 11 : Besoins en aides techniques / aménagement logement
-  Page 13 : Logement (adresse + type + statut)
-  Page 17 : Demandes d'allocations (AEEH, PCH, AAH)
-  Page 18 : Orientations (IME, SESSAD, ITEP, ESAT, SAVS, SAMSAH, MAS, FAM)
-  Page 19 : Cartes et RQTH
+  Page 3  : Représentant légal / protection juridique + NSS parent
+  Page 4  : Situation familiale (signature laissée VIDE — signée par l'éducateur)
+  Page 5  : Lieu de vie / logement / mode de vie
+  Page 6  : Aides humaines et soins
+  Page 7  : Mobilité, transports, communication
+  Page 8  : Description narrative (situation + retentissements + projets de vie)
+  Pages 9-12 : Scolarité (enfants et jeunes majeurs)
+  Pages 13-16 : Situation professionnelle (adultes et jeunes majeurs)
+  Page 17 : Demandes allocations/droits (AAH, PCH, AEEH, CMI, ESMS)
+  Page 18 : Orientations professionnelles (RQTH, ORP, emploi accompagné, ESAT)
+  Page 20 : Aidant familial
   Bas de page : Nom / prénom répétés sur chaque page
 
-Section médicale (page 5) : laissée vide — remplie par le médecin.
+Section médicale (page 5 médicale) : laissée vide — remplie par le médecin traitant.
 
-Corrections apportées (v2) :
-  - Genre : cases OPTION P2 1 (Homme) / OPTION P2 2 (Femme) cochées depuis ds.genre
-  - NSS adulte : Numero SS 3 → Numero SS 17 (au lieu de N° SS Enfant X)
-  - Date B supprimée : ces champs remplissaient "date d'arrivée en France" par erreur
-  - P8 : texte narratif à la 1ère personne pour les adultes, 3ème pour les enfants
-           sans mention de RSDAE, ESAT, titres de section — humanisé via LLM dédié
-  - P17/P18/P19 : cochage via annotation directe (plus fiable que update_page_form_field_values)
-  - _mapper_droits : détection robuste par tokens, fallback besoins_aide_humaine
+Nuances expertes intégrées (v3 — 2025) :
+  - Signature page 4 : TOUJOURS laissée vide (signée par l'éducateur à l'impression)
+  - CMI priorité (station debout prolongée pénible) ≠ CMI stationnement (PMR/<200m)
+  - Emploi accompagné (P18 6) distinct de droit commun (P18 5 sans EA)
+  - Procédure simplifiée : UNIQUEMENT renouvellement sans réexamen + urgence droits
+  - NSS page 3 : NSS du parent déclarant (enfants), pas uniquement du bénéficiaire
+  - Ressources actuelles + frais liés au handicap : section B1
+  - P8 : structure narrative « situation → retentissements → projets de vie »
+  - Creton (P17 9) : jeune adulte >20 ans maintenu en établissement enfants
+  - Consentement partage informations (page 4) mappé depuis ds.consentement_informations
 """
 
 import io
@@ -53,19 +55,27 @@ def _composer_description_p8(
     juriste: str,
     elements_probants: list,
     is_enfant: bool,
+    projet_professionnel: str = "",
+    difficultes_quotidiennes: str = "",
+    besoins_aide: str = "",
 ) -> str:
     """
     Compose le texte narratif de la page 8 du CERFA 15692 :
-    « Description de la situation et des difficultés ».
+    « Description de la situation et des difficultés »
 
+    Structure : Situation actuelle → Retentissements fonctionnels → Projets de vie
     - Adulte : 1ère personne (« je ne peux pas… »)
     - Enfant  : 3ème personne (« il/elle ne peut pas… »)
-    - Sans mention de RSDAE, ESAT, titres de section, ni jargon administratif.
-    - Tente d'utiliser le LLM (gpt-4o-mini) pour humaniser le texte ;
-      en cas d'échec, assemble les données brutes disponibles.
+    - Phrases courtes, sans jargon, fort impact
+    - Référence implicite au cadre réglementaire GEVA
+    - Sans mention de RSDAE, ESAT, PCH, AAH, score, algorithme
     """
     # ── Assemblage du contexte brut ───────────────────────────────────────────
     parties = []
+    if difficultes_quotidiennes and difficultes_quotidiennes.strip():
+        parties.append(difficultes_quotidiennes.strip())
+    if besoins_aide and besoins_aide.strip():
+        parties.append(besoins_aide.strip())
     if geva_pro and geva_pro.strip():
         parties.append(geva_pro.strip())
     if juriste and juriste.strip():
@@ -76,7 +86,6 @@ def _composer_description_p8(
             parties.append(probants_str.strip())
 
     contexte_brut = "\n\n".join(parties).strip()
-
     if not contexte_brut:
         return ""
 
@@ -88,28 +97,45 @@ def _composer_description_p8(
         _settings = _get_settings()
         _client   = _openai.OpenAI(api_key=_settings.openai_api_key)
 
-        sujet     = "de l'enfant" if is_enfant else "de la personne"
-        personne  = "l'enfant (à la 3ème personne, ex : « il/elle ne peut pas… »)" \
-                    if is_enfant else \
-                    "la personne elle-même (à la 1ère personne, ex : « je ne peux pas… »)"
+        sujet    = "de l'enfant" if is_enfant else "de la personne"
+        personne = (
+            "l'enfant (à la 3ème personne, ex : « il/elle ne peut pas… »)"
+            if is_enfant else
+            "la personne elle-même (à la 1ère personne, ex : « je ne peux pas… »)"
+        )
+        projet_str = f"\nProjet de vie : {projet_professionnel}" if projet_professionnel else ""
 
         prompt = (
             f"Tu rédiges la section 'Description de la situation et des difficultés' "
             f"d'un formulaire MDPH pour {sujet}.\n"
-            f"Rédige ce texte du point de vue de {personne}.\n"
-            f"Règles :\n"
-            f"- Phrases simples, courtes, concrètes (pas de jargon médical)\n"
-            f"- Ne mentionne jamais : RSDAE, ESAT, PCH, AAH, MDPH, score, algorithme\n"
-            f"- Décris les difficultés quotidiennes réelles (ce que la personne ne peut pas faire seule)\n"
-            f"- Maximum 400 mots\n"
-            f"- Pas de titres, pas de listes à puces\n\n"
+            f"Rédige ce texte du point de vue de {personne}.\n\n"
+            f"Structure OBLIGATOIRE en 4 parties (sans titres, texte continu) :\n"
+            f"1. SITUATION ACTUELLE — qui est la personne, quel est son handicap/sa pathologie, "
+            f"   dans quel contexte elle vit (2-3 phrases)\n"
+            f"2. RETENTISSEMENTS FONCTIONNELS — ce qu'elle ne peut pas faire seule, "
+            f"   ce qui est difficile ou épuisant (3-5 phrases courtes et concrètes, fort impact)\n"
+            f"3. RETENTISSEMENTS DANS LA VIE QUOTIDIENNE HORS TRAVAIL — "
+            f"   ce que le handicap change concrètement au quotidien EN DEHORS du travail : "
+            f"   repas/alimentation, courses, déplacements, sorties en famille, loisirs, "
+            f"   vie à domicile, relations sociales, gestion de la fatigue et/ou des douleurs "
+            f"   (2-4 phrases concrètes, ne pas parler de travail dans cette partie)\n"
+            f"4. PROJET DE VIE — ce que la personne souhaite accomplir : aspirations personnelles, "
+            f"   autonomie souhaitée, projet professionnel ou de formation si pertinent "
+            f"   (1-2 phrases){projet_str}\n\n"
+            f"Règles strictes :\n"
+            f"- Phrases simples, courtes, concrètes (pas de jargon médical ni administratif)\n"
+            f"- Ne mentionne JAMAIS : RSDAE, PCH, AAH, MDPH, score, algorithme, GEVA\n"
+            f"- Exemples de formulations : 'ne peut pas faire ses courses seul', "
+            f"  'fatigue intense après 20 min de marche', 'a besoin d'aide pour préparer ses repas', "
+            f"  'ne peut pas accompagner ses enfants en sortie scolaire'\n"
+            f"- Maximum 500 mots, pas de titres, pas de listes à puces, texte continu\n\n"
             f"Informations disponibles :\n{contexte_brut}"
         )
 
         resp = _client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=500,
+            max_tokens=700,
             temperature=0.3,
         )
         texte = resp.choices[0].message.content.strip()
@@ -118,8 +144,8 @@ def _composer_description_p8(
 
     except Exception as e:
         logger.warning(f"[CERFA P8] LLM indisponible, fallback texte brut : {e}")
-        # Fallback : retourner le contexte brut nettoyé (max 2000 chars)
         return contexte_brut[:2000]
+
 
 _CERFA_PATH = Path(__file__).parent.parent / "static" / "forms" / "cerfa_15692.pdf"
 
@@ -265,6 +291,10 @@ def _mapper_droits(
     droits: list,
     is_enfant: bool,
     besoins_aide_humaine: bool,
+    cmi_priorite: bool = False,
+    cmi_stationnement: bool = False,
+    emploi_accompagne: bool = False,
+    creton: bool = False,
 ) -> list[str]:
     """
     Traduit la liste de droits identifiés par l'IA en noms de cases CERFA.
@@ -272,33 +302,36 @@ def _mapper_droits(
     Mapping vérifié par inspection directe des positions Y/X dans le PDF 15692*01 :
 
     ── PAGE 17 (E1 — Allocations et droits vie quotidienne) ──
-      P17 1  = AEEH            (enfants < 20 ans)
-      P17 2  = PCH             (enfants < 20 ans)
-      P17 3  = CMI invalidité  (enfants < 20 ans)
-      P17 4  = CMI stationnement (enfants < 20 ans)
-      P17 5  = AVPF            (enfants < 20 ans)
-      P17 6  = AAH             (adultes ≥ 20 ans)
+      P17 1  = AEEH                    (enfants < 20 ans)
+      P17 2  = PCH                     (enfants < 20 ans)
+      P17 3  = CMI invalidité/priorité (enfants < 20 ans) ← station debout pénible
+      P17 4  = CMI stationnement       (enfants < 20 ans) ← PMR / périmètre <200m
+      P17 5  = AVPF                    (enfants < 20 ans)
+      P17 6  = AAH                     (adultes ≥ 20 ans)
       P17 7  = Complément de ressources
-      P17 8  = Orientation ESMS adultes  (case unique — IME/SESSAD/ESAT/SAVS/SAMSAH/FAM/MAS)
-      P17 9  = Maintien Creton
+      P17 8  = Orientation ESMS adultes (case unique)
+      P17 9  = Maintien Creton         (>20 ans, maintenu en structure enfants)
       P17 10 = ACTP
       P17 11 = ACFP
-      P17 12 = PCH             (adultes ≥ 20 ans)
-      P17 13 = CMI invalidité  (adultes ≥ 20 ans)
-      P17 14 = CMI stationnement (adultes ≥ 20 ans)
-      P17 15 = AVPF            (adultes ≥ 20 ans)
+      P17 12 = PCH                     (adultes ≥ 20 ans)
+      P17 13 = CMI invalidité/priorité (adultes ≥ 20 ans) ← station debout pénible
+      P17 14 = CMI stationnement       (adultes ≥ 20 ans) ← PMR / périmètre <200m
+      P17 15 = AVPF                    (adultes ≥ 20 ans)
       P17 16 = E2 scolarisation avec ESMS (enfants)
 
     ── PAGE 18 (E3 — Travail, emploi, formation professionnelle) ──
-      P18 1  = RQTH                        (Reconnaissance qualité travailleur handicapé)
-      P18 2  = Orientation professionnelle  (ORP — case parente)
-      P18 3  = └─ CRP / CPO / UEROS        (sous-type ORP, indenté)
-      P18 4  = └─ ESAT                     (sous-type ORP, indenté)
-      P18 5  = └─ Marché du travail        (sous-type ORP, indenté)
-      P18 6  = └──── Emploi accompagné     (sous-option marché du travail)
+      P18 1  = RQTH
+      P18 2  = Orientation professionnelle (ORP — case parente)
+      P18 3  = └─ CRP / CPO / UEROS   (sous-type ORP)
+      P18 4  = └─ ESAT                (sous-type ORP — milieu protégé)
+      P18 5  = └─ Marché du travail   (sous-type ORP — milieu ordinaire)
+      P18 6  = └──── Emploi accompagné (sous-option marché du travail)
+                     ↑ Quand la personne a un projet mais du mal à trouver seule
+                       → combine P18 5 + P18 6
+                       Droit commun (sans EA) → P18 5 uniquement
     """
     cases: list[str] = []
-    # Normalisation : tokens majuscules, tirets → espaces (ex. "RQTH" = "R-Q-T-H" → "RQTH")
+    # Normalisation : tokens majuscules, tirets → espaces
     droits_str = " ".join(str(d).upper().replace("-", " ") for d in droits)
 
     # ── PAGE 17 — E1 Allocations ─────────────────────────────────────────────
@@ -307,55 +340,93 @@ def _mapper_droits(
     if is_enfant and "AEEH" in droits_str:
         cases.append("Case à cocher P17 1")
 
-    # PCH enfant (< 20 ans) — case PCH enfants, distincte de la case PCH adulte
-    if is_enfant and ("PCH" in droits_str or besoins_aide_humaine):
+    # PCH enfant (< 20 ans) — UNIQUEMENT si explicitement dans les droits identifiés
+    # Ne jamais déduire automatiquement de besoins_aide_humaine : la personne doit valider
+    if is_enfant and "PCH" in droits_str:
         cases.append("Case à cocher P17 2")
 
-    # CMI (Carte Mobilité Inclusion) — cases séparées < 20 ans vs ≥ 20 ans
-    if any(t in droits_str for t in ("CMI", "CARTE MOBILITE", "CARTE INVALIDITE")):
-        if is_enfant:
-            cases.append("Case à cocher P17 3")   # CMI invalidité (<20)
-            cases.append("Case à cocher P17 4")   # CMI stationnement (<20)
-        else:
-            cases.append("Case à cocher P17 13")  # CMI invalidité (≥20)
-            cases.append("Case à cocher P17 14")  # CMI stationnement (≥20)
+    # CMI priorité (invalidité) — station debout prolongée pénible
+    # Distincte de CMI stationnement (PMR / périmètre de marche < 200 m)
+    has_cmi_generic = any(t in droits_str for t in ("CMI", "CARTE MOBILITE", "CARTE INVALIDITE"))
+
+    if cmi_priorite or (has_cmi_generic and not cmi_stationnement):
+        # CMI invalidité / priorité
+        cases.append("Case à cocher P17 3" if is_enfant else "Case à cocher P17 13")
+
+    if cmi_stationnement or (has_cmi_generic and not cmi_priorite):
+        # CMI stationnement
+        cases.append("Case à cocher P17 4" if is_enfant else "Case à cocher P17 14")
+
+    # Si les deux flags sont True → on coche les deux cases (personne cumule les deux situations)
+    if cmi_priorite and cmi_stationnement:
+        # S'assurer que les deux sont cochées (les ajouts conditionnels ci-dessus les ont déjà ajoutées)
+        pass
 
     # AAH : Allocation aux Adultes Handicapés (≥ 20 ans)
     if "AAH" in droits_str:
         cases.append("Case à cocher P17 6")
 
-    # PCH adulte (≥ 20 ans)
-    if not is_enfant and ("PCH" in droits_str or besoins_aide_humaine):
+    # PCH adulte (≥ 20 ans) — UNIQUEMENT si explicitement dans les droits identifiés
+    if not is_enfant and "PCH" in droits_str:
         cases.append("Case à cocher P17 12")
 
-    # Orientation ESMS adultes (case unique regroupant IME/SESSAD/ITEP/ESAT/SAVS/SAMSAH/FAM/MAS)
-    # Le type précis d'établissement est précisé dans le texte narratif (page 8) — pas de case individuelle dans ce PDF
-    _esms_tokens = ("IME", "SESSAD", "ITEP", "ULIS", "ESAT", "SAVS", "SAMSAH", "FAM", "MAS")
-    if not is_enfant and any(t in droits_str for t in _esms_tokens):
-        cases.append("Case à cocher P17 8")   # Orientation ESMS adultes (single checkbox)
-    if is_enfant and any(t in droits_str for t in _esms_tokens):
+    # Complément de ressources (toujours avec AAH si mentionné)
+    if any(t in droits_str for t in ("COMPLEMENT DE RESSOURCES", "MAJORATION")):
+        cases.append("Case à cocher P17 7")
+
+    # AVPF : Allocation Vieillesse des Parents au Foyer (sur demande explicite uniquement)
+    if "AVPF" in droits_str:
+        cases.append("Case à cocher P17 5" if is_enfant else "Case à cocher P17 15")
+
+    # Orientation ESMS adultes (case P17 8) — UNIQUEMENT structures adultes
+    # IME/SESSAD/ITEP/ULIS sont des structures enfants → ne jamais déclencher P17 8
+    _esms_adulte_tokens = ("ESAT", "SAVS", "SAMSAH", "FAM", "MAS",
+                           "FOYER D HEBERGEMENT", "FOYER D'HEBERGEMENT")
+    _esms_enfant_tokens = ("IME", "SESSAD", "ITEP", "ULIS")
+    if not is_enfant and any(t in droits_str for t in _esms_adulte_tokens):
+        cases.append("Case à cocher P17 8")   # Orientation ESMS adultes
+    if is_enfant and any(t in droits_str for t in (_esms_adulte_tokens + _esms_enfant_tokens)):
         cases.append("Case à cocher P17 16")  # Scolarisation avec ESMS (enfants)
+
+    # Maintien Creton (P17 9) : jeune adulte >20 ans maintenu en structure pour enfants
+    # en attente d'une place dans une structure adultes adaptée
+    if creton or "CRETON" in droits_str:
+        cases.append("Case à cocher P17 9")
 
     # ── PAGE 18 — E3 Travail, emploi, formation professionnelle ─────────────
 
-    # RQTH (case P18 1, PDF page 17, formulaire page 18/20)
+    # RQTH (case P18 1)
     if "RQTH" in droits_str:
         cases.append("Case à cocher P18 1")
 
-    # ORP : Orientation Professionnelle (case P18 2 = case parente + sous-type)
+    # ORP : Orientation Professionnelle
     _orp_tokens = ("ORP", "ORIENTATION PROFESSIONNELLE", "ORIENTATION PRO",
                    "RECLASSEMENT PROFESSIONNEL", "INSERTION PROFESSIONNELLE")
     if any(t in droits_str for t in _orp_tokens):
         cases.append("Case à cocher P18 2")  # Case parente ORP
-        # Sous-type selon la situation professionnelle
-        if any(t in droits_str for t in ("CRP", "CPO", "UEROS", "REEDUCATION PROFESSIONNELLE")):
-            cases.append("Case à cocher P18 3")   # CRP / CPO / UEROS
+        # Sous-type :
+        if any(t in droits_str for t in (
+            "CRP", "CPO", "UEROS",
+            "REEDUCATION PROFESSIONNELLE", "READAPTATION PROFESSIONNELLE",
+            "ESRP",            # Établissement de Réadaptation Professionnelle (ex-CRP)
+            "VISA PRO",        # formation reconnue CRP
+            "CENTRE DE REEDUCATION", "CENTRE DE READAPTATION",
+        )):
+            cases.append("Case à cocher P18 3")   # CRP / CPO / UEROS / ESRP
         elif "ESAT" in droits_str and not is_enfant:
-            cases.append("Case à cocher P18 4")   # ESAT (orientation pro)
+            cases.append("Case à cocher P18 4")   # ESAT (milieu protégé)
         else:
-            cases.append("Case à cocher P18 5")   # Marché du travail (défaut)
+            # Marché du travail (milieu ordinaire)
+            cases.append("Case à cocher P18 5")
+            # Emploi accompagné (sous-option marché du travail)
+            # Quand la personne a un projet mais du mal à trouver seule
+            if emploi_accompagne or "EMPLOI ACCOMPAGNE" in droits_str:
+                cases.append("Case à cocher P18 6")
 
-    logger.debug(f"_mapper_droits | droits={droits} | cases={cases}")
+    logger.debug(
+        f"_mapper_droits | droits={droits} | cmi_p={cmi_priorite} cmi_s={cmi_stationnement} "
+        f"ea={emploi_accompagne} creton={creton} | cases={cases}"
+    )
     return cases
 
 
@@ -379,7 +450,6 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     cases:  list[str]      = []   # cases à cocher → _cocher_case (annotation directe)
 
     # ── Données personnelles ─────────────────────────────────────────────────
-    # Les colonnes DB utilisent "enfant" comme nom générique — valide pour adultes aussi
     nom       = (dossier.get("nom_enfant")     or "").upper()
     prenom    = dossier.get("prenom_enfant")   or ""
     ddn       = dossier.get("ddn_enfant")      or ""
@@ -406,7 +476,53 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
 
     # Données structurées extraites par l'IA
     ds = analyse.get("donnees_structurees") or {}
-    is_enfant              = ds.get("is_enfant", True)
+
+    # ── Enrichissement depuis cerfa_reponses (WhatsApp) ──────────────────────
+    # Les réponses collectées par le bot WhatsApp peuvent contenir des champs
+    # qui ne sont pas encore dans ds (collecte en cours ou analyse antérieure).
+    # On les injecte comme couche de substitution : cerfa_reponses ne remplace
+    # jamais une valeur déjà présente dans ds, mais comble les trous.
+    cerfa_rep = dossier.get("cerfa_reponses") or {}
+
+    def _ds_or_cerfa(ds_key: str, cerfa_key: str, default=None):
+        """Retourne ds[ds_key] si renseigné, sinon cerfa_reponses[cerfa_key]."""
+        v = ds.get(ds_key)
+        if v is not None and v != "" and v != [] and v is not False:
+            return v
+        return cerfa_rep.get(cerfa_key, default)
+
+    # CMI : interpréter la réponse textuelle "priorité / stationnement / les deux"
+    _cmi_rep = (cerfa_rep.get("cmi_type") or "").lower()
+    _cmi_priorite_rep   = "priorité" in _cmi_rep or "priorite" in _cmi_rep or "les deux" in _cmi_rep
+    _cmi_stationnement_rep = "stationnement" in _cmi_rep or "les deux" in _cmi_rep
+
+    # Urgence droits : "oui" → True
+    _urgence_rep = (cerfa_rep.get("urgence_droits") or "").lower()
+    _urgence_bool = any(w in _urgence_rep for w in ["oui", "yes", "1", "vrai"])
+
+    # Emploi accompagné : "oui" ou "emploi accompagné" → True
+    _ea_rep = (cerfa_rep.get("emploi_accompagne") or "").lower()
+    _ea_bool = any(w in _ea_rep for w in ["oui", "accompagné", "accompagne", "yes", "ea "])
+
+    # Protection juridique depuis WhatsApp
+    _prot_rep = (cerfa_rep.get("protection_juridique") or "").lower()
+
+    # Détection is_enfant : ds > déduction depuis ddn > True (défaut conservateur)
+    _is_enfant_ds = ds.get("is_enfant")
+    if _is_enfant_ds is not None:
+        is_enfant = bool(_is_enfant_ds)
+    elif ddn and "/" in ddn:
+        try:
+            _ddn_parts = ddn.split("/")
+            if len(_ddn_parts) == 3:
+                _dj, _dm, _da = int(_ddn_parts[0]), int(_ddn_parts[1]), int(_ddn_parts[2])
+                is_enfant = (date.today() - date(_da, _dm, _dj)).days // 365 < 18
+            else:
+                is_enfant = True
+        except Exception:
+            is_enfant = True
+    else:
+        is_enfant = True  # inconnu : défaut conservateur
     genre                  = (ds.get("genre") or "").lower()
     situation_familiale    = (ds.get("situation_familiale") or "").lower()
     vie_seule              = ds.get("vie_seule", False)
@@ -421,29 +537,112 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     besoins_amenagement    = ds.get("besoins_amenagement_logement", False)
     type_logement          = (ds.get("type_logement") or "").lower()
     statut_logement        = (ds.get("statut_logement") or "").lower()
-    nss                    = (ds.get("nss") or "").replace(" ", "").replace(".", "")
-    # Nouveaux champs
-    type_demande           = (ds.get("type_demande") or "premiere").lower()
-    deja_connu_mdph        = ds.get("deja_connu_mdph", False)
-    numero_dossier_mdph    = ds.get("numero_dossier_mdph") or ""
+    # NSS : ds > cerfa_reponses (champ WhatsApp numero_securite_sociale)
+    nss        = (ds.get("nss") or cerfa_rep.get("numero_securite_sociale") or "").replace(" ", "").replace(".", "").replace("-", "")
+    nss_parent = (ds.get("nss_parent") or "").replace(" ", "").replace(".", "")
+
+    # Type de demande et situation MDPH — ds > cerfa_reponses > vide (pas de défaut "premiere")
+    _type_demande_rep    = (cerfa_rep.get("type_demande") or "").lower()
+    _historique_mdph_rep = (cerfa_rep.get("historique_mdph") or "").lower()
+    type_demande         = (ds.get("type_demande") or _type_demande_rep).lower()
+    deja_connu_mdph      = bool(ds.get("deja_connu_mdph", False))
+    if not deja_connu_mdph and _historique_mdph_rep:
+        deja_connu_mdph = any(w in _historique_mdph_rep for w in ["oui", "yes", "déjà", "deja"])
+    # Si le type de demande est explicitement un renouvellement ou réévaluation, la personne est connue
+    if not deja_connu_mdph and type_demande in (
+        "renouvellement", "reevaluation", "réévaluation",
+        "revision", "révision", "situation_changee", "situation_changée", "changement",
+    ):
+        deja_connu_mdph = True
+    numero_dossier_mdph  = (ds.get("numero_dossier_mdph") or cerfa_rep.get("numero_dossier_mdph") or "")
+    # urgence_droits et procedure_simplifiee : calculés après la lecture de cerfa_rep ci-dessous
+
+    # Identité complémentaire
     nationalite            = (ds.get("nationalite") or "francaise").lower()
     commune_naissance      = ds.get("commune_naissance") or ""
     departement_naissance  = ds.get("departement_naissance") or ""
-    pays_naissance         = (ds.get("pays_naissance") or "France").strip()
+    pays_naissance         = (ds.get("pays_naissance") or "").strip()  # pas de défaut "France"
     nom_usage              = ds.get("nom_usage") or ""
     organisme_payeur       = (ds.get("organisme_payeur") or "").lower()
     numero_allocataire     = ds.get("numero_allocataire") or ""
     organisme_assurance    = (ds.get("organisme_assurance_maladie") or "cpam").lower()
     protection_juridique   = (ds.get("protection_juridique") or "aucune").lower()
 
+    # CMI nuances (expert) — cases distinctes dans le CERFA
+    # Priorité : ds > WhatsApp réponse textuelle cmi_type
+    cmi_priorite      = ds.get("cmi_priorite") or _cmi_priorite_rep
+    cmi_stationnement = ds.get("cmi_stationnement") or _cmi_stationnement_rep
+
+    # Emploi accompagné (sous-option ORP marché du travail)
+    emploi_accompagne = ds.get("emploi_accompagne") or _ea_bool
+
+    # Creton (jeune adulte >20 maintenu en structure enfants)
+    creton            = ds.get("creton", False)
+
+    # Urgence droits
+    urgence_droits    = ds.get("urgence_droits") or _urgence_bool
+    procedure_simplifiee = ds.get("procedure_simplifiee", False)
+
+    # Ressources et frais liés au handicap (section B1)
+    ressources_actuelles = (
+        ds.get("ressources_actuelles")
+        or cerfa_rep.get("ressources_actuelles")
+        or ""
+    )
+    frais_handicap = ds.get("frais_handicap") or ""
+
+    # Consentement partage informations (page 4)
+    consentement = ds.get("consentement_informations", True)
+
+    # Données fonctionnelles (WhatsApp → ds ou réponse directe)
+    difficultes_quotidiennes = (
+        ds.get("difficultes_quotidiennes")
+        or cerfa_rep.get("difficultes_quotidiennes")
+        or ""
+    )
+    besoins_aide_str = (
+        ds.get("besoins_aide_narrative")
+        or ds.get("besoins_aide")
+        or cerfa_rep.get("besoins_aide")
+        or ""
+    )
+
+    # Protection juridique : ds > WhatsApp
+    if not protection_juridique or protection_juridique == "aucune":
+        if _prot_rep:
+            if "tutelle" in _prot_rep:
+                protection_juridique = "tutelle"
+            elif "curatelle" in _prot_rep:
+                protection_juridique = "curatelle"
+            elif "sauvegarde" in _prot_rep:
+                protection_juridique = "sauvegarde"
+
+    # ── Données accident du travail / ESRP ──────────────────────────────────
+    accident_travail    = ds.get("accident_travail", False)
+    date_at             = ds.get("date_accident_travail") or ""
+    narratif_at         = (
+        ds.get("narratif_accident_travail")
+        or ds.get("contexte_at")
+        or (f"Accident de travail survenu en {date_at[:4]}." if date_at else "")
+        or ""
+    )
+    a_cible_esrp        = ds.get("a_cible_esrp", False)
+    nom_esrp            = ds.get("nom_esrp") or ""
+    type_formation_pro  = ds.get("type_formation_pro") or ""
+    narratif_rehab      = ds.get("narratif_rehabilitation") or ds.get("contexte_at") or ""
+    a_cap_emploi        = (
+        ds.get("a_cap_emploi", False)
+        or any("cap emploi" in (a or "").lower() for a in (aides_actuelles or []))
+    )
+
     # ── Scolarité (P9-P12) ───────────────────────────────────────────────────
-    scolarise              = ds.get("scolarise", is_enfant)
+    scolarise              = ds.get("scolarise", False)   # JAMAIS déduit de is_enfant — doit être confirmé explicitement
     nom_ecole              = ds.get("nom_ecole") or ""
     classe_scolaire        = ds.get("classe_scolaire") or ""
     type_etablissement     = (ds.get("type_etablissement_scolaire") or "").lower()
-    a_pps                  = ds.get("a_pps", False)       # Plan Personnalisé de Scolarisation
-    a_pai                  = ds.get("a_pai", False)       # Protocole d'Accueil Individualisé
-    a_ulis                 = ds.get("a_ulis", False)      # Unité Locale Inclusion Scolaire
+    a_pps                  = ds.get("a_pps", False)
+    a_pai                  = ds.get("a_pai", False)
+    a_ulis                 = ds.get("a_ulis", False)
     classe_ordinaire       = ds.get("classe_ordinaire", True)
 
     # ── Situation professionnelle détaillée (P13-P16) ────────────────────────
@@ -460,8 +659,8 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     # ── Logement / vie quotidienne (P5-P7) ───────────────────────────────────
     type_logement_detail   = (ds.get("type_logement") or "").lower()
     vie_en_couple          = ds.get("vie_en_couple", False)
-    vie_en_famille         = ds.get("vie_en_famille", is_enfant)
-    logement_adapte        = ds.get("logement_adapte")    # True / False / None
+    vie_en_famille         = ds.get("vie_en_famille", False)   # pas de défaut is_enfant — doit être confirmé
+    logement_adapte        = ds.get("logement_adapte")
     statut_occupation      = (ds.get("statut_occupation") or "").lower()
 
     # ── Aides humaines (P6) ──────────────────────────────────────────────────
@@ -469,15 +668,37 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     a_auxiliaire_vie       = ds.get("a_auxiliaire_vie", False)
     a_aide_menagere        = ds.get("a_aide_menagere", False)
 
-    # ── Aidant familial (P20) ────────────────────────────────────────────────
-    nom_aidant             = ds.get("nom_aidant") or ""
-    prenom_aidant          = ds.get("prenom_aidant") or ""
-    lien_aidant            = ds.get("lien_aidant") or ""
+    # ── Aidant familial (P19-P20) ───────────────────────────────────────────
+    nom_aidant             = ds.get("nom_aidant") or cerfa_rep.get("nom_aidant") or ""
+    prenom_aidant          = ds.get("prenom_aidant") or cerfa_rep.get("prenom_aidant") or ""
+    lien_aidant            = ds.get("lien_aidant") or cerfa_rep.get("lien_aidant") or ""
+
+    # Aidant collecté via WhatsApp (champ aidant_identite : "Prénom Nom, lien")
+    _aidant_identite_rep = (cerfa_rep.get("aidant_identite") or "").strip()
+    if _aidant_identite_rep and not nom_aidant:
+        _parts = _aidant_identite_rep.split(",", 1)
+        _nom_parts = _parts[0].strip().split(" ", 1)
+        if len(_nom_parts) >= 2:
+            prenom_aidant = prenom_aidant or _nom_parts[0]
+            nom_aidant    = nom_aidant or _nom_parts[1]
+        elif _nom_parts:
+            nom_aidant = nom_aidant or _nom_parts[0]
+        if len(_parts) > 1:
+            lien_aidant = lien_aidant or _parts[1].strip()
+
+    # Détection aidant depuis la réponse WhatsApp "besoins_aide"
+    _besoins_aide_rep_txt  = (cerfa_rep.get("besoins_aide") or "").lower()
+    _a_aidant_confirme     = (
+        bool(nom_aidant)
+        or bool(_aidant_identite_rep)
+        or ds.get("a_aidant_quotidien", False)
+        or any(w in _besoins_aide_rep_txt for w in [
+            "quelqu'un", "ma femme", "mon mari", "mon conjoint", "ma mère", "mon père",
+            "mes enfants", "ma fille", "mon fils", "aidé par", "aide de", "avec l'aide",
+        ])
+    )
 
     # Tranche d'âge — détermine les sections applicables du formulaire
-    # Enfant (<18) : scolarité P9, pas de section pro
-    # Jeune majeur (18-25) : section pro ET possibilité scolarité/formation
-    # Adulte (>25) : section pro uniquement
     age_tranche = "enfant"
     if not is_enfant:
         age_tranche = "adulte"
@@ -490,19 +711,26 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         except Exception:
             pass
 
-    # ── Description P8 (narrative humanisée) ────────────────────────────────
+    # ── Description P8 (narrative humanisée — structure : situation → retentissements → projets) ──
     description_situation = _composer_description_p8(
         geva_pro=geva_pro,
         juriste=juriste,
         elements_probants=elements_probants,
         is_enfant=is_enfant,
+        projet_professionnel=projet_professionnel,
+        difficultes_quotidiennes=difficultes_quotidiennes,
+        besoins_aide=besoins_aide_str,
     )
 
-    # ── Droits → liste de cases P17/P18/P19 ─────────────────────────────────
+    # ── Droits → liste de cases P17/P18 ─────────────────────────────────────
     cases_droits = _mapper_droits(
         droits,
         is_enfant=is_enfant,
         besoins_aide_humaine=besoins_aide_humaine,
+        cmi_priorite=cmi_priorite,
+        cmi_stationnement=cmi_stationnement,
+        emploi_accompagne=emploi_accompagne,
+        creton=creton,
     )
 
     # ════════════════════════════════════════════════════════════════════════
@@ -510,13 +738,19 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     # ════════════════════════════════════════════════════════════════════════
     champs["Champ de texte P1 1"] = dept
 
-    # Nature de la demande — mapping exact confirmé par inspection des positions Y :
-    #   P1 A (y=557) = "C'est ma première demande à la MDPH"
-    #   P1 B (y=582) = "Ma situation médicale/administrative/familiale a changé"
-    #   P1 C (y=612) = "Je souhaite une réévaluation / révision de mes droits"
-    #   P1 1 (y=663) = "Je souhaite le renouvellement de mes droits à l'identique"
-    #   P1 2 (y=713) = "Votre aidant familial souhaite exprimer sa situation"
-    #   P1 3 (y=798) = "Vous avez déjà un dossier à la MDPH ? OUI"
+    # Nature de la demande :
+    #   P1 A = "C'est ma première demande à la MDPH"
+    #   P1 B = "Ma situation a changé (médicale/administrative/familiale)"
+    #   P1 C = "Je souhaite une réévaluation / révision de mes droits"
+    #   P1 1 = "Je souhaite le renouvellement de mes droits à l'identique"
+    #            ↑ Procédure simplifiée : UNIQUEMENT si renouvellement SANS réexamen
+    #              et urgence droits (expire dans <2 mois)
+    #   P1 2 = "Votre aidant familial souhaite exprimer sa situation"
+    #   P1 3 = "Vous avez déjà un dossier à la MDPH ? OUI"
+    # Inférence : si personne déjà connue de la MDPH mais type non précisé → réévaluation
+    if not type_demande and deja_connu_mdph:
+        type_demande = "reevaluation"
+
     if type_demande in ("premiere", "première", "1ere", "1ère"):
         cases.append("Case à cocher P1 A")
     elif type_demande in ("situation_changee", "situation_changée", "changement"):
@@ -524,11 +758,15 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     elif type_demande in ("reevaluation", "réévaluation", "revision", "révision"):
         cases.append("Case à cocher P1 C")
     elif type_demande == "renouvellement":
-        cases.append("Case à cocher P1 1")
-    else:
-        cases.append("Case à cocher P1 A")   # défaut : première demande
+        # Procédure simplifiée (P1 1 = renouvellement à l'identique) :
+        # UNIQUEMENT si urgence droits (expire dans <2 mois) ET pas de nouveaux droits
+        if procedure_simplifiee or urgence_droits:
+            cases.append("Case à cocher P1 1")   # Renouvellement à l'identique (simplifié)
+        else:
+            cases.append("Case à cocher P1 C")   # Réévaluation (renouvellement avec révision)
+    # Si type_demande inconnu → aucune case cochée (pas de défaut "première demande")
 
-    # Déjà connu de la MDPH (dossier existant)
+    # Déjà connu de la MDPH
     if deja_connu_mdph or type_demande in ("renouvellement", "reevaluation", "réévaluation",
                                             "revision", "révision", "situation_changee",
                                             "situation_changée", "changement"):
@@ -536,53 +774,72 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         if numero_dossier_mdph:
             champs["Champ de texte P 1 2"] = numero_dossier_mdph
 
+    # Aidant familial (P1 2) — cocher si l'aidant souhaite exprimer sa situation
+    if nom_aidant:
+        cases.append("Case à cocher P1 2")
+
     # ════════════════════════════════════════════════════════════════════════
     # PAGE 2 — Identité complète de la personne
-    # Mapping champs confirmé par inspection des positions X/Y du PDF :
-    #   P2 1  = Nom de naissance
-    #   P2 2  = Nom d'époux/se ou d'usage (vide si identique au nom de naissance)
-    #   P2 3  = Prénoms (TOUS les prénoms)
-    #   P2 4  = Commune de naissance
-    #   P2 6  = Département de naissance
-    #   P2 7  = Complément d'adresse (bâtiment, appartement…)
-    #   P2 8  = Adresse principale (numéro et rue) ← corrigé (était P2 7)
-    #   P 2 9 = Code postal
-    #   P2 10 = Commune
-    #   P2 11 = Pays
-    #   P2 12 = Téléphone
-    #   P2 13 = Email de contact
-    #   P2 14 = N° d'allocataire (CAF / MSA)
-    #   Champ de texte P2 Pays naisssance autre = Pays si ≠ France
     # ════════════════════════════════════════════════════════════════════════
-    champs["Champ de texte P2 1"]  = nom          # Nom de naissance
-    if nom_usage:
-        champs["Champ de texte P2 2"] = nom_usage  # Nom d'usage uniquement si différent
-    champs["Champ de texte P2 3"]  = prenom        # Prénoms ← corrigé (était P2 2)
+    champs["Champ de texte P2 1"]  = nom           # Nom de naissance
+    # Nom d'usage : uniquement si différent du nom de naissance, non vide,
+    # et sans placeholder d'anonymisation (ex. [USAGER_1]) ni égal au prénom
+    _nom_usage_clean = (nom_usage or "").strip()
+    if (
+        _nom_usage_clean
+        and not re.search(r'\[USAGER_\d+\]|\[USER_\d+\]|\[BENEFICIAIRE\]', _nom_usage_clean, re.I)
+        and _nom_usage_clean.upper() != prenom.upper()
+        and _nom_usage_clean.upper() != nom.upper()
+    ):
+        champs["Champ de texte P2 2"] = _nom_usage_clean
+    champs["Champ de texte P2 3"]  = prenom        # Prénoms
     # Date de naissance
     champs["Date A 1"] = ddn_jour
     champs["Date A 2"] = ddn_mois
     champs["Date A 3"] = ddn_annee
-    # Lieu de naissance
+    # Lieu de naissance — uniquement si renseigné
     if commune_naissance:
         champs["Champ de texte P2 4"] = commune_naissance
+        champs["Champ de texte P2 5"] = commune_naissance   # doublon parfois présent dans le PDF
     if departement_naissance:
         champs["Champ de texte P2 6"] = departement_naissance
-    if pays_naissance and pays_naissance.lower() != "france":
+    if pays_naissance and pays_naissance.lower() not in ("france", ""):
         champs["Champ de texte P2 Pays naisssance autre"] = pays_naissance
-    # Adresse — P2 8 = numéro et rue, P2 7 = complément (bât., appt…)
-    champs["Champ de texte P2 8"]  = adresse       # ← corrigé (était P2 7)
-    champs["Champ de texte P 2 9"] = cp
-    champs["Champ de texte P2 10"] = commune
-    champs["Champ de texte P2 11"] = "France"
-    champs["Champ de texte P2 12"] = telephone
-    champs["Champ de texte P2 13"] = email         # Email contact famille/personne
-    # Organisme payeur — N° d'allocataire
+
+    # Préférence de contact MDPH (comment souhaitez-vous être contacté ?)
+    _pref_contact = (ds.get("preference_contact") or cerfa_rep.get("preference_contact") or "").lower()
+    if "email" in _pref_contact or "mail" in _pref_contact or "courriel" in _pref_contact:
+        try:
+            cases.append("Case à cocher P2 contact email")
+        except Exception:
+            pass
+    elif "telephone" in _pref_contact or "téléphone" in _pref_contact or "tel" in _pref_contact:
+        try:
+            cases.append("Case à cocher P2 contact tel")
+        except Exception:
+            pass
+    elif "courrier" in _pref_contact or "postal" in _pref_contact or "lettre" in _pref_contact:
+        try:
+            cases.append("Case à cocher P2 contact courrier")
+        except Exception:
+            pass
+    # Adresse — mappings confirmés par inspection PDF corrigé
+    champs["Champ de texte P2 8"]  = adresse        # Numéro + voie
+    champs["Champ de texte P 2 9"] = commune        # Commune de domicile  ← "P 2 9" avec espace
+    # Code postal : 5 chiffres individuels dans Champ de texte 17-21
+    if cp:
+        _cp_clean = (cp or "").replace(" ", "").replace("-", "")[:5]
+        for _ci, _digit in enumerate(_cp_clean, start=17):
+            champs[f"Champ de texte {_ci}"] = _digit
+    # Email et téléphone (noms de champs confirmés sur le PDF original)
+    champs["Champ de texte P2 11"] = email          # Courriel (P2 11)
+    champs["Champ de texte 24"]    = telephone      # Téléphone (champ 24)
+    # Organisme payeur — N° d'allocataire (CAF ou MSA)
     if numero_allocataire:
         champs["Champ de texte P2 14"] = numero_allocataire
 
-    # Numéro de sécurité sociale — 1 case par chiffre (15 chiffres)
-    # Adulte : Numero SS 3 → Numero SS 17
-    # Enfant : N° SS Enfant 1 → N° SS Enfant 15
+    # NSS bénéficiaire (1 case par chiffre, 15 chiffres)
+    # Adulte : Numero SS 3 → Numero SS 17 | Enfant : N° SS Enfant 1 → N° SS Enfant 15
     nss_clean = nss.replace(" ", "").replace(".", "").replace("-", "")
     if nss_clean and nss_clean.isdigit():
         if is_enfant:
@@ -596,7 +853,7 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     # PAGE 3 — Représentant légal / Protection juridique
     # ════════════════════════════════════════════════════════════════════════
     if is_enfant:
-        # Représentant légal = parent (les données famille servent de représentant)
+        # Représentant légal = parent(s) déclarant(s)
         champs["REPRESENTANT LEGAL 1"]  = nom
         champs["REPRESENTANT LEGAL 2"]  = prenom
         champs["REPRESENTANT LEGAL 3"]  = "Père / Mère"
@@ -606,7 +863,18 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         champs["REPRESENTANT LEGAL 9"]  = telephone
         champs["REPRESENTANT LEGAL 10"] = email
         cases.append("Case à cocher P3 1")   # Titulaire autorité parentale
-        # Cases P3 4-6 : mesure de protection
+
+        # NSS du parent déclarant (si différent du NSS bénéficiaire)
+        # Per expert Q4 : "mettre numéro de sécurité sociale du parent qui remplit le dossier"
+        nss_parent_clean = nss_parent.replace("-", "")
+        if nss_parent_clean and nss_parent_clean.isdigit():
+            try:
+                # Champ P3 NSS parent — les deux parents sauf jugement contraire
+                champs["Champ de texte P3 NSS Parent"] = nss_parent_clean[:15]
+            except Exception:
+                pass
+
+        # Protection juridique (tutelle/curatelle de l'enfant si applicable)
         if "tutelle" in protection_juridique:
             cases.append("Case à cocher P3 4")
         elif "curatelle" in protection_juridique:
@@ -615,9 +883,8 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
             cases.append("Case à cocher P3 6")
     else:
         # Adulte : agit seul ou sous mesure de protection
-        if protection_juridique in ("aucune", "", "none", "non"):
-            cases.append("Case à cocher P3 2")    # Agit seul(e)
-        else:
+        # NB : ne pas cocher P3 2 "agit seul" par défaut — laisser vide si pas de protection connue
+        if protection_juridique not in ("aucune", "", "none", "non"):
             cases.append("Case à cocher P 3 3")   # Représentant désigné
             if "tutelle" in protection_juridique:
                 cases.append("Case à cocher P3 4")
@@ -627,7 +894,8 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
                 cases.append("Case à cocher P3 6")
 
     # ════════════════════════════════════════════════════════════════════════
-    # PAGE 4 — Situation personnelle, familiale et signature
+    # PAGE 4 — Situation personnelle, familiale
+    # IMPORTANT : Signature laissée VIDE — signée par l'éducateur à l'impression
     # ════════════════════════════════════════════════════════════════════════
     sit_fam_case = None
     sf = situation_familiale
@@ -646,25 +914,63 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     if sit_fam_case:
         cases.append(sit_fam_case)
     if a_enfants_charge:
-        cases.append("Case à cocher P4 1")    # Enfants à charge : case P4 1 (y=321)
+        cases.append("Case à cocher P4 1")    # Enfants à charge
 
-    # Date de signature = aujourd'hui
-    today = date.today()
-    champs["Date P4 1 "] = f"{today.day:02d}"
-    champs["Date P4 2"]  = f"{today.month:02d}"
-    champs["Date P4 3"]  = str(today.year)
+    # Consentement partage informations — géré via le radio OPTION P4 1 dans la section radios
+    # (valeur /J'accepte ou /Je n'accepte pas — cochée via _cocher_option_nth plus bas)
+
+    # Difficultés remplissage dossier médical — UNIQUEMENT si question posée et réponse "oui"
+    _difficultes_med_rep = (cerfa_rep.get("difficultes_dossier_medical") or "").lower()
+    if any(w in _difficultes_med_rep for w in ["oui", "yes", "difficile", "aide", "aidé"]):
+        try:
+            cases.append("Case à cocher P4 difficultes_med")
+        except Exception:
+            pass
+
+    # Date de rédaction du dossier médical — remplir si connue
+    date_dossier_medical = (
+        ds.get("date_dossier_medical")
+        or cerfa_rep.get("date_dossier_medical")
+        or ""
+    )
+    if date_dossier_medical and "/" in date_dossier_medical:
+        _dmed_parts = date_dossier_medical.split("/")
+        if len(_dmed_parts) == 3:
+            # Noms de champs confirmés par inspection PDF : "Date P4 1 " (espace final), "Date P4 2", "Date P4 3"
+            champs["Date P4 1 "] = _dmed_parts[0]
+            champs["Date P4 2"]  = _dmed_parts[1]
+            champs["Date P4 3"]  = _dmed_parts[2]
+
+    # NB : La signature reste VIDE — signée par l'éducateur à l'impression (expert Q33)
 
     # ════════════════════════════════════════════════════════════════════════
     # PAGE 5 — Lieu de vie / Logement
+    # NB : Champ de texte P5 1 = description du logement (PAS l'adresse)
+    #      L'adresse est sur la page 2 (P2 8 + P 2 9 + digit boxes 17-21)
     # ════════════════════════════════════════════════════════════════════════
-    # Champ de texte P5 1 = intitulé lieu de vie (établissement ou adresse)
-    champs["Champ de texte P5 1"] = adresse
 
-    # Type de logement (P5 1-4 y=114) :
-    #   x=128 = établissement médico-social
-    #   x=203 = maison individuelle
-    #   x=298 = appartement/collectif
-    #   x=427 = foyer/résidence
+    # Accident du travail / Maladie professionnelle (P5 15)
+    if accident_travail:
+        cases.append("Case à cocher P5 15")   # AT/MP reconnu
+        cases.append("Case à cocher P5 20")   # Indemnisation en cours / rente
+
+    # Ressources actuelles (B1) — AAH, chômage, ASS, pension invalidité, etc.
+    # Expert Q11 : "question globale sur les ressources"
+    if ressources_actuelles:
+        try:
+            champs["Champ de texte P5 ressources"] = ressources_actuelles[:300]
+        except Exception:
+            pass
+
+    # Frais liés au handicap (B1) — frais non remboursés, pris en compte pour PCH
+    # Expert Q12 : "mettre tous les frais liés au handicap non remboursés"
+    if frais_handicap:
+        try:
+            champs["Champ de texte P5 frais"] = frais_handicap[:300]
+        except Exception:
+            pass
+
+    # Type de logement — uniquement si information confirmée, aucun défaut
     tl = type_logement_detail
     if any(x in tl for x in ["établissement", "institution", "medico", "ehpad", "esat", "foyer d'hébergement"]):
         cases.append("Case à cocher P5 1")
@@ -674,44 +980,45 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         cases.append("Case à cocher P5 3")
     elif any(x in tl for x in ["foyer", "résidence", "residence"]):
         cases.append("Case à cocher P5 4")
-    elif is_enfant:
-        cases.append("Case à cocher P5 2")   # Défaut enfant : maison
+    # Pas de défaut : si type de logement inconnu → laisser vide
 
-    # Avec qui vivez-vous (P5 5-7 y=141-219 x=51) :
-    #   P5 5 = seul(e) | P5 6 = famille/couple | P5 7 = colocation/autre
+    # Avec qui vivez-vous — uniquement si information confirmée
     if vie_seule:
         cases.append("Case à cocher P5 5")
     elif vie_en_couple or any(x in sf for x in ["marié", "marie", "pacsé", "pacse", "concubinage"]):
         cases.append("Case à cocher P5 6")
-    elif vie_en_famille or is_enfant:
+    elif vie_en_famille:
         cases.append("Case à cocher P5 6")
-    else:
-        cases.append("Case à cocher P5 7")   # Autre
+    # Pas de défaut : si mode de vie inconnu → laisser vide
 
-    # Statut d'occupation (P5 8-10 y=191-219 x=298-429) :
-    #   P5 8 = propriétaire | P5 9 = locataire | P5 10 = hébergé à titre gratuit
-    so = statut_occupation
-    if any(x in so for x in ["proprio", "propriétaire"]):
-        cases.append("Case à cocher P5 8")
-    elif any(x in so for x in ["locataire", "location"]):
-        cases.append("Case à cocher P5 9")
-    elif any(x in so for x in ["hébergé", "heberge", "gratuit"]):
-        cases.append("Case à cocher P5 10")
+    # Statut d'occupation — géré via OPTION P5 2 radio dans la section radios ci-dessous
 
-    # Besoins d'aide technique (P5 22-26 y=499-542) — aides techniques identifiées
+    # Besoins d'aide technique
     if besoins_aide_technique:
-        cases.append("Case à cocher P5 22")  # Aide technique nécessaire
+        cases.append("Case à cocher P5 22")
 
     # ════════════════════════════════════════════════════════════════════════
     # PAGE 6 — Aides humaines et soins
     # ════════════════════════════════════════════════════════════════════════
     aides_str = " ".join(aides_actuelles).lower() if aides_actuelles else ""
+    # Compléter avec les données WhatsApp
+    if besoins_aide_str:
+        aides_str = f"{aides_str} {besoins_aide_str.lower()}"
+    if difficultes_quotidiennes:
+        aides_str = f"{aides_str} {difficultes_quotidiennes.lower()}"
 
-    # Soins médicaux en cours (P6 1 y=109)
-    if aides_actuelles or a_aide_soignante:
+    # Soins médicaux en cours — uniquement si soins médicaux réels confirmés
+    # (pas juste des aides humaines ou scolaires)
+    _has_soins_med = a_aide_soignante or any(
+        x in aides_str for x in [
+            "infirmier", "soin infirmier", "médecin à domicile",
+            "kinésithérapie", "kiné", "traitement médical",
+            "hospitalisation", "clinique", "suivi médical", "soin à domicile",
+        ]
+    )
+    if _has_soins_med:
         cases.append("Case à cocher P6 1")
-        # Type de soins : libéral (P6 2), hospitalier (P6 3), autre (P6 4)
-        has_lib  = any(x in aides_str for x in ["libéral", "liberal", "médecin", "infirmier lib", "kiné"])
+        has_lib  = any(x in aides_str for x in ["libéral", "liberal", "médecin libéral", "infirmier lib", "kiné libéral"])
         has_hosp = any(x in aides_str for x in ["hôpital", "hopital", "clinique", "hospitalier"])
         if has_lib:
             cases.append("Case à cocher P6 2")
@@ -720,89 +1027,91 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         if not has_lib and not has_hosp:
             cases.append("Case à cocher P6 4")
 
-    # Aide humaine (P6 7 y=183)
+    # Aide humaine
     if besoins_aide_humaine or a_auxiliaire_vie or a_aide_menagere:
         cases.append("Case à cocher P6 7")
         if a_auxiliaire_vie or any(x in aides_str for x in ["auxiliaire", "avs", "aide humaine"]):
-            cases.append("Case à cocher P6 9")   # Professionnel
-        cases.append("Case à cocher P6 8")        # Famille/entourage (souvent les deux)
+            cases.append("Case à cocher P6 9")
+        cases.append("Case à cocher P6 8")
 
-    # Tableau P6 — professionnels intervenants (5 colonnes × 3 lignes)
+    # Tableau professionnels intervenants
     if aides_actuelles:
         for i, aide in enumerate(aides_actuelles[:3], start=1):
             row_start = (i - 1) * 5 + 1
             champs[f"Tableau P6 {row_start}"] = aide[:25]
 
-    # Besoins détaillés P6 B1-B10
+    # Besoins détaillés — gestes primaires (expert Q24 : manger, dormir, se laver)
     if besoins_aide_humaine or a_auxiliaire_vie:
-        if any(x in aides_str for x in ["hygiène", "toilette", "bain", "douche", "lavage"]):
+        # Hygiène / se laver
+        if any(x in aides_str for x in ["hygiène", "toilette", "bain", "douche", "lavage", "se laver"]):
             cases.append("Case à cocher P6 B1")
+        # Habillage
         if any(x in aides_str for x in ["habillage", "vêtement", "vêtir", "s'habill"]):
             cases.append("Case à cocher P6 B2")
-        if any(x in aides_str for x in ["repas", "alimentation", "manger", "nutrition", "préparer"]):
+        # Repas / manger
+        if any(x in aides_str for x in ["repas", "alimentation", "manger", "nutrition", "préparer", "cuisine"]):
             cases.append("Case à cocher P6 B3")
-        if any(x in aides_str for x in ["mobilité", "déplacement", "marche", "fauteuil", "déplacer"]):
+        # Mobilité intérieure
+        if any(x in aides_str for x in ["mobilité", "déplacement", "marche", "fauteuil", "déplacer", "se lever"]):
             cases.append("Case à cocher P6 B4")
+        # Sorties / extérieur
         if any(x in aides_str for x in ["extérieur", "sortie", "courses", "promenade"]):
             cases.append("Case à cocher P6 B5")
+        # Communication
         if any(x in aides_str for x in ["communication", "langage", "parole", "comprendre"]):
             cases.append("Case à cocher P6 B6")
 
-    # Champ libre P6 7 = précisions
     if besoins_aide_humaine and aides_actuelles:
         champs["Champ de texte P6 7"] = "; ".join(aides_actuelles)[:200]
 
     # ════════════════════════════════════════════════════════════════════════
     # PAGE 7 — Vie quotidienne : mobilité, transports, communication
     # ════════════════════════════════════════════════════════════════════════
-    # Mobilité dans le logement :
-    #   356 (y=126 x=52) = se déplace seul
-    #   P7 2 (y=146 x=52) = aide pour déplacement intérieur
-    #   P7 3 (y=166 x=52) = ne se déplace pas
-    if besoins_aide_humaine or any(x in aides_str for x in ["fauteuil roulant", "déambulateur", "canne"]):
+    # Mobilité dans le logement — uniquement si information confirmée
+    if besoins_aide_humaine or any(x in aides_str for x in ["fauteuil roulant", "déambulateur", "canne", "aide à la mobilité"]):
         cases.append("Case à cocher P7 2")
-    else:
+    elif any(x in aides_str for x in ["se déplace seul dans", "autonome dans le logement", "marche normalement"]):
         cases.append("Case à cocher 356")
+    # Pas de défaut
 
-    # Mobilité hors logement :
-    #   P7 4 (y=126 x=316) = seul | P7 5 (y=146 x=316) = avec aide | P7 6 (y=166 x=316) = pas de sortie
-    if any(x in aides_str for x in ["extérieur", "sortie", "handicap moteur", "fauteuil", "béquille", "aide pour sortir"]):
+    # Mobilité hors logement — uniquement si information confirmée
+    if any(x in aides_str for x in ["fauteuil roulant", "béquille", "aide pour sortir", "ne sort pas seul", "accompagné dehors"]):
         cases.append("Case à cocher P7 5")
-    else:
+    elif any(x in aides_str for x in ["sort seul", "autonome extérieur", "se déplace sans aide hors"]):
         cases.append("Case à cocher P7 4")
+    # Pas de défaut
 
-    # Transports :
-    #   P7 8 (y=305 x=52) = transports commun | P7 9 (y=331) = voiture | P7 14 (y=384) = autre/VSL
-    if any(x in aides_str for x in ["voiture personnelle", "véhicule adapté", "permis"]):
+    # Transports — uniquement si information confirmée
+    if any(x in aides_str for x in ["voiture personnelle", "véhicule adapté", "conduit lui-même"]):
         cases.append("Case à cocher P7 9")
-    elif any(x in aides_str for x in ["vsl", "ambulance", "taxi médical", "transport adapté"]):
+    elif any(x in aides_str for x in ["vsl", "ambulance", "taxi médical", "transport adapté", "transport médical"]):
         cases.append("Case à cocher P7 14")
-    elif not besoins_aide_humaine:
-        cases.append("Case à cocher P7 8")   # Transports en commun
+    elif any(x in aides_str for x in ["transports en commun", "bus", "métro", "train seul", "utilise les transports"]):
+        cases.append("Case à cocher P7 8")
+    # Pas de défaut
 
-    # Communication (P7 15-18 y=498-589) :
-    #   P7 15 (y=498) = communique bien | P7 16 (y=524) = difficultés légères
-    #   P7 17 (y=553) = nécessite aide | P7 18 (y=589) = communication très limitée
+    # Communication — uniquement si information confirmée
     if any(x in aides_str for x in ["autisme", "non verbal", "communication augmentative", "cécité", "surdité profonde"]):
         cases.append("Case à cocher P7 18")
-    elif any(x in aides_str for x in ["communication", "langage", "parole", "expression"]):
+    elif any(x in aides_str for x in ["difficultés de communication", "trouble du langage", "dysphasie", "aphasie", "mutisme"]):
         cases.append("Case à cocher P7 16")
-    else:
+    elif any(x in aides_str for x in ["communique normalement", "pas de trouble communication", "expression orale normale"]):
         cases.append("Case à cocher P7 15")
+    # Pas de défaut
 
     # ════════════════════════════════════════════════════════════════════════
     # PAGE 8 — Description de la situation et des difficultés
+    # Structure : situation actuelle → retentissements fonctionnels → projets de vie
     # ════════════════════════════════════════════════════════════════════════
     if description_situation:
         champs["Champ de texte P8 1"] = description_situation[:2000]
 
     # ════════════════════════════════════════════════════════════════════════
-    # PAGES 9-12 — Scolarité (enfants < 18 et jeunes majeurs en formation initiale)
+    # PAGES 9-12 — Scolarité (enfants et jeunes majeurs en formation initiale)
+    # Expert Q18 : REMPLISSAGE AUTOMATIQUE pour les checkboxes C2
     # ════════════════════════════════════════════════════════════════════════
     if age_tranche in ("enfant", "jeune_majeur") and scolarise:
-        # Type d'établissement (P 9 1-7 y=154-327 x=50) :
-        #   1=petite enfance | 2=maternelle | 3=primaire | 4=collège
-        #   5=lycée général | 6=lycée pro/CAP | 7=supérieur
+        # Type d'établissement scolaire (C1)
         type_etab = type_etablissement
         if any(x in type_etab for x in ["crèche", "halte", "petite enfance"]):
             cases.append("Case à cocher P 9 1")
@@ -819,27 +1128,28 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         elif any(x in type_etab for x in ["université", "bts", "iut", "btsa", "cpge", "supérieur"]):
             cases.append("Case à cocher P 9 7")
         else:
-            cases.append("Case à cocher P 9 3")   # Défaut enfant : primaire
+            cases.append("Case à cocher P 9 3")   # Défaut : primaire
 
         if nom_ecole:
             champs["Champ de texte P9 1"] = nom_ecole
         if classe_scolaire:
             champs["Champ de texte P9 2"] = classe_scolaire
 
-        # PPS, ULIS, PAI
+        # C2 — Aménagements scolaires (REMPLISSAGE AUTOMATIQUE — expert Q18)
         if a_pps:
             cases.append("Case à cocher P 9 8")
         if a_ulis:
             cases.append("Case à cocher P 9 9")
         if a_pai:
             cases.append("Case à cocher P 9 10")
+        # AESH (accompagnement humain) : automatique si PPS ou ULIS
+        if a_pps or a_ulis:
+            cases.append("Case à cocher P10 2")
 
-        # PAGE 10 (scolarité) — accompagnements scolaires
+        # PAGE 10 (scolarité) — accompagnements
         if aides_actuelles:
             aides_texte = "\n".join(f"- {a}" for a in aides_actuelles)
             champs["Champ de texte P10 1"] = aides_texte[:500]
-        if a_ulis or a_pps:
-            cases.append("Case à cocher P10 2")   # Accompagnement humain (AESH)
         if any(x in aides_str for x in ["sessad", "camsp"]):
             cases.append("Case à cocher P10 3")
 
@@ -852,10 +1162,9 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
             cases.append("Case à cocher P12 6")
 
     elif not is_enfant and aides_actuelles:
-        # PAGE 10 adulte — accompagnements et soins actuels
+        # PAGE 10 adulte — accompagnements actuels
         aides_texte = "\n".join(f"- {a}" for a in aides_actuelles)
         champs["Champ de texte P10 1"] = aides_texte[:500]
-        # Cases P10 4-12 = types d'accompagnement
         if any(x in aides_str for x in ["infirmier", "soin infirmier"]):
             cases.append("Case à cocher P10 4")
         if any(x in aides_str for x in ["kiné", "kinésithérapie"]):
@@ -877,16 +1186,26 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
 
     # ════════════════════════════════════════════════════════════════════════
     # PAGES 13-16 — Situation professionnelle (adultes et jeunes majeurs)
+    # Expert Q19/22 : emploi, recherche, ORP, projet pro
     # ════════════════════════════════════════════════════════════════════════
     if age_tranche in ("adulte", "jeune_majeur"):
         sp = situation_pro
-        has_emploi = any(x in sp for x in ["emploi", "travail", "esat", "ea", "cdd", "cdi", "temps"])
+        # has_emploi : VRAI uniquement si vraiment en emploi actif
+        # Exclure les signaux négatifs : inscrit France Travail, sans emploi, AT, chômage
+        _sp_norm = sp.lower()
+        _sig_pos = any(x in _sp_norm for x in ["en emploi", "esat", "cdd", "cdi", "entreprise adaptée", "contrat"])
+        _sig_neg = any(x in _sp_norm for x in [
+            "sans emploi", "france travail", "pôle emploi", "pole emploi",
+            "inscrit à", "recherche d'emploi", "chômage", "chomage",
+            "arrêt maladie", "arret maladie", "accident du travail", " at ",
+            "inaptitude", "inapte",
+        ])
+        has_emploi = _sig_pos and not _sig_neg and not en_recherche_emploi and not inscrit_pole_emploi
 
         # PAGE 13 — Situation actuelle
         if has_emploi:
-            cases.append("Case à cocher P 13 1")    # A une activité professionnelle
+            cases.append("Case à cocher P 13 1")
 
-        # Type d'emploi
         if "esat" in sp:
             cases.append("Case à cocher P 13 3")
         elif "entreprise adaptée" in sp or " ea " in sp or "ea " in sp:
@@ -894,7 +1213,6 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         elif any(x in sp for x in ["emploi ordinaire", "milieu ordinaire", "cdi", "cdd"]):
             cases.append("Case à cocher P 13 2")
 
-        # Employeur / poste
         if nom_employeur:
             champs["Champ de texte P13 1"] = nom_employeur
         if poste_occupe:
@@ -904,8 +1222,10 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         if duree_hebdo:
             champs["Champ de texte P13 7"] = duree_hebdo
 
-        # Sans emploi / recherche
-        if en_recherche_emploi or any(x in sp for x in ["sans emploi", "recherche", "chômage", "chomage"]):
+        # P 13 9 = sans emploi / recherche d'emploi
+        # NE PAS cocher si arrêt AT/MP — la case arrêt maladie (P 13 12) est plus appropriée
+        _en_arret_at = accident_travail or any(x in sp for x in ["accident de travail", "arret at", "arrêt at"])
+        if (en_recherche_emploi or any(x in sp for x in ["sans emploi", "recherche", "chômage", "chomage"])) and not _en_arret_at:
             cases.append("Case à cocher P 13 9")
             if inscrit_pole_emploi:
                 cases.append("Case à cocher P 13 7")
@@ -923,7 +1243,6 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         if any(x in sp for x in ["retraite", "retraité"]):
             cases.append("Case à cocher P 13 8")
 
-        # Date début emploi
         if date_debut_emploi:
             parts = date_debut_emploi.split("/")
             if len(parts) == 3:
@@ -931,129 +1250,219 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
                 champs["DATE P13 5"] = parts[1]
                 champs["DATE P13 6"] = parts[2]
 
-        # PAGE 14 — Formation professionnelle
-        if en_formation or nom_formation:
-            cases.append("Case \u00e0 cocher P14 1")
-            if nom_formation:
-                champs["Champ de texte P14 1"] = nom_formation
-            if organisme_formation:
-                champs["Champ de texte P14 2"] = organisme_formation
+        # PAGE 14 — Accident du travail / Maladie professionnelle + parcours emploi
+        # Champ de texte P14 1 = description narrative AT (PAS le nom de la formation)
+        if accident_travail:
+            cases.append("Case à cocher P14 1")   # Oui, j'ai eu un AT/MP
+            if narratif_at:
+                champs["Champ de texte P14 1"] = narratif_at[:500]
+            # Date de l'accident : "Date p14 1/2/3" (nom de champ avec p minuscule)
+            if date_at and "/" in date_at:
+                _at_parts = date_at.split("/")
+                if len(_at_parts) >= 2:
+                    champs["Date p14 1"] = _at_parts[0]   # jour
+                    champs["Date p14 2"] = _at_parts[1]   # mois
+                if len(_at_parts) == 3:
+                    champs["Date p14 3"] = _at_parts[2]   # année
 
-        # PAGE 16 — Projet(s) professionnel(s)
+        # France Travail (P14 2)
+        if inscrit_pole_emploi:
+            cases.append("Case à cocher P14 2")
+
+        # Cap Emploi (P14 7) — structure spécialisée insertion TH
+        if a_cap_emploi:
+            cases.append("Case à cocher P14 7")
+
+        # CV (P15 5) — mentionner si dossier contient un CV ou si projet pro
+        _cv_text = ds.get("cv_text") or cerfa_rep.get("cv_text") or ""
+        if _cv_text:
+            champs["Champ de texte P15 5"] = _cv_text[:300]
+        elif projet_professionnel or a_cible_esrp:
+            champs["Champ de texte P15 5"] = "CV joint au dossier"
+
+        # PAGE 16 — Projet professionnel / Orientation CRP-ESRP
+        # OPTION P16 1 (radio Oui/Non) est géré dans la section radio ci-dessous
+        # Champ de texte P16 1 = description du projet / orientation souhaitée
         if projet_professionnel:
             champs["Champ de texte P16 1"] = projet_professionnel[:500]
-            cases.append("Case \u00e0 cocher P16 1")     # Oui, j'ai un projet
-        else:
-            cases.append("Case \u00e0 cocher P16 2")     # Non / en r\u00e9flexion
 
-    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-    # PAGE 20 \u2014 Aidant familial et orientations P18 suite
-    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-    if nom_aidant:
-        champs["Champ de texte P20 1"] = nom_aidant
-    if prenom_aidant:
-        champs["Champ de texte P20 2"] = prenom_aidant
-    if lien_aidant:
-        champs["Champ de texte P20 3"] = lien_aidant
+        # Case à cocher P16 2 = Orientation vers CRP/ESRP (PAS "non en réflexion")
+        _cible_crp = a_cible_esrp or any(t in droits_str for t in ("CRP", "ESRP", "CPO", "UEROS"))
+        if _cible_crp:
+            cases.append("Case à cocher P16 2")   # Orientation spécialisée CRP/ESRP
+            # Nom et adresse de l'ESRP visé → "Champ de texte P 16 2" (avec espace)
+            _esrp_label = nom_esrp or organisme_formation or ""
+            if not _esrp_label and nom_formation and any(t in nom_formation.lower() for t in ["esrp", "crp"]):
+                _esrp_label = nom_formation
+            if _esrp_label:
+                champs["Champ de texte P 16 2"] = _esrp_label[:200]
 
-    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-    # BAS DE PAGE \u2014 Nom / pr\u00e9nom r\u00e9p\u00e9t\u00e9s sur toutes les pages
-    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+        # Case à cocher P16 5 = Formation professionnelle en cours ou envisagée
+        if en_formation or (_cible_crp and type_formation_pro):
+            cases.append("Case à cocher P16 5")
+            # Nom de la formation → "Champ de texte P 17 1" (avec espace)
+            _form_label = type_formation_pro or nom_formation or ""
+            if _form_label:
+                champs["Champ de texte P 17 1"] = _form_label[:300]
+
+        # Champ de texte P16 3 = narratif de la situation / pourquoi réadaptation
+        if narratif_rehab:
+            champs["Champ de texte P16 3"] = narratif_rehab[:500]
+
+    # ════════════════════════════════════════════════════════════════════════
+    # PAGES 19-20 — Aidant familial
+    # Expert Q29/30 : déclenché si aidant confirmé (réponse WhatsApp ou ds)
+    # Question posée : « Est-ce que quelqu'un vous aide au quotidien ? »
+    # Si oui → remplir intégralement pages 19 et 20
+    # ════════════════════════════════════════════════════════════════════════
+    if _a_aidant_confirme or nom_aidant:
+        if nom_aidant:
+            champs["Champ de texte P20 1"] = nom_aidant
+        if prenom_aidant:
+            champs["Champ de texte P20 2"] = prenom_aidant
+        if lien_aidant:
+            champs["Champ de texte P20 3"] = lien_aidant
+
+        # PAGE 19 — Situation de l'aidant
+        # Lien de parenté / relation avec la personne aidée
+        if lien_aidant:
+            try:
+                champs["Champ de texte P19 1"] = lien_aidant
+            except Exception:
+                pass
+        # Activité professionnelle de l'aidant (si renseignée)
+        _activite_aidant = ds.get("activite_aidant") or cerfa_rep.get("activite_aidant") or ""
+        if _activite_aidant:
+            try:
+                champs["Champ de texte P19 2"] = _activite_aidant
+            except Exception:
+                pass
+        # Fréquence de l'aide (description)
+        _freq_aide = ds.get("frequence_aide") or cerfa_rep.get("frequence_aide") or ""
+        if _freq_aide:
+            try:
+                champs["Champ de texte P19 3"] = _freq_aide
+            except Exception:
+                pass
+        # Description des aides apportées (depuis cerfa_reponses)
+        if _besoins_aide_rep_txt and not nom_aidant:
+            # Si seule la description existe (pas encore d'identité) — log pour alerter
+            logger.info(
+                "[CERFA P19-P20] Aidant détecté via besoins_aide mais identité non collectée. "
+                "Ajouter la question 'aidant_identite' dans le flux WhatsApp."
+            )
+
+    # ════════════════════════════════════════════════════════════════════════
+    # BAS DE PAGE — Nom / prénom répétés sur toutes les pages
+    # ════════════════════════════════════════════════════════════════════════
     champs["NOM BAS DE PAGE"]    = nom
     champs["PRENOM BAS DE PAGE"] = prenom
 
-    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-    # PAGES 17 / 18 / 19 \u2014 Demandes (allocations, orientations, cartes)
-    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+    # ════════════════════════════════════════════════════════════════════════
+    # PAGES 17 / 18 — Demandes (allocations, orientations professionnelles)
+    # ════════════════════════════════════════════════════════════════════════
     cases.extend(cases_droits)
 
-    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-    # RADIO BUTTONS \u2014 tous coch\u00e9s AVANT update_page_form_field_values
-    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-    # Genre (OPTION P2 1) \u2014 x=165 : Homme | x=252 : Femme
+    # ════════════════════════════════════════════════════════════════════════
+    # RADIO BUTTONS — cochés AVANT update_page_form_field_values
+    # ════════════════════════════════════════════════════════════════════════
+
+    # Genre (OPTION P2 1) — x=165 : Homme | x=252 : Femme
     genre_ok = False
     if genre in ("homme", "masculin", "m", "male"):
-        genre_ok = _cocher_option_nth(writer, "Case \u00e0 cocher OPTION P2 1", 0)
-    elif genre in ("femme", "f\u00e9minin", "f", "female"):
-        genre_ok = _cocher_option_nth(writer, "Case \u00e0 cocher OPTION P2 1", 1)
+        genre_ok = _cocher_option_nth(writer, "Case à cocher OPTION P2 1", 0)
+    elif genre in ("femme", "féminin", "f", "female"):
+        genre_ok = _cocher_option_nth(writer, "Case à cocher OPTION P2 1", 1)
     if not genre_ok and genre:
-        logger.warning(f"Genre non coch\u00e9 : {genre!r}")
+        logger.warning(f"Genre non coché : {genre!r}")
 
-    # Nationalit\u00e9 (OPTION P2 2) \u2014 0:Fran\u00e7aise | 1:EEE Suisse | 2:Autre
-    if "eee" in nationalite or "suisse" in nationalite or "europ\u00e9en" in nationalite:
-        _cocher_option_nth(writer, "Case \u00e0 cocher OPTION P2 2", 1)
+    # Nationalité (OPTION P2 2) — 0:Française | 1:EEE/Suisse | 2:Autre
+    if "eee" in nationalite or "suisse" in nationalite or "européen" in nationalite:
+        _cocher_option_nth(writer, "Case à cocher OPTION P2 2", 1)
     elif "autre" in nationalite or (nationalite and "fran" not in nationalite):
-        _cocher_option_nth(writer, "Case \u00e0 cocher OPTION P2 2", 2)
+        _cocher_option_nth(writer, "Case à cocher OPTION P2 2", 2)
     else:
-        _cocher_option_nth(writer, "Case \u00e0 cocher OPTION P2 2", 0)
+        _cocher_option_nth(writer, "Case à cocher OPTION P2 2", 0)
 
-    # Pays de naissance (OPTION P2 3) \u2014 0:France | 1:Autre
-    if pays_naissance and pays_naissance.lower() != "france":
-        _cocher_option_nth(writer, "Case \u00e0 cocher OPTION P2 3", 1)
-    else:
-        _cocher_option_nth(writer, "Case \u00e0 cocher OPTION P2 3", 0)
-
-    # Organisme payeur (OPTION P2 4) \u2014 0:CAF | 1:MSA | 2:Autre
-    if "msa" in organisme_payeur:
-        _cocher_option_nth(writer, "Case \u00e0 cocher OPTION P2 4", 1)
-    elif "caf" in organisme_payeur or not organisme_payeur:
-        _cocher_option_nth(writer, "Case \u00e0 cocher OPTION P2 4", 0)
-    else:
-        _cocher_option_nth(writer, "Case \u00e0 cocher OPTION P2 4", 2)
-
-    # Assurance maladie (OPTION P2 5) \u2014 0:CPAM | 1:MSA | 2:RSI | 3:Autre
-    if "msa" in organisme_assurance:
-        _cocher_option_nth(writer, "Case \u00e0 cocher OPTION P2 5", 1)
-    elif "rsi" in organisme_assurance:
-        _cocher_option_nth(writer, "Case \u00e0 cocher OPTION P2 5", 2)
-    elif "autre" in organisme_assurance:
-        _cocher_option_nth(writer, "Case \u00e0 cocher OPTION P2 5", 3)
-    else:
-        _cocher_option_nth(writer, "Case \u00e0 cocher OPTION P2 5", 0)
-
-    # Classe ordinaire (OPTION P9 1) \u2014 0:Oui | 1:Non (si scolarit\u00e9 applicable)
-    if age_tranche in ("enfant", "jeune_majeur") and scolarise:
-        if classe_ordinaire:
-            _cocher_option_nth(writer, "Case \u00e0 cocher OPTION P9 1", 0)
+    # Pays de naissance (OPTION P2 3) — 0:France | 1:Autre
+    # Ne cocher que si le pays de naissance est effectivement renseigné
+    if pays_naissance:
+        if pays_naissance.lower() != "france":
+            _cocher_option_nth(writer, "Case à cocher OPTION P2 3", 1)
         else:
-            _cocher_option_nth(writer, "Case \u00e0 cocher OPTION P9 1", 1)
+            _cocher_option_nth(writer, "Case à cocher OPTION P2 3", 0)
+    # Si inconnu : radio laissé vide
 
-    # Logement adapt\u00e9 (OPTION P5 1) \u2014 0:Non | 1:Oui (ordre x croissant)
+    # Organisme payeur (OPTION P2 4) — 0:CAF | 1:MSA | 2:Autre
+    # Expert Q2 : "poser systématiquement la question CAF ou MSA"
+    if "msa" in organisme_payeur:
+        _cocher_option_nth(writer, "Case à cocher OPTION P2 4", 1)
+    elif "caf" in organisme_payeur or not organisme_payeur:
+        _cocher_option_nth(writer, "Case à cocher OPTION P2 4", 0)
+    else:
+        _cocher_option_nth(writer, "Case à cocher OPTION P2 4", 2)
+
+    # Assurance maladie (OPTION P2 5) — 0:CPAM | 1:MSA | 2:RSI | 3:Autre
+    if "msa" in organisme_assurance:
+        _cocher_option_nth(writer, "Case à cocher OPTION P2 5", 1)
+    elif "rsi" in organisme_assurance:
+        _cocher_option_nth(writer, "Case à cocher OPTION P2 5", 2)
+    elif "autre" in organisme_assurance:
+        _cocher_option_nth(writer, "Case à cocher OPTION P2 5", 3)
+    else:
+        _cocher_option_nth(writer, "Case à cocher OPTION P2 5", 0)
+
+    # Classe ordinaire (OPTION P9 1) — 0:Oui | 1:Non
+    if age_tranche in ("enfant", "jeune_majeur") and scolarise:
+        _cocher_option_nth(writer, "Case à cocher OPTION P9 1", 0 if classe_ordinaire else 1)
+
+    # Consentement partage informations (OPTION P4 1) — 0:J'accepte | 1:Je n'accepte pas
+    # Nom du champ confirmé par inspection PDF : "Case à cocher OPTION P4 1"
+    _cocher_option_nth(writer, "Case à cocher OPTION P4 1", 0 if consentement else 1)
+
+    # Logement adapté (OPTION P5 1) — 0:Non | 1:Oui
     if logement_adapte is True:
-        _cocher_option_nth(writer, "Case \u00e0 cocher OPTION P5 1", 1)
+        _cocher_option_nth(writer, "Case à cocher OPTION P5 1", 1)
     elif logement_adapte is False:
-        _cocher_option_nth(writer, "Case \u00e0 cocher OPTION P5 1", 0)
+        _cocher_option_nth(writer, "Case à cocher OPTION P5 1", 0)
 
-    # Emploi temps partiel (OPTION P13 6) \u2014 0:Temps plein | 1:Temps partiel
+    # Statut d'occupation (OPTION P5 2) — 0:Propriétaire | 1:Locataire | 2:Hébergé
+    # Confirmé par inspection PDF : "Case à cocher OPTION P5 2" avec valeurs /Propriétaire, /Locataire...
+    _so = statut_occupation
+    if any(x in _so for x in ["proprio", "propriétaire", "proprietaire"]):
+        _cocher_option_nth(writer, "Case à cocher OPTION P5 2", 0)
+    elif any(x in _so for x in ["locataire", "location"]):
+        _cocher_option_nth(writer, "Case à cocher OPTION P5 2", 1)
+    elif any(x in _so for x in ["hébergé", "heberge", "gratuit", "à titre gratuit"]):
+        _cocher_option_nth(writer, "Case à cocher OPTION P5 2", 2)
+
+    # Emploi / formation radios (adultes et jeunes majeurs)
     if age_tranche in ("adulte", "jeune_majeur"):
         sp = situation_pro
+        # Temps partiel (OPTION P13 6)
         if "temps partiel" in sp or "mi-temps" in sp:
-            _cocher_option_nth(writer, "Case \u00e0 cocher OPTION P13 6", 1)
+            _cocher_option_nth(writer, "Case à cocher OPTION P13 6", 1)
         elif "temps plein" in sp or any(x in sp for x in ["emploi", "cdi", "cdd"]):
-            _cocher_option_nth(writer, "Case \u00e0 cocher OPTION P13 6", 0)
+            _cocher_option_nth(writer, "Case à cocher OPTION P13 6", 0)
 
-        # Contrat en cours (OPTION P13 2) \u2014 0:Oui | 1:Non
+        # Contrat en cours (OPTION P13 2)
         has_emploi_radio = any(x in sp for x in ["emploi", "travail", "esat", "cdi", "cdd"])
-        _cocher_option_nth(writer, "Case \u00e0 cocher OPTION P13 2", 0 if has_emploi_radio else 1)
+        _cocher_option_nth(writer, "Case à cocher OPTION P13 2", 0 if has_emploi_radio else 1)
 
-        # En arr\u00eat (OPTION P13 3) \u2014 0:Oui | 1:Non
-        en_arret = any(x in sp for x in ["arr\u00eat", "arret"])
-        _cocher_option_nth(writer, "Case \u00e0 cocher OPTION P13 3", 0 if en_arret else 1)
+        # En arrêt (OPTION P13 3)
+        en_arret = any(x in sp for x in ["arrêt", "arret"])
+        _cocher_option_nth(writer, "Case à cocher OPTION P13 3", 0 if en_arret else 1)
 
-        # Formation en cours (OPTION P14 1) \u2014 0:Oui | 1:Non
-        _cocher_option_nth(writer, "Case \u00e0 cocher OPTION P14 1", 0 if (en_formation or nom_formation) else 1)
+        # Formation en cours (OPTION P14 1)
+        _cocher_option_nth(writer, "Case à cocher OPTION P14 1", 0 if (en_formation or nom_formation) else 1)
 
-        # Projet pro (OPTION P16 1) \u2014 0:Oui | 1:Non
-        _cocher_option_nth(writer, "Case \u00e0 cocher OPTION P16 1", 0 if projet_professionnel else 1)
+        # Projet pro (OPTION P16 1) — 0:Oui j'ai un projet | 1:Non/en réflexion
+        _a_projet_pro = bool(projet_professionnel) or a_cible_esrp
+        _cocher_option_nth(writer, "Case à cocher OPTION P16 1", 0 if _a_projet_pro else 1)
 
-    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-    # Remplissage des champs texte (toujours apr\u00e8s les radio buttons)
-    # \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-    # \u2500\u2500 Remplissage des champs texte \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-    # Chaque page dans un try/except ind\u00e9pendant pour ne pas bloquer
-    # si un champ n'existe pas dans cette version du formulaire.
+    # ── Remplissage des champs texte ──────────────────────────────────────────
+    champs_vides   = {k: v for k, v in champs.items() if v}
     champs_remplis = 0
-    champs_vides   = {k: v for k, v in champs.items() if v}  # ignore les valeurs vides
     for page_idx, page in enumerate(writer.pages):
         try:
             writer.update_page_form_field_values(page, champs_vides)
@@ -1061,7 +1470,7 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         except Exception as e:
             logger.warning(f"[CERFA] update_page_form_field_values page {page_idx} : {e}")
 
-    # \u2500\u2500 Cochage des cases simples via annotation directe \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+    # ── Cochage des cases simples via annotation directe ──────────────────────
     coches_ok = 0
     for field_name in cases:
         try:
@@ -1070,26 +1479,27 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         except Exception as e:
             logger.debug(f"[CERFA] Cochage case '{field_name}' : {e}")
 
-    # NeedAppearances \u2014 force les viewers \u00e0 recalculer l'aspect visuel
+    # NeedAppearances — force les viewers à recalculer l'aspect visuel
     try:
         acroform = writer._root_object["/AcroForm"].get_object()
         acroform.update({NameObject("/NeedAppearances"): BooleanObject(True)})
     except Exception as e:
-        logger.debug(f"NeedAppearances non d\u00e9fini : {e}")
+        logger.debug(f"NeedAppearances non défini : {e}")
 
     logger.info(
-        f"CERFA pr\u00e9-rempli | dossier={dossier.get('dossier_id', '?')} "
+        f"CERFA pré-rempli | dossier={dossier.get('dossier_id', '?')} "
         f"| {nom} {prenom} | age_tranche={age_tranche} | genre={genre} "
-        f"| pages={champs_remplis} | {coches_ok}/{len(cases)} cases coch\u00e9es "
-        f"| genre_ok={genre_ok} | droits={droits}"
+        f"| pages={champs_remplis} | {coches_ok}/{len(cases)} cases cochées "
+        f"| genre_ok={genre_ok} | droits={droits} "
+        f"| cmi_p={cmi_priorite} cmi_s={cmi_stationnement} ea={emploi_accompagne}"
     )
 
     buffer = io.BytesIO()
     try:
         writer.write(buffer)
     except Exception as write_err:
-        logger.error(f"[CERFA] \u00c9chec writer.write() : {write_err}", exc_info=True)
-        raise  # Re-lever pour que l'appelant sache que le CERFA a \u00e9chou\u00e9
+        logger.error(f"[CERFA] Échec writer.write() : {write_err}", exc_info=True)
+        raise
 
     pdf_bytes = buffer.getvalue()
     buffer.close()
