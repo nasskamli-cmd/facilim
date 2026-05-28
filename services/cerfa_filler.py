@@ -243,6 +243,9 @@ def _cocher_option_nth(writer: PdfWriter, field_name: str, n: int) -> bool:
 
     Exemple : _cocher_option_nth(writer, "Case à cocher OPTION P2 2", 0) → Française
               _cocher_option_nth(writer, "Case à cocher OPTION P2 4", 0) → CAF
+
+    Implémentation : met à jour le widget (/AS) ET le nœud parent (/V) pour que
+    get_fields() et les viewers PDF reflètent la bonne valeur.
     """
     candidates = []
     for page in writer.pages:
@@ -251,16 +254,18 @@ def _cocher_option_nth(writer: PdfWriter, field_name: str, n: int) -> bool:
         for annot_ref in page["/Annots"]:
             try:
                 annot = annot_ref.get_object()
-                t_val = annot.get("/T")
+                t_val  = annot.get("/T")
+                parent = None
                 if t_val is None:
                     parent_ref = annot.get("/Parent")
                     if parent_ref:
-                        t_val = parent_ref.get_object().get("/T")
+                        parent = parent_ref.get_object()
+                        t_val  = parent.get("/T")
                 if t_val is not None and str(t_val) == field_name:
                     rect = annot.get("/Rect")
-                    x = float(rect[0]) if rect else 0
+                    x    = float(rect[0]) if rect else 0
                     on_val = _get_on_value(annot)
-                    candidates.append((x, annot, on_val))
+                    candidates.append((x, annot, on_val, parent))
             except Exception as e:
                 logger.debug(f"_cocher_option_nth scan err : {e!r}")
 
@@ -274,11 +279,26 @@ def _cocher_option_nth(writer: PdfWriter, field_name: str, n: int) -> bool:
         logger.warning(f"Option {n} hors limites pour {field_name} ({len(candidates)} options)")
         return False
 
-    x, annot, on_val = candidates[n]
-    annot.update({
-        NameObject("/V"):  NameObject(on_val),
-        NameObject("/AS"): NameObject(on_val),
-    })
+    x, annot, on_val, parent = candidates[n]
+    # 1. Widget : mettre /AS pour l'affichage visuel
+    annot.update({NameObject("/AS"): NameObject(on_val)})
+    # 2. Remettre les autres widgets à /Off
+    for i, (_, other_annot, _, _) in enumerate(candidates):
+        if i != n:
+            try:
+                other_annot.update({NameObject("/AS"): NameObject("/Off")})
+            except Exception:
+                pass
+    # 3. Nœud parent (field node) : mettre /V — c'est là que get_fields() lit la valeur
+    try:
+        if parent is not None:
+            parent.update({NameObject("/V"): NameObject(on_val)})
+        else:
+            # T direct sur le widget (pas de parent) : /V sur le widget lui-même
+            annot.update({NameObject("/V"): NameObject(on_val)})
+    except Exception as e:
+        logger.debug(f"_cocher_option_nth parent /V err : {e!r}")
+
     logger.debug(f"Option #{n} cochée : {field_name} → {on_val} (x={x:.0f})")
     return True
 
@@ -472,6 +492,7 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     geva_pro           = syntheses.get("geva_pro") or ""
     juriste            = syntheses.get("juriste") or ""
     droits             = analyse.get("droits_identifies") or []
+    droits_str         = " ".join(str(d).upper().replace("-", " ") for d in droits)
     elements_probants  = analyse.get("elements_probants") or []
 
     # Données structurées extraites par l'IA
@@ -835,8 +856,9 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     champs["Champ de texte P2 11"] = email          # Courriel (P2 11)
     champs["Champ de texte 24"]    = telephone      # Téléphone (champ 24)
     # Organisme payeur — N° d'allocataire (CAF ou MSA)
+    # Champ confirmé par inspection PDF : P2 13 (pas P2 14)
     if numero_allocataire:
-        champs["Champ de texte P2 14"] = numero_allocataire
+        champs["Champ de texte P2 13"] = numero_allocataire
 
     # NSS bénéficiaire (1 case par chiffre, 15 chiffres)
     # Adulte : Numero SS 3 → Numero SS 17 | Enfant : N° SS Enfant 1 → N° SS Enfant 15
@@ -913,8 +935,9 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         sit_fam_case = "Case à cocher P4 5"
     if sit_fam_case:
         cases.append(sit_fam_case)
-    if a_enfants_charge:
-        cases.append("Case à cocher P4 1")    # Enfants à charge
+    # NOTE : "a_enfants_charge" ne mappe PAS à P4 1 (= marié).
+    # Les enfants à charge n'ont pas de case dédiée sur la page 4 du CERFA 15692.
+    # La situation maritale est déjà gérée ci-dessus via sit_fam_case.
 
     # Consentement partage informations — géré via le radio OPTION P4 1 dans la section radios
     # (valeur /J'accepte ou /Je n'accepte pas — cochée via _cocher_option_nth plus bas)
@@ -933,11 +956,12 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         or cerfa_rep.get("date_dossier_medical")
         or ""
     )
-    if date_dossier_medical and "/" in date_dossier_medical:
-        _dmed_parts = date_dossier_medical.split("/")
+    # Date de rédaction : explicite > aujourd'hui (noms confirmés par inspection PDF)
+    _date_p4 = date_dossier_medical or date.today().strftime("%d/%m/%Y")
+    if _date_p4 and "/" in _date_p4:
+        _dmed_parts = _date_p4.split("/")
         if len(_dmed_parts) == 3:
-            # Noms de champs confirmés par inspection PDF : "Date P4 1 " (espace final), "Date P4 2", "Date P4 3"
-            champs["Date P4 1 "] = _dmed_parts[0]
+            champs["Date P4 1 "] = _dmed_parts[0]   # "Date P4 1 " — espace final obligatoire
             champs["Date P4 2"]  = _dmed_parts[1]
             champs["Date P4 3"]  = _dmed_parts[2]
 
@@ -945,9 +969,68 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
 
     # ════════════════════════════════════════════════════════════════════════
     # PAGE 5 — Lieu de vie / Logement
-    # NB : Champ de texte P5 1 = description du logement (PAS l'adresse)
-    #      L'adresse est sur la page 2 (P2 8 + P 2 9 + digit boxes 17-21)
+    # Structure réelle du CERFA 15692 (confirmée par inspection PDF + corrigé) :
+    #
+    #  "Vous vivez :" (avec qui ?)
+    #     P5 1 = Seul(e)
+    #     P5 2 = En couple
+    #     P5 3 = Avec vos parents (ou l'un d'entre eux)
+    #     P5 4 = Avec vos enfants (ou l'un d'entre eux)
+    #     P5 5 = Autre situation
+    #
+    #  "Où vivez-vous ?" (type de lieu)
+    #     P5 6 = Vous avez un logement indépendant (maison, appartement, foyer...)
+    #     P5 7 = Dans un établissement médico-social ou de soin
+    #     P5 8 = Hébergé au domicile de vos parents (ou l'un d'eux)
+    #     P5 9 = Hébergé au domicile d'un(e) ami(e)
+    #     P5 10 = Hébergé au domicile de vos enfants (ou l'un d'eux)
+    #     P5 11 = Hébergé au domicile d'un autre membre de la famille
+    #
+    #  Statut d'occupation → radio OPTION P5 2 (/Propriétaire | /Locataire | /Hébergé)
+    #  Logement adapté     → radio OPTION P5 1 (/Oui | /Non)
     # ════════════════════════════════════════════════════════════════════════
+
+    # "Avec qui vivez-vous ?" (P5 1-5)
+    tl = type_logement_detail
+    _en_etablissement = any(x in tl for x in [
+        "établissement", "institution", "medico", "ehpad", "esat", "foyer d'hébergement",
+    ])
+    _heberge_parents  = any(x in tl for x in ["chez parents", "hébergé parents"])
+    _heberge_enfants  = any(x in tl for x in ["chez enfants", "hébergé enfants"])
+    _heberge_ami      = any(x in tl for x in ["chez ami", "hébergé ami"])
+    _heberge_famille  = any(x in tl for x in ["chez famille", "hébergé famille"])
+
+    # Avec qui
+    if vie_seule:
+        cases.append("Case à cocher P5 1")
+    elif vie_en_couple or any(x in sf for x in ["marié", "marie", "pacsé", "pacse", "concubinage"]):
+        cases.append("Case à cocher P5 2")
+    elif _heberge_parents or any(x in tl for x in ["parents", "mère", "père"]):
+        cases.append("Case à cocher P5 3")
+    elif a_enfants_charge or vie_en_famille:
+        # Vit avec ses enfants (cas : parent avec enfant à charge) → P5 4
+        # Sauf si l'enfant, auquel cas c'est P5 3 (chez parents)
+        if not is_enfant:
+            cases.append("Case à cocher P5 4")
+    # Pas de défaut : si inconnu → laisser vide
+
+    # "Où vivez-vous ?" (P5 6-11)
+    if _en_etablissement:
+        cases.append("Case à cocher P5 7")
+    elif _heberge_parents:
+        cases.append("Case à cocher P5 8")
+    elif _heberge_enfants:
+        cases.append("Case à cocher P5 10")
+    elif _heberge_ami:
+        cases.append("Case à cocher P5 9")
+    elif _heberge_famille:
+        cases.append("Case à cocher P5 11")
+    elif statut_occupation or type_logement_detail or logement_adapte is not None:
+        # Logement indépendant (maison, appartement, etc.) — le cas le plus courant
+        cases.append("Case à cocher P5 6")
+    # Pas de défaut si aucune info sur le logement
+
+    # Statut d'occupation → géré via OPTION P5 2 dans la section radios ci-dessous
 
     # Accident du travail / Maladie professionnelle (P5 15)
     if accident_travail:
@@ -955,43 +1038,18 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         cases.append("Case à cocher P5 20")   # Indemnisation en cours / rente
 
     # Ressources actuelles (B1) — AAH, chômage, ASS, pension invalidité, etc.
-    # Expert Q11 : "question globale sur les ressources"
     if ressources_actuelles:
         try:
             champs["Champ de texte P5 ressources"] = ressources_actuelles[:300]
         except Exception:
             pass
 
-    # Frais liés au handicap (B1) — frais non remboursés, pris en compte pour PCH
-    # Expert Q12 : "mettre tous les frais liés au handicap non remboursés"
+    # Frais liés au handicap (B1)
     if frais_handicap:
         try:
             champs["Champ de texte P5 frais"] = frais_handicap[:300]
         except Exception:
             pass
-
-    # Type de logement — uniquement si information confirmée, aucun défaut
-    tl = type_logement_detail
-    if any(x in tl for x in ["établissement", "institution", "medico", "ehpad", "esat", "foyer d'hébergement"]):
-        cases.append("Case à cocher P5 1")
-    elif any(x in tl for x in ["maison", "pavillon", "individuel"]):
-        cases.append("Case à cocher P5 2")
-    elif any(x in tl for x in ["appartement", "appart", "hlm", "immeuble"]):
-        cases.append("Case à cocher P5 3")
-    elif any(x in tl for x in ["foyer", "résidence", "residence"]):
-        cases.append("Case à cocher P5 4")
-    # Pas de défaut : si type de logement inconnu → laisser vide
-
-    # Avec qui vivez-vous — uniquement si information confirmée
-    if vie_seule:
-        cases.append("Case à cocher P5 5")
-    elif vie_en_couple or any(x in sf for x in ["marié", "marie", "pacsé", "pacse", "concubinage"]):
-        cases.append("Case à cocher P5 6")
-    elif vie_en_famille:
-        cases.append("Case à cocher P5 6")
-    # Pas de défaut : si mode de vie inconnu → laisser vide
-
-    # Statut d'occupation — géré via OPTION P5 2 radio dans la section radios ci-dessous
 
     # Besoins d'aide technique
     if besoins_aide_technique:
@@ -1420,11 +1478,11 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     # Nom du champ confirmé par inspection PDF : "Case à cocher OPTION P4 1"
     _cocher_option_nth(writer, "Case à cocher OPTION P4 1", 0 if consentement else 1)
 
-    # Logement adapté (OPTION P5 1) — 0:Non | 1:Oui
+    # Logement adapté (OPTION P5 1) — 0:Oui | 1:Non (confirmé par test : index 0 = /Oui)
     if logement_adapte is True:
-        _cocher_option_nth(writer, "Case à cocher OPTION P5 1", 1)
-    elif logement_adapte is False:
         _cocher_option_nth(writer, "Case à cocher OPTION P5 1", 0)
+    elif logement_adapte is False:
+        _cocher_option_nth(writer, "Case à cocher OPTION P5 1", 1)
 
     # Statut d'occupation (OPTION P5 2) — 0:Propriétaire | 1:Locataire | 2:Hébergé
     # Confirmé par inspection PDF : "Case à cocher OPTION P5 2" avec valeurs /Propriétaire, /Locataire...
@@ -1439,11 +1497,13 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     # Emploi / formation radios (adultes et jeunes majeurs)
     if age_tranche in ("adulte", "jeune_majeur"):
         sp = situation_pro
-        # Temps partiel (OPTION P13 6)
-        if "temps partiel" in sp or "mi-temps" in sp:
-            _cocher_option_nth(writer, "Case à cocher OPTION P13 6", 1)
-        elif "temps plein" in sp or any(x in sp for x in ["emploi", "cdi", "cdd"]):
+        # Type de contrat (OPTION P13 6) — index 0:/CDI | index 1:/CDD
+        # Confirmé par le corrigé expert : /CDI pour le dernier contrat
+        _tc = type_contrat.lower()
+        if "cdi" in _tc or (has_emploi and "cdi" in sp):
             _cocher_option_nth(writer, "Case à cocher OPTION P13 6", 0)
+        elif "cdd" in _tc or (has_emploi and "cdd" in sp):
+            _cocher_option_nth(writer, "Case à cocher OPTION P13 6", 1)
 
         # Contrat en cours (OPTION P13 2)
         has_emploi_radio = any(x in sp for x in ["emploi", "travail", "esat", "cdi", "cdd"])
