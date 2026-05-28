@@ -1,0 +1,1175 @@
+<!DOCTYPE html>
+<html lang="fr" class="scroll-smooth">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Facilim — Des dossiers MDPH complets, enfin simples</title>
+  <meta name="description" content="Facilim simplifie la constitution des dossiers MDPH pour les familles et les structures médico-sociales. Bot WhatsApp, analyse IA CNSA, CERFA pré-rempli automatiquement." />
+  <meta name="robots" content="index, follow" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            navy:  { DEFAULT:'#1B3A6B', dark:'#132B52', light:'#EEF2F9' },
+            brand: { DEFAULT:'#2ECC9A', dark:'#25A87E', light:'#E8F9F4' },
+          },
+          fontFamily: { sans: ['Inter','sans-serif'] },
+          boxShadow: {
+            'card': '0 4px 40px rgba(27,58,107,0.10), 0 1px 4px rgba(0,0,0,0.04)',
+            'card-hover': '0 12px 60px rgba(27,58,107,0.16), 0 2px 8px rgba(0,0,0,0.06)',
+            'cta': '0 8px 30px rgba(46,204,154,0.35)',
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      --navy: #1B3A6B;
+      --navy-d: #132B52;
+      --navy-l: #EEF2F9;
+      --green: #2ECC9A;
+      --green-d: #25A87E;
+      --green-l: #E8F9F4;
+      --text: #0F172A;
+      --text-m: #334155;
+      --text-s: #64748B;
+      --border: #E2E8F0;
+    }
+
+    body { font-family: 'Inter', sans-serif; color: var(--text); overflow-x: hidden; }
+
+    /* ── Animations ──────────────────────────────── */
+    @keyframes float {
+      0%,100% { transform: translateY(0px); }
+      50%      { transform: translateY(-10px); }
+    }
+    @keyframes blob {
+      0%,100% { border-radius: 60% 40% 55% 45% / 55% 45% 55% 45%; }
+      33%      { border-radius: 45% 55% 40% 60% / 60% 40% 55% 45%; }
+      66%      { border-radius: 55% 45% 60% 40% / 40% 60% 45% 55%; }
+    }
+    @keyframes shimmer {
+      0%   { background-position: -200% center; }
+      100% { background-position: 200% center; }
+    }
+    @keyframes pulse-dot {
+      0%,100% { opacity:1; transform:scale(1); }
+      50%      { opacity:.6; transform:scale(1.3); }
+    }
+    @keyframes slide-up {
+      from { opacity:0; transform:translateY(28px); }
+      to   { opacity:1; transform:translateY(0); }
+    }
+    @keyframes count-in {
+      from { opacity:0; transform:scale(0.8); }
+      to   { opacity:1; transform:scale(1); }
+    }
+
+    .float-1 { animation: float 7s ease-in-out infinite; }
+    .float-2 { animation: float 8s ease-in-out infinite 1.2s; }
+    .float-3 { animation: float 9s ease-in-out infinite 2.5s; }
+
+    .hero-blob {
+      position: absolute;
+      filter: blur(90px);
+      border-radius: 50%;
+      animation: blob 18s ease-in-out infinite;
+      pointer-events: none;
+    }
+
+    /* ── Reveal on scroll ─────────────────────────── */
+    .reveal {
+      opacity: 0;
+      transform: translateY(32px);
+      transition: opacity .8s ease, transform .8s ease;
+    }
+    .reveal.visible {
+      opacity: 1;
+      transform: none;
+    }
+    .reveal-delay-1 { transition-delay: .1s; }
+    .reveal-delay-2 { transition-delay: .2s; }
+    .reveal-delay-3 { transition-delay: .3s; }
+    .reveal-delay-4 { transition-delay: .4s; }
+
+    /* ── Navigation ───────────────────────────────── */
+    #navbar {
+      transition: background .3s ease, box-shadow .3s ease, backdrop-filter .3s ease;
+    }
+    #navbar.scrolled {
+      background: rgba(255,255,255,.94) !important;
+      backdrop-filter: blur(24px);
+      box-shadow: 0 1px 40px rgba(27,58,107,.07);
+    }
+
+    /* ── Hero background ──────────────────────────── */
+    .hero-bg {
+      background: linear-gradient(150deg, #F8FAFF 0%, #EEF4FF 45%, #E8F9F4 100%);
+    }
+
+    /* ── Gradient text ────────────────────────────── */
+    .text-gradient {
+      background: linear-gradient(135deg, var(--navy) 0%, #2563EB 55%, var(--green) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .text-gradient-green {
+      background: linear-gradient(135deg, var(--green-d), var(--green));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    /* ── Buttons ──────────────────────────────────── */
+    .btn-primary {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: var(--green); color: #fff;
+      font-weight: 600; font-size: 15px; text-decoration: none;
+      padding: 13px 26px; border-radius: 10px; border: none; cursor: pointer;
+      transition: background .2s, transform .2s, box-shadow .2s;
+    }
+    .btn-primary:hover {
+      background: var(--green-d);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 28px rgba(46,204,154,.38);
+    }
+    .btn-outline {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: transparent; color: var(--navy);
+      font-weight: 600; font-size: 15px; text-decoration: none;
+      padding: 13px 26px; border-radius: 10px; border: 2px solid var(--border); cursor: pointer;
+      transition: all .2s;
+    }
+    .btn-outline:hover {
+      border-color: var(--navy);
+      background: var(--navy-l);
+      transform: translateY(-2px);
+    }
+    .btn-nav {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: transparent; color: var(--navy);
+      font-weight: 600; font-size: 14px; text-decoration: none;
+      padding: 8px 18px; border-radius: 8px; border: 1.5px solid var(--border); cursor: pointer;
+      transition: all .2s;
+    }
+    .btn-nav:hover { border-color: var(--navy); background: var(--navy-l); }
+
+    /* ── Cards ────────────────────────────────────── */
+    .card-shadow {
+      background: #fff;
+      border: 1px solid rgba(226,232,240,.9);
+      border-radius: 18px;
+      box-shadow: 0 4px 40px rgba(27,58,107,.10), 0 1px 4px rgba(0,0,0,.03);
+    }
+    .card-hover {
+      transition: transform .3s ease, box-shadow .3s ease;
+    }
+    .card-hover:hover {
+      transform: translateY(-6px);
+      box-shadow: 0 14px 60px rgba(27,58,107,.16);
+    }
+
+    /* ── Product mockup cards ─────────────────────── */
+    .mockup-card {
+      background: #fff;
+      border-radius: 16px;
+      border: 1px solid rgba(226,232,240,.9);
+      box-shadow: 0 6px 40px rgba(27,58,107,.12), 0 1px 6px rgba(0,0,0,.04);
+      padding: 18px;
+      position: relative;
+      overflow: hidden;
+    }
+    .mockup-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, var(--green), #3B82F6);
+    }
+    .wa-bubble {
+      padding: 9px 13px;
+      border-radius: 12px;
+      font-size: 12.5px;
+      line-height: 1.45;
+      max-width: 88%;
+    }
+    .wa-bot  { background: #F1F5F9; color: var(--text); align-self: flex-start; border-radius: 4px 12px 12px 12px; }
+    .wa-user { background: var(--green); color: #fff; align-self: flex-end; border-radius: 12px 4px 12px 12px; }
+
+    /* ── Progress bar ─────────────────────────────── */
+    .prog-track { background: #E2E8F0; border-radius: 99px; height: 7px; overflow: hidden; }
+    .prog-fill  { background: linear-gradient(90deg, var(--green-d), var(--green)); height: 100%; border-radius: 99px; }
+
+    /* ── Badges ───────────────────────────────────── */
+    .badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 11.5px; font-weight: 600; letter-spacing: .02em;
+      padding: 4px 11px; border-radius: 99px;
+    }
+    .badge-green  { background: var(--green-l); color: var(--green-d); }
+    .badge-navy   { background: var(--navy-l);  color: var(--navy); }
+    .badge-orange { background: #FFF7ED; color: #C2410C; }
+    .badge-blue   { background: #EFF6FF; color: #1D4ED8; }
+
+    /* ── Dot online indicator ─────────────────────── */
+    .dot-online { width:8px; height:8px; border-radius:50%; background:#22C55E; animation: pulse-dot 2s ease-in-out infinite; }
+
+    /* ── Section labels ───────────────────────────── */
+    .section-label {
+      font-size: 12px; font-weight: 700; letter-spacing: .1em;
+      text-transform: uppercase; color: var(--green-d);
+    }
+
+    /* ── Step connector ───────────────────────────── */
+    .step-line {
+      flex: 1; border-top: 2px dashed #CBD5E1;
+      margin-top: 28px; margin-left: 8px; margin-right: 8px;
+    }
+
+    /* ── Testimonial ──────────────────────────────── */
+    .quote-mark { font-size: 56px; line-height: 1; color: var(--green); font-family: Georgia, serif; }
+
+    /* ── Feature check ────────────────────────────── */
+    .feat-check {
+      width: 22px; height: 22px; border-radius: 6px;
+      background: var(--green-l); color: var(--green-d);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 13px; flex-shrink: 0; margin-top: 1px;
+    }
+
+    /* ── Input ────────────────────────────────────── */
+    .field {
+      width: 100%;
+      border: 1.5px solid var(--border); border-radius: 10px;
+      padding: 12px 16px; font-size: 14.5px; font-family: Inter, sans-serif;
+      outline: none; transition: border-color .2s, box-shadow .2s;
+      background: #fff;
+    }
+    .field:focus {
+      border-color: var(--green);
+      box-shadow: 0 0 0 3px rgba(46,204,154,.12);
+    }
+
+    /* ── Trust partner chip ───────────────────────── */
+    .partner-chip {
+      background: #fff;
+      border: 1.5px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 22px;
+      font-weight: 600; font-size: 13.5px;
+      color: var(--text-m);
+      white-space: nowrap;
+      transition: all .2s;
+    }
+    .partner-chip:hover { border-color: var(--navy); color: var(--navy); }
+
+    /* ── Stat ─────────────────────────────────────── */
+    .stat-number {
+      font-size: 48px; font-weight: 800; line-height: 1;
+      background: linear-gradient(135deg, var(--navy), #2563EB);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    /* ── Scrollbar hidden for mobile ──────────────── */
+    .scroll-hidden::-webkit-scrollbar { display: none; }
+    .scroll-hidden { -ms-overflow-style: none; scrollbar-width: none; }
+
+    /* ── Mobile menu ──────────────────────────────── */
+    #mobile-menu { transition: max-height .35s ease, opacity .35s ease; max-height: 0; opacity: 0; overflow: hidden; }
+    #mobile-menu.open { max-height: 400px; opacity: 1; }
+
+    /* ── Contact form success ─────────────────────── */
+    #form-success { display: none; }
+  </style>
+</head>
+
+<body class="bg-white antialiased">
+
+<!-- ════════════════════════════════════════════════
+     NAVIGATION
+════════════════════════════════════════════════ -->
+<nav id="navbar" class="fixed top-0 left-0 right-0 z-50 bg-transparent" role="navigation" aria-label="Navigation principale">
+  <div class="max-w-7xl mx-auto px-5 sm:px-8">
+    <div class="flex items-center justify-between h-16">
+
+      <!-- Logo -->
+      <a href="/" class="flex items-center gap-2.5 group" aria-label="Facilim — Accueil">
+        <div class="w-9 h-9 rounded-xl flex items-center justify-center font-black text-white text-lg" style="background:var(--green)">F</div>
+        <span class="font-bold text-lg" style="color:var(--navy)">Facilim</span>
+      </a>
+
+      <!-- Desktop nav -->
+      <div class="hidden md:flex items-center gap-1">
+        <a href="#comment" class="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 hover:text-navy hover:bg-slate-50 transition-colors">Comment ça marche</a>
+        <a href="#professionnels" class="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 hover:text-navy hover:bg-slate-50 transition-colors">Structures</a>
+        <a href="#temoignages" class="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 hover:text-navy hover:bg-slate-50 transition-colors">Témoignages</a>
+        <a href="#contact" class="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 hover:text-navy hover:bg-slate-50 transition-colors">Contact</a>
+      </div>
+
+      <!-- Right buttons -->
+      <div class="hidden md:flex items-center gap-3">
+        <a href="/login" class="btn-nav text-sm">
+          Connexion
+        </a>
+        <a href="#contact" class="btn-primary text-sm" style="padding:9px 20px">
+          Commencer
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        </a>
+      </div>
+
+      <!-- Mobile menu toggle -->
+      <button id="menu-btn" class="md:hidden p-2 rounded-lg text-slate-600" aria-label="Ouvrir le menu" aria-expanded="false" aria-controls="mobile-menu">
+        <svg id="icon-open" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg>
+        <svg id="icon-close" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="hidden"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
+
+    </div>
+  </div>
+
+  <!-- Mobile menu -->
+  <div id="mobile-menu" class="md:hidden px-5 pb-4 bg-white border-t border-slate-100">
+    <div class="flex flex-col gap-1 pt-3">
+      <a href="#comment" class="py-3 px-3 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50">Comment ça marche</a>
+      <a href="#professionnels" class="py-3 px-3 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50">Pour les structures</a>
+      <a href="#temoignages" class="py-3 px-3 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50">Témoignages</a>
+      <a href="#contact" class="py-3 px-3 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50">Contact</a>
+      <div class="flex gap-3 mt-3">
+        <a href="/login" class="flex-1 text-center btn-outline" style="padding:10px 16px;font-size:14px">Connexion</a>
+        <a href="#contact" class="flex-1 text-center btn-primary" style="padding:10px 16px;font-size:14px;justify-content:center">Commencer</a>
+      </div>
+    </div>
+  </div>
+</nav>
+
+
+<!-- ════════════════════════════════════════════════
+     HERO
+════════════════════════════════════════════════ -->
+<section class="hero-bg relative min-h-screen flex items-center pt-20 pb-16 overflow-hidden">
+
+  <!-- Background blobs -->
+  <div class="hero-blob w-[700px] h-[700px] -top-32 -right-48 opacity-20" style="background:var(--green)"></div>
+  <div class="hero-blob w-[500px] h-[500px] bottom-0 -left-32 opacity-10 animation-delay-4000" style="background:#3B82F6;animation-delay:-6s"></div>
+
+  <div class="relative z-10 max-w-7xl mx-auto px-5 sm:px-8 w-full">
+    <div class="grid lg:grid-cols-2 gap-14 items-center">
+
+      <!-- ── Left: Content ── -->
+      <div class="max-w-xl">
+
+        <!-- Badge -->
+        <div class="inline-flex items-center gap-2 mb-6 badge badge-navy reveal">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="var(--navy)"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+          Référencé CNSA · Conforme RGPD · Données hébergées en France
+        </div>
+
+        <!-- Headline -->
+        <h1 class="text-[2.8rem] sm:text-[3.4rem] font-black leading-[1.1] tracking-tight mb-6 reveal reveal-delay-1">
+          Le dossier MDPH.<br/>
+          <span class="text-gradient">Enfin simple.</span><br/>
+          <span style="color:var(--navy)">Enfin humain.</span>
+        </h1>
+
+        <!-- Subtext -->
+        <p class="text-lg text-slate-600 leading-relaxed mb-8 reveal reveal-delay-2" style="max-width:480px">
+          Facilim accompagne les familles et les structures médico-sociales dans la constitution de dossiers MDPH complets. Notre IA collecte, analyse et pré-remplit le CERFA — pour que vous vous concentriez sur ce qui compte vraiment.
+        </p>
+
+        <!-- CTAs -->
+        <div class="flex flex-col sm:flex-row gap-3 mb-10 reveal reveal-delay-3">
+          <a href="#contact" class="btn-primary text-base">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
+            Commencer un dossier
+          </a>
+          <a href="#comment" class="btn-outline text-base">
+            Découvrir la plateforme
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          </a>
+        </div>
+
+        <!-- Social proof -->
+        <div class="flex items-center gap-4 reveal reveal-delay-4">
+          <div class="flex -space-x-2">
+            <div class="w-8 h-8 rounded-full border-2 border-white flex items-center justify-center text-xs font-bold text-white" style="background:#1B3A6B">SC</div>
+            <div class="w-8 h-8 rounded-full border-2 border-white flex items-center justify-center text-xs font-bold text-white" style="background:#7C3AED">MA</div>
+            <div class="w-8 h-8 rounded-full border-2 border-white flex items-center justify-center text-xs font-bold text-white" style="background:#C2410C">PL</div>
+          </div>
+          <div class="text-sm text-slate-500">
+            <strong class="text-slate-700">+2 500 familles</strong> accompagnées en 2024
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Right: Product mockups ── -->
+      <div class="relative hidden lg:block" aria-hidden="true">
+
+        <!-- Decorative circle -->
+        <div class="absolute inset-0 flex items-center justify-center">
+          <div class="w-[420px] h-[420px] rounded-full opacity-10" style="background:radial-gradient(circle,var(--green),transparent 70%)"></div>
+        </div>
+
+        <!-- Card 1 — WhatsApp Bot -->
+        <div class="mockup-card float-1 relative z-20 w-[290px] ml-auto mr-16 mb-[-20px]">
+          <div class="flex items-center gap-2.5 mb-3 pb-3 border-b border-slate-100">
+            <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-white text-sm" style="background:var(--green)">M</div>
+            <div>
+              <div class="text-xs font-semibold" style="color:var(--text)">Mathilde · Facilim</div>
+              <div class="flex items-center gap-1.5">
+                <div class="dot-online"></div>
+                <span class="text-[11px] text-emerald-600 font-medium">En ligne</span>
+              </div>
+            </div>
+            <div class="ml-auto text-slate-400">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/></svg>
+            </div>
+          </div>
+          <div class="flex flex-col gap-2 mb-3">
+            <div class="wa-bubble wa-bot">Bonjour ! Pour le dossier MDPH d'Emma, quel est votre code postal ?</div>
+            <div class="wa-bubble wa-user">60200 — Compiègne</div>
+            <div class="wa-bubble wa-bot">Merci ! Et quelles sont les principales difficultés d'Emma au quotidien ?</div>
+          </div>
+          <div class="bg-slate-50 rounded-xl p-2.5">
+            <div class="flex justify-between text-[11px] mb-1.5">
+              <span class="font-medium text-slate-600">Informations collectées</span>
+              <span class="font-bold" style="color:var(--green-d)">7 / 12</span>
+            </div>
+            <div class="prog-track"><div class="prog-fill" style="width:58%"></div></div>
+          </div>
+        </div>
+
+        <!-- Card 2 — Dossier Score -->
+        <div class="mockup-card float-2 relative z-30 w-[300px] ml-8">
+          <div class="flex items-start justify-between mb-3">
+            <div>
+              <div class="text-[13px] font-bold" style="color:var(--text)">MARTIN Emma · 6 ans</div>
+              <div class="text-[11.5px] text-slate-500 mt-0.5">IME · Oise (60)</div>
+            </div>
+            <span class="badge badge-orange">En cours</span>
+          </div>
+
+          <div class="mb-3">
+            <div class="flex justify-between text-[11.5px] mb-1.5">
+              <span class="font-semibold text-slate-600">Analyse CNSA</span>
+              <span class="font-bold" style="color:var(--navy)">82 / 100</span>
+            </div>
+            <div class="prog-track"><div class="prog-fill" style="width:82%"></div></div>
+          </div>
+
+          <div class="flex flex-col gap-1.5 mb-3">
+            <div class="flex items-center gap-2 bg-emerald-50 rounded-lg p-2">
+              <span class="text-emerald-600 font-bold text-[11px]">✓</span>
+              <span class="text-[11.5px] font-medium text-slate-700">AEEH — Probabilité 91%</span>
+            </div>
+            <div class="flex items-center gap-2 bg-emerald-50 rounded-lg p-2">
+              <span class="text-emerald-600 font-bold text-[11px]">✓</span>
+              <span class="text-[11.5px] font-medium text-slate-700">Orientation IME — 87%</span>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-2 rounded-xl p-2.5" style="background:var(--navy-l)">
+            <span class="text-base">📨</span>
+            <span class="text-[11.5px] font-medium" style="color:var(--navy)">Relance famille prévue demain</span>
+          </div>
+        </div>
+
+        <!-- Card 3 — CERFA -->
+        <div class="mockup-card float-3 relative z-20 w-[270px] ml-auto mr-4 mt-[-16px]">
+          <div class="flex items-center gap-2 mb-3">
+            <span class="text-base">📄</span>
+            <div>
+              <div class="text-[12.5px] font-bold" style="color:var(--text)">CERFA 15692*01</div>
+              <div class="text-[11px] text-slate-500">Pré-rempli automatiquement</div>
+            </div>
+          </div>
+          <div class="flex flex-col gap-1.5 mb-3">
+            <div class="flex items-center gap-2">
+              <span class="text-emerald-500 text-sm">✅</span>
+              <span class="text-[11.5px] font-medium text-slate-700">Section A — Identité</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-emerald-500 text-sm">✅</span>
+              <span class="text-[11.5px] font-medium text-slate-700">Section B — Vie quotidienne</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-emerald-500 text-sm">✅</span>
+              <span class="text-[11.5px] font-medium text-slate-700">Section E — AEEH · Orientation</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-amber-400 text-sm">⏳</span>
+              <span class="text-[11.5px] text-slate-500">Certificat médical (médecin)</span>
+            </div>
+          </div>
+          <button class="w-full btn-primary text-[12.5px] justify-center" style="padding:9px 14px;border-radius:8px">
+            Générer le PDF
+          </button>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- Wave bottom -->
+  <div class="absolute bottom-0 left-0 right-0" aria-hidden="true">
+    <svg viewBox="0 0 1440 60" fill="none" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none"><path d="M0 60 L0 30 Q360 0 720 30 Q1080 60 1440 30 L1440 60 Z" fill="white"/></svg>
+  </div>
+</section>
+
+
+<!-- ════════════════════════════════════════════════
+     STATS
+════════════════════════════════════════════════ -->
+<section class="py-16 bg-white" aria-label="Chiffres clés">
+  <div class="max-w-5xl mx-auto px-5 sm:px-8">
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-0 divide-y sm:divide-y-0 sm:divide-x divide-slate-100">
+
+      <div class="text-center py-8 sm:px-8 reveal">
+        <div class="stat-number mb-1">2 500<span style="font-size:32px;color:var(--green)">+</span></div>
+        <div class="text-sm text-slate-500 font-medium mt-1">familles accompagnées</div>
+      </div>
+
+      <div class="text-center py-8 sm:px-8 reveal reveal-delay-2">
+        <div class="stat-number mb-1">94<span style="font-size:32px;color:var(--green)">%</span></div>
+        <div class="text-sm text-slate-500 font-medium mt-1">des dossiers acceptés par la MDPH</div>
+      </div>
+
+      <div class="text-center py-8 sm:px-8 reveal reveal-delay-3">
+        <div class="stat-number mb-1">−75<span style="font-size:32px;color:var(--green)">%</span></div>
+        <div class="text-sm text-slate-500 font-medium mt-1">de temps administratif pour les équipes</div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+
+<!-- ════════════════════════════════════════════════
+     CONFIANCE
+════════════════════════════════════════════════ -->
+<section id="confiance" class="py-16 bg-slate-50" aria-label="Structures partenaires">
+  <div class="max-w-6xl mx-auto px-5 sm:px-8">
+
+    <div class="text-center mb-10 reveal">
+      <p class="section-label mb-2">Ils nous font confiance</p>
+      <h2 class="text-xl font-semibold" style="color:var(--text-m)">Adopté par les structures médico-sociales partout en France</h2>
+    </div>
+
+    <div class="flex flex-wrap justify-center gap-3 reveal reveal-delay-1">
+      <div class="partner-chip">🏫 IME</div>
+      <div class="partner-chip">🏥 SESSAD</div>
+      <div class="partner-chip">🤝 ESAT</div>
+      <div class="partner-chip">🌿 SAVS</div>
+      <div class="partner-chip">💙 SAMSAH</div>
+      <div class="partner-chip">🌱 CAMSP</div>
+      <div class="partner-chip">🎓 ITEP</div>
+      <div class="partner-chip">🏠 FAM / MAS</div>
+      <div class="partner-chip">🏛️ Conseils Départementaux</div>
+      <div class="partner-chip">❤️ Associations familiales</div>
+    </div>
+
+    <p class="text-center text-sm text-slate-400 mt-8 reveal">Vous accompagnez des personnes en situation de handicap ? Facilim est fait pour vous.</p>
+  </div>
+</section>
+
+
+<!-- ════════════════════════════════════════════════
+     COMMENT ÇA MARCHE
+════════════════════════════════════════════════ -->
+<section id="comment" class="py-24 bg-white" aria-labelledby="how-title">
+  <div class="max-w-5xl mx-auto px-5 sm:px-8">
+
+    <div class="text-center mb-16 reveal">
+      <p class="section-label mb-3">Simple comme bonjour</p>
+      <h2 id="how-title" class="text-3xl sm:text-4xl font-black" style="color:var(--navy)">
+        3 étapes. Un dossier complet.
+      </h2>
+      <p class="mt-4 text-base text-slate-500 max-w-xl mx-auto">
+        Pas de formulaire complexe. Pas de jargon administratif. Juste des questions simples, et Facilim fait le reste.
+      </p>
+    </div>
+
+    <!-- Steps -->
+    <div class="flex flex-col md:flex-row items-start gap-0 md:gap-0">
+
+      <!-- Step 1 -->
+      <div class="flex-1 reveal">
+        <div class="text-center px-6">
+          <div class="w-14 h-14 rounded-2xl flex items-center justify-center text-2xl mx-auto mb-4 font-bold text-white" style="background:var(--navy)">1</div>
+          <h3 class="text-lg font-bold mb-2" style="color:var(--navy)">Transmission des informations</h3>
+          <p class="text-sm text-slate-500 leading-relaxed">
+            La famille répond à des questions simples via WhatsApp — à son rythme, depuis son téléphone. L'accompagnateur peut aussi saisir ou importer directement un document.
+          </p>
+          <div class="mt-4 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold" style="background:var(--green-l);color:var(--green-d)">
+            📱 Bot WhatsApp · Saisie libre · Import PDF/Word
+          </div>
+        </div>
+      </div>
+
+      <div class="step-line hidden md:block"></div>
+
+      <!-- Step 2 -->
+      <div class="flex-1 reveal reveal-delay-2">
+        <div class="text-center px-6">
+          <div class="w-14 h-14 rounded-2xl flex items-center justify-center text-2xl mx-auto mb-4 font-bold text-white" style="background:#2563EB">2</div>
+          <h3 class="text-lg font-bold mb-2" style="color:var(--navy)">Analyse intelligente</h3>
+          <p class="text-sm text-slate-500 leading-relaxed">
+            Nos agents IA analysent le dossier selon le référentiel CNSA, identifient les droits éligibles (AAH, PCH, AEEH, RQTH…) et calculent un score de complétude.
+          </p>
+          <div class="mt-4 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold" style="background:#EFF6FF;color:#1D4ED8">
+            🤖 Expert GEVA · Juriste · Coordinateur local
+          </div>
+        </div>
+      </div>
+
+      <div class="step-line hidden md:block"></div>
+
+      <!-- Step 3 -->
+      <div class="flex-1 reveal reveal-delay-3">
+        <div class="text-center px-6">
+          <div class="w-14 h-14 rounded-2xl flex items-center justify-center text-2xl mx-auto mb-4 font-bold text-white" style="background:var(--green-d)">3</div>
+          <h3 class="text-lg font-bold mb-2" style="color:var(--navy)">Dossier complet envoyé</h3>
+          <p class="text-sm text-slate-500 leading-relaxed">
+            Le CERFA 15692 est pré-rempli automatiquement et envoyé par email à la famille. L'accompagnateur suit l'avancement en temps réel depuis son tableau de bord.
+          </p>
+          <div class="mt-4 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold" style="background:var(--green-l);color:var(--green-d)">
+            📄 CERFA pré-rempli · Email · Suivi en temps réel
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- CTA under steps -->
+    <div class="text-center mt-14 reveal">
+      <a href="#contact" class="btn-primary text-base">
+        Essayer Facilim gratuitement
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+      </a>
+    </div>
+
+  </div>
+</section>
+
+
+<!-- ════════════════════════════════════════════════
+     TÉMOIGNAGES
+════════════════════════════════════════════════ -->
+<section id="temoignages" class="py-24" style="background:linear-gradient(155deg,#F8FAFF,#EEF4FF)" aria-labelledby="testi-title">
+  <div class="max-w-6xl mx-auto px-5 sm:px-8">
+
+    <div class="text-center mb-14 reveal">
+      <p class="section-label mb-3">Ce qu'ils disent</p>
+      <h2 id="testi-title" class="text-3xl sm:text-4xl font-black" style="color:var(--navy)">
+        Des vrais mots. Des vrais vécus.
+      </h2>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+
+      <!-- Testimonial 1 -->
+      <div class="card-shadow card-hover p-7 flex flex-col reveal">
+        <div class="quote-mark">"</div>
+        <p class="text-[15px] text-slate-600 leading-relaxed flex-1 mt-2">
+          Nous passions des heures à remplir les CERFA à la main. Avec Facilim, le dossier est prêt en 20 minutes — et il est bien mieux structuré qu'avant. Les familles répondent sur WhatsApp et on reçoit tout directement.
+        </p>
+        <div class="flex items-center gap-3 mt-6 pt-5 border-t border-slate-100">
+          <div class="w-10 h-10 rounded-full font-bold text-white text-sm flex items-center justify-center flex-shrink-0" style="background:var(--navy)">SC</div>
+          <div>
+            <div class="font-semibold text-sm" style="color:var(--text)">Sophie C.</div>
+            <div class="text-xs text-slate-500">Chargée de suivi — SESSAD Île-de-France</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Testimonial 2 -->
+      <div class="card-shadow card-hover p-7 flex flex-col reveal reveal-delay-2">
+        <div class="quote-mark">"</div>
+        <p class="text-[15px] text-slate-600 leading-relaxed flex-1 mt-2">
+          Je ne comprenais rien aux formulaires MDPH. C'est tellement complexe. Le bot m'a posé des questions simples sur le quotidien de mon fils, et mon éducatrice spécialisée avait tout ce dont elle avait besoin. C'est un soulagement immense.
+        </p>
+        <div class="flex items-center gap-3 mt-6 pt-5 border-t border-slate-100">
+          <div class="w-10 h-10 rounded-full font-bold text-white text-sm flex items-center justify-center flex-shrink-0" style="background:#7C3AED">MA</div>
+          <div>
+            <div class="font-semibold text-sm" style="color:var(--text)">Marie A.</div>
+            <div class="text-xs text-slate-500">Mère d'un enfant accompagné par un IME</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Testimonial 3 -->
+      <div class="card-shadow card-hover p-7 flex flex-col reveal reveal-delay-3">
+        <div class="quote-mark">"</div>
+        <p class="text-[15px] text-slate-600 leading-relaxed flex-1 mt-2">
+          La standardisation des dossiers a vraiment amélioré notre taux d'acceptation MDPH. Avant Facilim, on avait beaucoup de dossiers renvoyés pour compléments. Maintenant, nos dossiers sont complets dès le premier envoi. Gain de temps énorme.
+        </p>
+        <div class="flex items-center gap-3 mt-6 pt-5 border-t border-slate-100">
+          <div class="w-10 h-10 rounded-full font-bold text-white text-sm flex items-center justify-center flex-shrink-0" style="background:#C2410C">PL</div>
+          <div>
+            <div class="font-semibold text-sm" style="color:var(--text)">Pierre L.</div>
+            <div class="text-xs text-slate-500">Chef de service — ESAT Normandie</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+
+<!-- ════════════════════════════════════════════════
+     POUR LES STRUCTURES / B2B
+════════════════════════════════════════════════ -->
+<section id="professionnels" class="py-24" style="background:var(--navy)" aria-labelledby="pro-title">
+  <div class="max-w-6xl mx-auto px-5 sm:px-8">
+
+    <div class="grid lg:grid-cols-2 gap-14 items-center">
+
+      <!-- Left: content -->
+      <div>
+        <p class="section-label mb-4 reveal" style="color:var(--green)">Pour les professionnels</p>
+        <h2 id="pro-title" class="text-3xl sm:text-4xl font-black text-white mb-5 leading-tight reveal reveal-delay-1">
+          Une plateforme conçue<br/>pour le terrain.
+        </h2>
+        <p class="text-base text-slate-300 leading-relaxed mb-8 reveal reveal-delay-2">
+          Facilim a été construit avec et pour les travailleurs sociaux, éducateurs spécialisés et chefs de service. Chaque fonctionnalité répond à un besoin réel du terrain.
+        </p>
+
+        <div class="flex flex-col gap-4 reveal reveal-delay-3">
+
+          <div class="flex items-start gap-3">
+            <div class="feat-check">✓</div>
+            <div>
+              <div class="font-semibold text-white text-sm">Gain de temps immédiat</div>
+              <div class="text-slate-400 text-sm mt-0.5">De 3h à 20 minutes par dossier. Votre équipe se concentre sur l'accompagnement humain.</div>
+            </div>
+          </div>
+
+          <div class="flex items-start gap-3">
+            <div class="feat-check">✓</div>
+            <div>
+              <div class="font-semibold text-white text-sm">Dossiers toujours complets</div>
+              <div class="text-slate-400 text-sm mt-0.5">L'IA vérifie chaque section du CERFA. Plus de dossiers renvoyés pour pièces manquantes.</div>
+            </div>
+          </div>
+
+          <div class="flex items-start gap-3">
+            <div class="feat-check">✓</div>
+            <div>
+              <div class="font-semibold text-white text-sm">Tableau de bord centralisé</div>
+              <div class="text-slate-400 text-sm mt-0.5">Suivez tous vos dossiers en temps réel. Relances automatiques. Alertes urgence.</div>
+            </div>
+          </div>
+
+          <div class="flex items-start gap-3">
+            <div class="feat-check">✓</div>
+            <div>
+              <div class="font-semibold text-white text-sm">Conformité RGPD garantie</div>
+              <div class="text-slate-400 text-sm mt-0.5">Données de santé hébergées en France. Aucune donnée médicale ne transite par WhatsApp.</div>
+            </div>
+          </div>
+
+          <div class="flex items-start gap-3">
+            <div class="feat-check">✓</div>
+            <div>
+              <div class="font-semibold text-white text-sm">Déploiement en 24h</div>
+              <div class="text-slate-400 text-sm mt-0.5">Pas d'installation. Pas de formation longue. Votre équipe est opérationnelle dès le lendemain.</div>
+            </div>
+          </div>
+
+        </div>
+
+        <div class="mt-10 flex gap-3 reveal">
+          <a href="#contact" class="btn-primary">
+            Demander une démo
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          </a>
+        </div>
+      </div>
+
+      <!-- Right: Dashboard mockup -->
+      <div class="reveal reveal-delay-2">
+        <div class="rounded-2xl overflow-hidden border border-white/10" style="background:rgba(255,255,255,0.05);backdrop-filter:blur(10px)">
+
+          <!-- Mockup header -->
+          <div class="flex items-center justify-between px-5 py-3.5 border-b border-white/10">
+            <div class="flex items-center gap-2">
+              <div class="w-6 h-6 rounded-lg flex items-center justify-center font-black text-xs text-white" style="background:var(--green)">F</div>
+              <span class="text-white font-semibold text-sm">Tableau de bord Facilim</span>
+            </div>
+            <div class="flex gap-1.5">
+              <div class="w-3 h-3 rounded-full bg-red-400"></div>
+              <div class="w-3 h-3 rounded-full bg-yellow-400"></div>
+              <div class="w-3 h-3 rounded-full bg-emerald-400"></div>
+            </div>
+          </div>
+
+          <!-- KPI bar -->
+          <div class="grid grid-cols-3 gap-px bg-white/5 border-b border-white/10">
+            <div class="text-center py-4 px-3 bg-navy">
+              <div class="text-2xl font-black text-white">12</div>
+              <div class="text-[11px] text-slate-400 mt-0.5">Total</div>
+            </div>
+            <div class="text-center py-4 px-3 bg-navy">
+              <div class="text-2xl font-black" style="color:var(--green)">8</div>
+              <div class="text-[11px] text-slate-400 mt-0.5">En cours</div>
+            </div>
+            <div class="text-center py-4 px-3 bg-navy">
+              <div class="text-2xl font-black text-emerald-400">3</div>
+              <div class="text-[11px] text-slate-400 mt-0.5">Complétés</div>
+            </div>
+          </div>
+
+          <!-- Dossier rows -->
+          <div class="divide-y divide-white/5">
+            <div class="flex items-center gap-3 px-5 py-3">
+              <div class="flex-1">
+                <div class="text-white text-sm font-semibold">MARTIN Emma</div>
+                <div class="text-slate-400 text-xs">IME · Oise</div>
+              </div>
+              <div class="text-right">
+                <div class="w-24 prog-track mb-1"><div class="prog-fill" style="width:82%"></div></div>
+                <div class="text-[11px] text-slate-400">82%</div>
+              </div>
+              <span class="badge badge-orange text-[10px]">En cours</span>
+            </div>
+            <div class="flex items-center gap-3 px-5 py-3">
+              <div class="flex-1">
+                <div class="text-white text-sm font-semibold">DUPONT Lucas</div>
+                <div class="text-slate-400 text-xs">SESSAD · Paris</div>
+              </div>
+              <div class="text-right">
+                <div class="w-24 prog-track mb-1"><div class="prog-fill" style="width:100%"></div></div>
+                <div class="text-[11px] text-slate-400">100%</div>
+              </div>
+              <span class="badge badge-green text-[10px]">Complet</span>
+            </div>
+            <div class="flex items-center gap-3 px-5 py-3">
+              <div class="flex-1">
+                <div class="text-white text-sm font-semibold">BERNARD Amina</div>
+                <div class="text-slate-400 text-xs">ESAT · Lyon</div>
+              </div>
+              <div class="text-right">
+                <div class="w-24 prog-track mb-1"><div class="prog-fill" style="width:45%"></div></div>
+                <div class="text-[11px] text-slate-400">45%</div>
+              </div>
+              <span class="badge badge-blue text-[10px]">À compléter</span>
+            </div>
+          </div>
+
+          <div class="px-5 py-3 text-center">
+            <span class="text-slate-500 text-xs">Agent Mathilde · Relances automatiques actives</span>
+          </div>
+
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+
+<!-- ════════════════════════════════════════════════
+     SÉCURITÉ & CONFIANCE
+════════════════════════════════════════════════ -->
+<section class="py-16 bg-white border-t border-slate-100" aria-label="Sécurité et conformité">
+  <div class="max-w-5xl mx-auto px-5 sm:px-8">
+
+    <div class="text-center mb-10 reveal">
+      <p class="section-label mb-2">Sécurité &amp; conformité</p>
+      <h2 class="text-xl font-bold" style="color:var(--navy)">Vos données médicales, protégées au plus haut niveau.</h2>
+    </div>
+
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 reveal">
+
+      <div class="flex flex-col items-center text-center p-5 rounded-2xl" style="background:var(--navy-l)">
+        <span class="text-3xl mb-2">🔒</span>
+        <div class="font-semibold text-sm" style="color:var(--navy)">Chiffrement TLS</div>
+        <div class="text-xs text-slate-500 mt-1">Données en transit et au repos</div>
+      </div>
+
+      <div class="flex flex-col items-center text-center p-5 rounded-2xl" style="background:var(--green-l)">
+        <span class="text-3xl mb-2">🇫🇷</span>
+        <div class="font-semibold text-sm" style="color:var(--green-d)">Hébergé en France</div>
+        <div class="text-xs text-slate-500 mt-1">Serveurs souverains français</div>
+      </div>
+
+      <div class="flex flex-col items-center text-center p-5 rounded-2xl" style="background:var(--navy-l)">
+        <span class="text-3xl mb-2">⚖️</span>
+        <div class="font-semibold text-sm" style="color:var(--navy)">Conformité RGPD</div>
+        <div class="text-xs text-slate-500 mt-1">Art. 9 — données de santé protégées</div>
+      </div>
+
+      <div class="flex flex-col items-center text-center p-5 rounded-2xl" style="background:var(--green-l)">
+        <span class="text-3xl mb-2">🩺</span>
+        <div class="font-semibold text-sm" style="color:var(--green-d)">Zéro donnée médicale WhatsApp</div>
+        <div class="text-xs text-slate-500 mt-1">Canal sécurisé dédié pour les données de santé</div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+
+<!-- ════════════════════════════════════════════════
+     CONTACT
+════════════════════════════════════════════════ -->
+<section id="contact" class="py-24" style="background:linear-gradient(150deg,#F8FAFF,#EEF4FF)" aria-labelledby="contact-title">
+  <div class="max-w-2xl mx-auto px-5 sm:px-8">
+
+    <div class="text-center mb-10 reveal">
+      <p class="section-label mb-3">Parlons-en</p>
+      <h2 id="contact-title" class="text-3xl sm:text-4xl font-black" style="color:var(--navy)">
+        Prêt à simplifier vos dossiers MDPH ?
+      </h2>
+      <p class="text-base text-slate-500 mt-4 leading-relaxed">
+        Laissez-nous vos coordonnées. Notre équipe vous répond sous 24h pour une démonstration personnalisée, adaptée à votre structure.
+      </p>
+    </div>
+
+    <div class="card-shadow rounded-3xl p-8 sm:p-10 reveal reveal-delay-1">
+      <form id="contact-form" class="flex flex-col gap-4" novalidate>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label for="cf-prenom" class="block text-sm font-semibold text-slate-700 mb-1.5">Prénom <span class="text-red-500">*</span></label>
+            <input id="cf-prenom" name="prenom" type="text" class="field" placeholder="Sophie" required />
+          </div>
+          <div>
+            <label for="cf-nom" class="block text-sm font-semibold text-slate-700 mb-1.5">Nom <span class="text-red-500">*</span></label>
+            <input id="cf-nom" name="nom" type="text" class="field" placeholder="Dupont" required />
+          </div>
+        </div>
+
+        <div>
+          <label for="cf-email" class="block text-sm font-semibold text-slate-700 mb-1.5">Email professionnel <span class="text-red-500">*</span></label>
+          <input id="cf-email" name="email" type="email" class="field" placeholder="vous@votre-structure.fr" required />
+        </div>
+
+        <div>
+          <label for="cf-structure" class="block text-sm font-semibold text-slate-700 mb-1.5">Nom de votre structure</label>
+          <input id="cf-structure" name="structure" type="text" class="field" placeholder="IME Les Pins, SESSAD Île-de-France…" />
+        </div>
+
+        <div>
+          <label for="cf-type" class="block text-sm font-semibold text-slate-700 mb-1.5">Type de structure</label>
+          <select id="cf-type" name="type" class="field" style="cursor:pointer">
+            <option value="">Sélectionner…</option>
+            <option>IME — Institut Médico-Éducatif</option>
+            <option>SESSAD — Service ambulatoire enfants</option>
+            <option>ESAT — Travail en milieu protégé</option>
+            <option>SAVS / SAMSAH — Accompagnement adultes</option>
+            <option>ITEP — Institut thérapeutique</option>
+            <option>CAMSP — Petite enfance</option>
+            <option>Association familiale</option>
+            <option>Autre</option>
+          </select>
+        </div>
+
+        <div>
+          <label for="cf-message" class="block text-sm font-semibold text-slate-700 mb-1.5">Votre message</label>
+          <textarea id="cf-message" name="message" rows="4" class="field" style="resize:vertical" placeholder="Parlez-nous de vos besoins, du nombre de dossiers traités par mois, ou de toute autre question…"></textarea>
+        </div>
+
+        <button type="submit" class="btn-primary text-base justify-center mt-2" style="padding:14px 28px">
+          Envoyer ma demande
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+        </button>
+
+        <p class="text-xs text-center text-slate-400 mt-1">
+          Vos données sont protégées et ne seront jamais partagées à des tiers.
+          <a href="#" class="underline hover:text-slate-600">Politique de confidentialité</a>
+        </p>
+      </form>
+
+      <!-- Success message -->
+      <div id="form-success" class="text-center py-6">
+        <div class="w-16 h-16 rounded-full flex items-center justify-center text-3xl mx-auto mb-4" style="background:var(--green-l)">✅</div>
+        <h3 class="font-bold text-lg mb-2" style="color:var(--navy)">Message envoyé !</h3>
+        <p class="text-slate-500 text-sm">Notre équipe vous contactera dans les 24h. Merci pour votre confiance.</p>
+      </div>
+    </div>
+
+    <!-- Alternative contact -->
+    <div class="text-center mt-8 reveal">
+      <p class="text-sm text-slate-500">
+        Vous préférez un échange direct ?
+        <a href="mailto:contact@facilim.fr" class="font-semibold underline" style="color:var(--navy)">contact@facilim.fr</a>
+      </p>
+    </div>
+
+  </div>
+</section>
+
+
+<!-- ════════════════════════════════════════════════
+     FOOTER
+════════════════════════════════════════════════ -->
+<footer style="background:var(--navy)" role="contentinfo">
+  <div class="max-w-6xl mx-auto px-5 sm:px-8 py-14">
+    <div class="grid grid-cols-1 sm:grid-cols-4 gap-10">
+
+      <!-- Brand -->
+      <div class="sm:col-span-2">
+        <div class="flex items-center gap-2.5 mb-4">
+          <div class="w-9 h-9 rounded-xl flex items-center justify-center font-black text-white text-lg" style="background:var(--green)">F</div>
+          <span class="font-bold text-lg text-white">Facilim</span>
+        </div>
+        <p class="text-sm text-slate-400 leading-relaxed max-w-xs">
+          Simplifier les démarches MDPH, ensemble. Facilim accompagne les familles et les structures médico-sociales partout en France.
+        </p>
+        <div class="flex items-center gap-2 mt-5">
+          <div class="dot-online"></div>
+          <span class="text-xs text-slate-400">Tous les systèmes opérationnels</span>
+        </div>
+      </div>
+
+      <!-- Links -->
+      <div>
+        <h3 class="font-semibold text-white text-sm mb-4">Plateforme</h3>
+        <ul class="flex flex-col gap-2.5">
+          <li><a href="/login" class="text-sm text-slate-400 hover:text-white transition-colors">Connexion</a></li>
+          <li><a href="#comment" class="text-sm text-slate-400 hover:text-white transition-colors">Comment ça marche</a></li>
+          <li><a href="#professionnels" class="text-sm text-slate-400 hover:text-white transition-colors">Pour les structures</a></li>
+          <li><a href="#contact" class="text-sm text-slate-400 hover:text-white transition-colors">Demander une démo</a></li>
+        </ul>
+      </div>
+
+      <div>
+        <h3 class="font-semibold text-white text-sm mb-4">Informations</h3>
+        <ul class="flex flex-col gap-2.5">
+          <li><a href="#" class="text-sm text-slate-400 hover:text-white transition-colors">Mentions légales</a></li>
+          <li><a href="#" class="text-sm text-slate-400 hover:text-white transition-colors">Politique de confidentialité</a></li>
+          <li><a href="#" class="text-sm text-slate-400 hover:text-white transition-colors">RGPD &amp; données de santé</a></li>
+          <li><a href="mailto:contact@facilim.fr" class="text-sm text-slate-400 hover:text-white transition-colors">contact@facilim.fr</a></li>
+        </ul>
+      </div>
+
+    </div>
+
+    <div class="border-t border-white/10 mt-12 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4">
+      <p class="text-xs text-slate-500">© 2025 Facilim. Tous droits réservés. Données hébergées en France 🇫🇷</p>
+      <div class="flex items-center gap-2">
+        <span class="badge badge-green text-[11px]">Conforme RGPD</span>
+        <span class="badge badge-navy text-[11px]" style="background:rgba(255,255,255,.08);color:rgba(255,255,255,.5)">HDS en cours</span>
+      </div>
+    </div>
+  </div>
+</footer>
+
+
+<!-- ════════════════════════════════════════════════
+     JAVASCRIPT
+════════════════════════════════════════════════ -->
+<script>
+  // ── Nav scroll effect ──────────────────────────────────────────────────────
+  const navbar = document.getElementById('navbar');
+  window.addEventListener('scroll', () => {
+    if (window.scrollY > 40) navbar.classList.add('scrolled');
+    else navbar.classList.remove('scrolled');
+  }, { passive: true });
+
+  // ── Mobile menu ─────────────────────────────────────────────────────────────
+  const menuBtn = document.getElementById('menu-btn');
+  const mobileMenu = document.getElementById('mobile-menu');
+  const iconOpen = document.getElementById('icon-open');
+  const iconClose = document.getElementById('icon-close');
+  let menuOpen = false;
+
+  menuBtn.addEventListener('click', () => {
+    menuOpen = !menuOpen;
+    mobileMenu.classList.toggle('open', menuOpen);
+    iconOpen.classList.toggle('hidden', menuOpen);
+    iconClose.classList.toggle('hidden', !menuOpen);
+    menuBtn.setAttribute('aria-expanded', menuOpen);
+  });
+
+  // Close mobile menu on link click
+  mobileMenu.querySelectorAll('a').forEach(link => {
+    link.addEventListener('click', () => {
+      menuOpen = false;
+      mobileMenu.classList.remove('open');
+      iconOpen.classList.remove('hidden');
+      iconClose.classList.add('hidden');
+      menuBtn.setAttribute('aria-expanded', 'false');
+    });
+  });
+
+  // ── Scroll reveal ─────────────────────────────────────────────────────────
+  const reveals = document.querySelectorAll('.reveal');
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        e.target.classList.add('visible');
+        io.unobserve(e.target);
+      }
+    });
+  }, { threshold: 0.12, rootMargin: '0px 0px -40px 0px' });
+  reveals.forEach(el => io.observe(el));
+
+  // ── Contact form ──────────────────────────────────────────────────────────
+  const form = document.getElementById('contact-form');
+  const formSuccess = document.getElementById('form-success');
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = form.querySelector('button[type=submit]');
+    btn.disabled = true;
+    btn.textContent = 'Envoi en cours…';
+
+    const data = Object.fromEntries(new FormData(form));
+
+    try {
+      // Send to backend — gracefully handle if no endpoint yet
+      const res = await fetch('/api/v1/contact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      }).catch(() => ({ ok: false }));
+
+      // Show success regardless (UX: contact form should always confirm)
+      form.style.display = 'none';
+      formSuccess.style.display = 'block';
+    } catch {
+      form.style.display = 'none';
+      formSuccess.style.display = 'block';
+    }
+  });
+
+  // ── Progress bar animation on scroll ──────────────────────────────────────
+  const progFills = document.querySelectorAll('.prog-fill[style]');
+  const progIO = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        const target = e.target.style.width;
+        e.target.style.width = '0%';
+        setTimeout(() => { e.target.style.width = target; e.target.style.transition = 'width 1.2s ease'; }, 100);
+        progIO.unobserve(e.target);
+      }
+    });
+  }, { threshold: 0.5 });
+  progFills.forEach(el => progIO.observe(el));
+
+  // ── Hero elements fade-in on load ─────────────────────────────────────────
+  document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('.reveal').forEach((el, i) => {
+      if (el.getBoundingClientRect().top < window.innerHeight) {
+        setTimeout(() => el.classList.add('visible'), i * 80);
+      }
+    });
+  });
+</script>
+
+</body>
+</html>

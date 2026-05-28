@@ -60,49 +60,66 @@ _MESSAGE_CANAL_SECURISE = (
 # ARCHITECTURE : Le CERFA principal porte sur le FONCTIONNEL (sections A-E).
 # Les champs fonctionnels sont collectés via WhatsApp (sections marquées ✓).
 # Les champs strictement médicaux (marqués [MED]) restent hors WhatsApp.
+#
+# Champs conditionnels (★) : skippés par get_next_cerfa_field si la condition
+# n'est pas remplie (ex. urgence_droits uniquement pour les renouvellements).
 # ---------------------------------------------------------------------------
 CERFA_FIELD_ORDER: list[str] = [
-    # ── Section A — Identité ────────────────────────────────────────────────
-    "type_demande",               # ✓ première demande ou renouvellement
-    "nom_prenom",                 # ✓ nom et prénom du bénéficiaire
-    "date_naissance",             # ✓ JJ/MM/AAAA
-    "genre",                      # ✓ homme / femme
-    "adresse_complete",           # ✓ numéro, rue, CP, ville
-    "situation_familiale",        # ✓ célibataire, marié·e, en couple…
-    "enfants_a_charge",           # ✓ nombre (0 si aucun)
-    # ── Section B — Vie quotidienne & retentissements fonctionnels ──────────
-    "difficultes_quotidiennes",   # ✓ ce que la personne ne peut pas faire seule
-    "besoins_aide",               # ✓ type d'aide humaine/technique nécessaire
-    # ── Section C/D — Parcours scolaire / professionnel ────────────────────
-    "situation_pro_scolaire",     # ✓ emploi, scolarité, sans activité…
-    # ── Section E — Demandes ───────────────────────────────────────────────
-    "type_droits",                # ✓ AAH, RQTH, PCH, AEEH, CMI, IME/ESAT…
-    "historique_mdph",            # ✓ seulement si renouvellement
-    # ── Données médicales — collectées HORS WhatsApp par l'éducateur [MED] ─
+    # Section A — Identité
+    "type_demande",               # premiere demande ou renouvellement
+    "urgence_droits",             # droits expirent dans <2 mois ? (conditionnel: renouvellement)
+    "nom_prenom",                 # nom et prenom du beneficiaire
+    "date_naissance",             # JJ/MM/AAAA
+    "genre",                      # homme / femme
+    "adresse_complete",           # numero, rue, CP, ville
+    "situation_familiale",        # celibataire, marie, en couple...
+    "enfants_a_charge",           # nombre (0 si aucun)
+    "organisme_payeur",           # CAF ou MSA - systematique (expert Q2)
+    "protection_juridique",       # tutelle / curatelle / aucune (expert Q8)
+    # Section B — Vie quotidienne & retentissements fonctionnels
+    "difficultes_quotidiennes",   # ce que la personne ne peut pas faire seule
+    "besoins_aide",               # type d'aide humaine/technique necessaire
+    "aidant_identite",            # (conditionnel: si aide humaine confirmee) nom, prenom, lien avec la personne
+    "ressources_actuelles",       # allocations recues + frais handicap non rembourses
+    # Section C/D — Parcours scolaire / professionnel
+    "situation_pro_scolaire",     # emploi, scolarite, formation, recherche d'emploi, inactivite
+    # Section E — Demandes
+    "type_droits",                # AAH, RQTH, PCH, AEEH, CMI, orientation IME/ESAT/SESSAD
+    "cmi_type",                   # priorite (station debout) ou stationnement (PMR/<200m) ou les deux
+    "emploi_accompagne",          # emploi accompagne vs droit commun (conditionnel: si ORP demande)
+    "historique_mdph",            # date derniere notification (conditionnel: si renouvellement)
+    # Donnees medicales — collectees HORS WhatsApp par l'educateur [MED]
     "numero_securite_sociale",    # [MED] NIR
-    "diagnostic_principal",       # [MED] pathologie certifiée
-    "medecin_traitant",           # [MED] coordonnées médecin
-    "traitements_en_cours",       # [MED] médicaments et thérapies
+    "diagnostic_principal",       # [MED] pathologie certifiee
+    "medecin_traitant",           # [MED] coordonnees medecin
+    "traitements_en_cours",       # [MED] medicaments et therapies
     "taux_incapacite",            # [MED] taux MDPH si renouvellement
 ]
 
 CERFA_FIELD_LABELS: dict[str, str] = {
     # Identité
     "type_demande":               "s'il s'agit d'une première demande MDPH ou d'un renouvellement",
+    "urgence_droits":             "si les droits actuels arrivent à échéance dans moins de 2 mois (répondre oui ou non)",
     "nom_prenom":                 "le nom et prénom complet du bénéficiaire",
     "date_naissance":             "la date de naissance du bénéficiaire (format JJ/MM/AAAA)",
     "genre":                      "le genre du bénéficiaire (homme ou femme)",
     "adresse_complete":           "l'adresse complète (numéro, rue, code postal, ville)",
     "situation_familiale":        "la situation familiale (célibataire, marié·e, en couple, divorcé·e…)",
     "enfants_a_charge":           "le nombre d'enfants à charge (indiquez 0 si aucun)",
+    "organisme_payeur":           "l'organisme qui verse les allocations familiales : CAF ou MSA ?",
+    "protection_juridique":       "si la personne est sous mesure de protection juridique (tutelle, curatelle, ou aucune)",
     # Fonctionnel — cœur du CERFA
     "difficultes_quotidiennes":   "les principales difficultés dans la vie de tous les jours (ce que la personne ne peut pas faire seule, ce qui lui est difficile ou épuisant)",
     "besoins_aide":               "les aides dont la personne a besoin (aide humaine, aide technique, aménagement du logement, accompagnement…)",
+    "aidant_identite":            "le prénom, le nom et le lien avec la personne aidée (ex : Marie Dupont, épouse) — uniquement si quelqu'un aide la personne au quotidien",
+    "ressources_actuelles":       "les ressources actuelles (ex : AAH, APL, pension d'invalidité, ARE, ASS, ou aucune) et les frais importants liés au handicap qui ne sont pas remboursés",
     # Parcours
     "situation_pro_scolaire":     "la situation professionnelle ou scolaire actuelle (emploi, scolarité, formation, recherche d'emploi, inactivité…)",
     # Demandes
     "type_droits":                "le ou les types de droits demandés à la MDPH (AAH, RQTH, PCH, AEEH, CMI, orientation IME/ESAT/SESSAD…)",
-    "historique_mdph":            "la date de la dernière notification MDPH (uniquement si renouvellement)",
+    "cmi_type":                   "le type de CMI souhaité : priorité (difficultés à rester debout longtemps), stationnement (déplacements réduits ou périmètre de marche inférieur à 200 mètres), ou les deux",
+    "emploi_accompagne":          "si la personne souhaite être accompagnée pour trouver un emploi ou une formation (dispositif emploi accompagné), ou si elle peut chercher seule (droit commun)",
+    "historique_mdph":            "la date de la dernière notification MDPH et les droits déjà accordés (uniquement si renouvellement)",
     # Médical — hors WhatsApp
     "numero_securite_sociale":    "le numéro de sécurité sociale (15 chiffres)",
     "diagnostic_principal":       "le diagnostic médical précis (pathologie, depuis quand, confirmé par quel médecin)",
@@ -111,11 +128,15 @@ CERFA_FIELD_LABELS: dict[str, str] = {
     "taux_incapacite":            "le taux d'incapacité reconnu par la MDPH (indiqué sur la dernière notification)",
 }
 
-_TAUX_FIELD    = "taux_incapacite"
-_HISTORIQUE    = "historique_mdph"
-_TYPE_DEMANDE  = "type_demande"
-_DIFFICULTES   = "difficultes_quotidiennes"
-_BESOINS       = "besoins_aide"
+_TAUX_FIELD        = "taux_incapacite"
+_HISTORIQUE        = "historique_mdph"
+_TYPE_DEMANDE      = "type_demande"
+_DIFFICULTES       = "difficultes_quotidiennes"
+_BESOINS           = "besoins_aide"
+_URGENCE           = "urgence_droits"
+_CMI_TYPE          = "cmi_type"
+_EMPLOI_ACCOMPAGNE = "emploi_accompagne"
+_AIDANT_IDENTITE   = "aidant_identite"
 
 
 # ---------------------------------------------------------------------------
@@ -177,9 +198,70 @@ def prepopuler_cerfa_depuis_dossier(cerfa_reponses: dict, dossier: dict) -> None
     # Historique MDPH
     _set("historique_mdph", ds.get("historique_mdph"))
 
+    # Organisme payeur (CAF/MSA)
+    _set("organisme_payeur", ds.get("organisme_payeur"))
+
+    # Protection juridique
+    _set("protection_juridique", ds.get("protection_juridique"))
+
+    # CMI type (si déjà connu)
+    cmi_p = ds.get("cmi_priorite", False)
+    cmi_s = ds.get("cmi_stationnement", False)
+    if cmi_p and cmi_s:
+        _set("cmi_type", "les deux (priorité et stationnement)")
+    elif cmi_p:
+        _set("cmi_type", "priorité")
+    elif cmi_s:
+        _set("cmi_type", "stationnement")
+
+    # Emploi accompagné
+    if ds.get("emploi_accompagne"):
+        _set("emploi_accompagne", "oui, emploi accompagné")
+
+    # Aidant — pré-remplissage si déjà connu
+    _nom_a   = (ds.get("nom_aidant") or "").strip()
+    _prenom_a = (ds.get("prenom_aidant") or "").strip()
+    _lien_a  = (ds.get("lien_aidant") or "").strip()
+    if _prenom_a and _nom_a:
+        _set("aidant_identite", f"{_prenom_a} {_nom_a}" + (f", {_lien_a}" if _lien_a else ""))
+    elif _lien_a:
+        _set("aidant_identite", _lien_a)
+
+    # Date de naissance — dossier (formulaire éducateur) > ds (bilan)
+    _set("date_naissance", dossier.get("ddn_enfant") or ds.get("date_naissance"))
+
+    # Adresse complète — dossier > ds
+    if not cerfa_reponses.get("adresse_complete"):
+        _adr  = (dossier.get("adresse_enfant") or ds.get("adresse") or ds.get("adresse_beneficiaire") or "").strip()
+        _cp   = (dossier.get("cp_enfant") or ds.get("code_postal") or "").strip()
+        _comm = (dossier.get("commune_enfant") or ds.get("commune") or "").strip()
+        _adresse_full = ", ".join(p for p in [_adr, _cp, _comm] if p)
+        if _adresse_full:
+            _set("adresse_complete", _adresse_full)
+
+    # Nom / prénom — dossier > ds
+    if not cerfa_reponses.get("nom_prenom"):
+        _nom_d    = (dossier.get("nom_enfant") or ds.get("nom") or "").strip()
+        _prenom_d = (dossier.get("prenom_enfant") or ds.get("prenom") or "").strip()
+        if _nom_d or _prenom_d:
+            _set("nom_prenom", f"{_prenom_d} {_nom_d}".strip())
+
+    # Ressources actuelles — depuis ds
+    _ressources_ds = ds.get("ressources_actuelles") or ""
+    if not _ressources_ds:
+        _aides_actuelles = ds.get("aides_actuelles") or []
+        if isinstance(_aides_actuelles, list) and _aides_actuelles:
+            _ressources_ds = " / ".join(str(a) for a in _aides_actuelles[:5])
+    _set("ressources_actuelles", _ressources_ds)
+
+    # Enfants à charge — depuis ds
+    _enfants_ds = ds.get("enfants_a_charge")
+    if _enfants_ds is not None:
+        _set("enfants_a_charge", str(_enfants_ds))
+    elif ds.get("a_enfants_charge") is False:
+        _set("enfants_a_charge", "0")
+
     # Pré-remplissage fonctionnel depuis la synthèse GEVA
-    # Si l'analyse a produit une synthèse GEVA-Pro, on la réutilise
-    # pour éviter de reposer la question sur les difficultés quotidiennes.
     syntheses = analyse.get("synthese_agents") or {}
     geva_pro  = str(syntheses.get("geva_pro") or "").strip()
     if geva_pro and len(geva_pro) > 40:
@@ -192,6 +274,133 @@ def prepopuler_cerfa_depuis_dossier(cerfa_reponses: dict, dossier: dict) -> None
     elif ds.get("besoins_aide_humaine"):
         _set("besoins_aide", "Aide humaine nécessaire")
 
+    # Besoins d'aide — narrative depuis synthèse GEVA (plus riche que aides_actuelles)
+    geva_narratif = str(syntheses.get("geva_pro") or "")
+    if geva_narratif and len(geva_narratif) > 30 and not cerfa_reponses.get("besoins_aide"):
+        _set("besoins_aide", geva_narratif[:300])
+
+    # Situation professionnelle — enrichie depuis projet_professionnel si disponible
+    projet_pro = (ds.get("projet_professionnel") or "").strip()
+    nom_formation = (ds.get("nom_formation") or "").strip()
+    organisme_formation = (ds.get("organisme_formation") or "").strip()
+    sit_pro_actuelle = (ds.get("situation_professionnelle") or "").strip()
+
+    if not cerfa_reponses.get("situation_pro_scolaire"):
+        parts_sit = []
+        if sit_pro_actuelle:
+            parts_sit.append(sit_pro_actuelle)
+        if nom_formation:
+            parts_sit.append(f"Formation : {nom_formation}")
+        if organisme_formation:
+            parts_sit.append(f"Organisme : {organisme_formation}")
+        if ds.get("inscrit_pole_emploi") or ds.get("en_recherche_emploi"):
+            parts_sit.append("inscrit France Travail / en recherche d'emploi")
+        if ds.get("accident_travail"):
+            dat = ds.get("date_accident_travail", "")
+            parts_sit.append(f"Accident du travail{' le ' + dat if dat else ''}")
+        if parts_sit:
+            _set("situation_pro_scolaire", " — ".join(parts_sit))
+
+    # Historique MDPH — depuis les données structurées
+    _set("historique_mdph", ds.get("numero_dossier_mdph") or ds.get("historique_mdph"))
+
+    # Type de demande — première vs renouvellement
+    if not cerfa_reponses.get("type_demande"):
+        _type_dem = (ds.get("type_demande") or "").strip()
+        if not _type_dem and ds.get("deja_connu_mdph"):
+            _type_dem = "renouvellement"
+        _set("type_demande", _type_dem)
+
+
+# ---------------------------------------------------------------------------
+# Extraction complète CERFA depuis le texte du bilan (appel LLM dédié)
+# ---------------------------------------------------------------------------
+
+def extraire_cerfa_depuis_bilan(texte_bilan: str, cerfa_reponses: dict) -> dict:
+    """
+    Lit le texte complet du bilan uploadé et extrait TOUS les champs CERFA
+    directement. Beaucoup plus fiable que le mappage depuis donnees_structurees.
+
+    Appelle le LLM avec un prompt ciblé CERFA — distinct de l'analyse CNSA.
+    Ne remplace jamais un champ déjà renseigné dans cerfa_reponses.
+
+    Retourne le dict cerfa_reponses mis à jour.
+    """
+    import importlib
+    _llm = importlib.import_module("4_llm_client.openai_client")
+    call_llm = _llm.call_llm
+
+    # Tronquer le texte si nécessaire
+    texte = texte_bilan[:8000] if len(texte_bilan) > 8000 else texte_bilan
+
+    # Champs à extraire (hors médicaux et champs déjà renseignés)
+    champs_cibles = {
+        field: label
+        for field, label in CERFA_FIELD_LABELS.items()
+        if field not in MEDICAL_FIELDS and not cerfa_reponses.get(field)
+    }
+
+    if not champs_cibles:
+        return cerfa_reponses  # Tout est déjà renseigné
+
+    liste_champs = "\n".join(
+        f'  "{k}": "{v}"'
+        for k, v in champs_cibles.items()
+    )
+
+    system_prompt = """
+Tu es un assistant spécialisé dans l'analyse de bilans sociaux et éducatifs pour des dossiers MDPH.
+Ta tâche : extraire des informations précises depuis un document, pour pré-remplir un formulaire CERFA 15692.
+
+RÈGLES ABSOLUES :
+1. Tu extrais UNIQUEMENT ce qui est explicitement écrit dans le document.
+2. Si une information n'est pas dans le document, mets null (pas de supposition).
+3. Pour "situation_pro_scolaire" : indique EXACTEMENT ce que dit le document (ex: "inscrit France Travail depuis AT 2019", "formation visa pro à l'ESRP Richebois ciblée").
+4. Pour "besoins_aide" : décris les aides concrètes mentionnées dans le document.
+5. Pour "difficultes_quotidiennes" : reprends en substance les difficultés décrites (3-5 phrases max).
+6. Pour "type_droits" : liste UNIQUEMENT les droits explicitement mentionnés ou clairement impliqués (RQTH, ORP, CRP, AAH, PCH, AEEH, CMI, ESAT, SAVS, SAMSAH...).
+7. Tu réponds UNIQUEMENT en JSON valide — aucun texte autour.
+"""
+
+    user_prompt = (
+        f"Voici les champs CERFA à extraire depuis ce document :\n{liste_champs}\n\n"
+        f"DOCUMENT :\n---\n{texte}\n---\n\n"
+        f"Réponds en JSON avec exactement ces clés. Valeur = texte extrait du document, ou null si absent.\n"
+        f"Exemple de format attendu :\n"
+        f'{{\n  "situation_pro_scolaire": "Inscrit à France Travail, AT en 2019...",\n  "besoins_aide": null\n}}'
+    )
+
+    import json
+    try:
+        raw = call_llm(
+            system_prompt=system_prompt,
+            user_message=user_prompt,
+            temperature=0.0,
+            max_tokens=1500,
+        )
+        # Nettoyer les blocs markdown éventuels
+        cleaned = raw.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("```")[1]
+            if cleaned.startswith("json"):
+                cleaned = cleaned[4:]
+            cleaned = cleaned.strip()
+
+        extracted = json.loads(cleaned)
+        updated = 0
+        for field, value in extracted.items():
+            if value and str(value).strip() and str(value).strip().lower() not in ("null", "none", ""):
+                if field in CERFA_FIELD_LABELS and field not in MEDICAL_FIELDS:
+                    if not cerfa_reponses.get(field):
+                        cerfa_reponses[field] = str(value).strip()
+                        updated += 1
+        logger.info(f"[CERFA-EXTRACTION] {updated} champs extraits du bilan via LLM")
+
+    except Exception as e:
+        logger.warning(f"[CERFA-EXTRACTION] Extraction LLM échouée : {e}")
+
+    return cerfa_reponses
+
 
 # ---------------------------------------------------------------------------
 # Logique de progression CERFA
@@ -201,15 +410,33 @@ def get_next_cerfa_field(cerfa_reponses: dict[str, str]) -> str | None:
     """
     Retourne le prochain champ CERFA à collecter via WhatsApp.
 
-    - Les champs médicaux (MEDICAL_FIELDS) sont toujours sautés :
-      ils doivent être transmis par canal sécurisé (email / messagerie éducateur).
-    - Si des champs médicaux sont encore vides ET que le message de redirection
-      n'a pas encore été envoyé, retourne le sentinel _MEDICAL_REDIRECT_SENT_KEY
-      pour que l'appelant déclenche ce message unique.
-    - taux_incapacite est également sauté si c'est clairement une première demande.
-    - Retourne None si tous les champs non-médicaux sont renseignés.
+    Règles de saut conditionnel :
+    - Les champs médicaux (MEDICAL_FIELDS) sont toujours sautés.
+    - urgence_droits : sauté si ce n'est pas un renouvellement.
+    - cmi_type : sauté si "CMI" n'est pas dans type_droits.
+    - emploi_accompagne : sauté si ORP n'est pas dans type_droits.
+    - historique_mdph : sauté si c'est clairement une première demande.
+    - taux_incapacite : sauté si première demande.
+    - Si tous les champs non-médicaux sont renseignés mais des champs médicaux
+      sont encore vides → retourne le sentinel _MEDICAL_REDIRECT_SENT_KEY.
     """
     medical_pending = False
+
+    type_d   = cerfa_reponses.get(_TYPE_DEMANDE, "").lower()
+    type_droits_val = cerfa_reponses.get("type_droits", "").lower()
+
+    # Indicateurs contextuels
+    is_renouvellement = any(
+        w in type_d for w in ["renouvellement", "renouvel"]
+    )
+    is_first = any(
+        w in type_d for w in ["premiere", "premier", "première", "jamais", "nouveau", "1ere", "1ère"]
+    )
+    has_cmi = any(w in type_droits_val for w in ["cmi", "carte mobilite", "carte invalidite"])
+    has_orp = any(
+        w in type_droits_val
+        for w in ["orp", "orientation pro", "rqth", "emploi", "esat", "travail"]
+    )
 
     for field in CERFA_FIELD_ORDER:
         # Champ déjà renseigné → suivant
@@ -221,39 +448,59 @@ def get_next_cerfa_field(cerfa_reponses: dict[str, str]) -> str | None:
             medical_pending = True
             continue
 
-        # Règle spéciale historique_mdph : inutile pour une première demande
-        # (la date de la dernière notification n'existe pas encore)
-        if field == _HISTORIQUE:
-            type_d   = cerfa_reponses.get(_TYPE_DEMANDE, "").lower()
-            is_first = any(
-                w in type_d
-                for w in ["première", "premier", "premiere", "jamais", "nouveau", "1ere", "1ère"]
-            )
-            if is_first:
-                continue  # Ne pas demander l'historique MDPH pour une première demande
+        # ── Champs conditionnels ─────────────────────────────────────────────
 
-        # Règle spéciale taux_incapacite (en plus du filtre MEDICAL_FIELDS)
+        # urgence_droits : uniquement si renouvellement
+        if field == _URGENCE:
+            if not is_renouvellement and not type_d:
+                continue  # type_demande pas encore répondu → sauter pour l'instant
+            if is_first or (type_d and not is_renouvellement):
+                continue  # Pas un renouvellement → pas besoin de demander l'urgence
+
+        # historique_mdph : inutile pour une première demande
+        if field == _HISTORIQUE:
+            if is_first:
+                continue
+            if type_d and not is_renouvellement:
+                continue
+
+        # cmi_type : uniquement si CMI dans les droits demandés
+        if field == _CMI_TYPE:
+            if not has_cmi:
+                continue
+
+        # emploi_accompagne : uniquement si orientation pro dans les droits
+        if field == _EMPLOI_ACCOMPAGNE:
+            if not has_orp:
+                continue
+
+        # aidant_identite : uniquement si aide humaine confirmée dans besoins_aide
+        if field == _AIDANT_IDENTITE:
+            besoins_txt = cerfa_reponses.get(_BESOINS, "").lower()
+            _mots_aide = [
+                "quelqu'un", "aide de", "aidé par", "ma femme", "mon mari",
+                "ma mère", "mon père", "mes enfants", "ma fille", "mon fils",
+                "mon conjoint", "aide humaine", "auxiliaire", "avs", "aide à domicile",
+            ]
+            if not any(w in besoins_txt for w in _mots_aide):
+                continue  # Pas d'aide humaine confirmée → ne pas poser la question
+
+        # taux_incapacite : uniquement si renouvellement (redondant avec MEDICAL_FIELDS mais garde)
         if field == _TAUX_FIELD:
-            type_d   = cerfa_reponses.get(_TYPE_DEMANDE, "").lower()
             hist     = cerfa_reponses.get(_HISTORIQUE, "").lower()
             combined = type_d + " " + hist
-            is_renewal = any(
+            is_renewal_ctx = any(
                 w in combined
-                for w in ["renouvellement", "renouvel", "taux reconnu", "notification", "déjà accordé"]
+                for w in ["renouvellement", "renouvel", "taux reconnu", "notification", "deja accorde"]
             )
-            is_first = any(
-                w in combined
-                for w in ["première", "premier", "jamais", "première fois", "nouveau"]
-            )
-            if is_first and not is_renewal:
+            if is_first and not is_renewal_ctx:
                 continue
 
         return field  # prochain champ non-médical à collecter
 
     # Tous les champs non-médicaux sont renseignés.
-    # Si des champs médicaux sont encore vides et que le message n'a pas été envoyé :
     if medical_pending and not cerfa_reponses.get(_MEDICAL_REDIRECT_SENT_KEY):
-        return _MEDICAL_REDIRECT_SENT_KEY  # sentinel → déclenche le message de redirection
+        return _MEDICAL_REDIRECT_SENT_KEY
 
     return None
 
@@ -320,7 +567,7 @@ def generer_reponse_agent(
     """
     cerfa_reponses = cerfa_reponses or {}
 
-    # ── Redirection canal sécurisé (champs médicaux) ─────────────────────────
+    # Redirection canal sécurisé (champs médicaux)
     if force_medical_redirect:
         logger.info("[CONV_AGENT] Message de redirection canal sécurisé envoyé.")
         return _MESSAGE_CANAL_SECURISE
@@ -343,11 +590,11 @@ def generer_reponse_agent(
 
     next_label = CERFA_FIELD_LABELS[next_field]
 
-    # Contexte : champs déjà renseignés
+    # Contexte : champs déjà renseignés (uniquement les champs avec valeur)
     answered_lines = [
         f"  ✓ {CERFA_FIELD_LABELS.get(f, f)} : {v}"
         for f, v in cerfa_reponses.items()
-        if v
+        if v and not f.startswith("__")
     ]
     answered_ctx = (
         "\n".join(answered_lines)
@@ -357,17 +604,79 @@ def generer_reponse_agent(
 
     sujet = "de l'enfant" if is_enfant else "de la personne"
 
+    # Instructions spécifiques par champ
+    field_hints = {
+        "urgence_droits": (
+            "Explique brièvement pourquoi c'est important : si les droits expirent dans moins "
+            "de 2 mois, on peut utiliser une procédure simplifiée pour éviter une interruption."
+        ),
+        "protection_juridique": (
+            "Si la personne est sous tutelle ou curatelle, précise que le tuteur/curateur "
+            "devra donner son accord par écrit ou par mail, ou être l'interlocuteur principal."
+        ),
+        "cmi_type": (
+            "CMI priorité = difficultés à rester debout longtemps (file d'attente, supermarché). "
+            "CMI stationnement = difficultés à se déplacer ou périmètre de marche limité à 200m."
+        ),
+        "emploi_accompagne": (
+            "Droit commun = la personne peut chercher un emploi seule (service public de l'emploi). "
+            "Emploi accompagné = la personne a un projet professionnel mais a besoin d'un soutien "
+            "renforcé pour trouver et maintenir un emploi."
+        ),
+        "ressources_actuelles": (
+            "Demande : allocations déjà reçues (AAH, APL, ARE, ASS, pension invalidité) "
+            "ET frais importants liés au handicap non remboursés (transports, matériel, soins…)."
+        ),
+        "organisme_payeur": (
+            "CAF = Caisse d'Allocations Familiales (la plupart des familles). "
+            "MSA = Mutualité Sociale Agricole (agriculteurs et salariés agricoles)."
+        ),
+    }
+    hint = field_hints.get(next_field, "")
+
+    # Détecter si l'utilisateur signale que l'info est déjà dans le bilan / déjà répondu
+    _msg_lower = message_entrant.lower()
+    _deja_patterns = [
+        "déjà répondu", "deja repondu", "j'ai déjà", "j'ai deja",
+        "dans le bilan", "dans le dossier", "dans mon dossier",
+        "c'est noté", "c'est inscrit", "c'est transmis", "c'est indiqué",
+        "mon accompagnateur", "déjà transmis", "deja transmis",
+        "déjà indiqué", "deja indique", "vous l'avez", "tu l'as",
+    ]
+    _urgence_patterns = ["en urgence", "urgent", "j'ai besoin", "rapidement", "vite"]
+    _is_deja_bilan   = any(p in _msg_lower for p in _deja_patterns)
+    _is_urgence      = any(p in _msg_lower for p in _urgence_patterns)
+
+    # Note de contexte urgence
+    urgence_note = (
+        "\n⚠️  LA PERSONNE SIGNALE UNE URGENCE. Accuse réception de l'urgence en 1 phrase, "
+        "rassure-la, et pose la question essentielle sans perdre de temps.\n"
+        if _is_urgence else ""
+    )
+
+    # Note de contexte "déjà répondu / dans le bilan"
+    deja_note = (
+        "\n⚠️  LA PERSONNE DIT QUE L'INFORMATION EST DÉJÀ DANS LE BILAN OU QU'ELLE A DÉJÀ RÉPONDU. "
+        "NE PAS reposer la question. Répondre : 'Bien reçu, j'ai cette information dans le dossier.' "
+        "puis passer directement à la prochaine question non encore renseignée.\n"
+        if _is_deja_bilan else ""
+    )
+
     system = (
         f"Tu es l'Assistant Facilim, spécialisé dans la constitution de dossiers MDPH.\n"
         f"Tu discutes via WhatsApp pour constituer le dossier MDPH {sujet}.\n"
-        f"Langue : français simple, bienveillant, FALC (phrases courtes, mots courants).\n\n"
+        f"Langue : français simple, bienveillant, FALC (phrases courtes, mots courants).\n"
+        f"{urgence_note}{deja_note}\n"
         f"RÔLE DU CERFA : Le formulaire MDPH porte sur les conséquences concrètes du\n"
         f"handicap dans la vie quotidienne — pas sur les données médicales.\n"
-        f"NE JAMAIS demander : diagnostic, médicaments, nom du médecin, taux d'incapacité.\n\n"
-        f"CHAMPS DÉJÀ COLLECTÉS :\n{answered_ctx}\n\n"
-        f"PROCHAIN CHAMP À COLLECTER : {next_label}\n\n"
+        f"NE JAMAIS demander : diagnostic, médicaments, nom du médecin, taux d'incapacité,\n"
+        f"numéro de sécurité sociale (ces infos sont collectées par le médecin/l'éducateur).\n\n"
+        f"DONNÉES DÉJÀ COLLECTÉES (ne pas re-demander) :\n{answered_ctx}\n\n"
+        f"PROCHAIN CHAMP À COLLECTER : {next_label}\n"
+        f"{('CONSEIL POUR CE CHAMP : ' + hint) if hint else ''}\n\n"
         f"RÈGLES ABSOLUES :\n"
         f"- Accuse d'abord réception en 1 phrase courte et chaleureuse\n"
+        f"- Si l'information est dans 'DONNÉES DÉJÀ COLLECTÉES' → ne la re-demande PAS\n"
         f"- Pose UNIQUEMENT la question sur : {next_label}\n"
         f"- Pour les champs fonctionnels (difficultés, besoins) : formule en termes\n"
         f"  de vie quotidienne, pas médicaux. Ex : 'Qu'est-ce qui est difficile au quotidien ?'\n"

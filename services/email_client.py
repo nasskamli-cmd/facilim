@@ -224,3 +224,97 @@ def send_dossier_pdf(
     except Exception as e:
         logger.error(f"Échec envoi PDF à {recipient_email} : {e}")
         return False
+
+
+def send_contact_notification(
+    prenom: str,
+    nom: str,
+    email: str,
+    structure: str,
+    type_structure: str,
+    message: str,
+    notify_to: str = "nasskamli@gmail.com",
+) -> bool:
+    """
+    Envoie une notification interne quand quelqu'un remplit le formulaire
+    de contact de la homepage Facilim.
+
+    Returns:
+        True si l'email a été envoyé, False en cas d'échec.
+    """
+    subject = f"[Facilim] Contact : {prenom} {nom} — {structure}"
+
+    html_body = f"""
+    <!DOCTYPE html>
+    <html lang="fr">
+    <head><meta charset="UTF-8"></head>
+    <body style="margin:0;padding:0;background:#F0F4F8;font-family:Inter,Arial,sans-serif;">
+      <div style="max-width:520px;margin:40px auto;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 16px rgba(0,0,0,0.08);">
+
+        <div style="background:#1B3A6B;padding:24px 32px;">
+          <div style="display:inline-flex;align-items:center;gap:10px;">
+            <div style="width:36px;height:36px;background:#2ECC9A;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:16px;color:#0F3D2E;">F</div>
+            <span style="color:#ffffff;font-size:20px;font-weight:600;margin-left:10px;">Facilim — Nouveau contact</span>
+          </div>
+        </div>
+
+        <div style="padding:32px;">
+          <table style="width:100%;border-collapse:collapse;font-size:14px;color:#1A202C;">
+            <tr><td style="padding:6px 0;color:#718096;width:120px;">Prénom</td><td style="padding:6px 0;font-weight:500;">{prenom}</td></tr>
+            <tr><td style="padding:6px 0;color:#718096;">Nom</td><td style="padding:6px 0;font-weight:500;">{nom}</td></tr>
+            <tr><td style="padding:6px 0;color:#718096;">Email</td><td style="padding:6px 0;"><a href="mailto:{email}" style="color:#1B3A6B;">{email}</a></td></tr>
+            <tr><td style="padding:6px 0;color:#718096;">Structure</td><td style="padding:6px 0;">{structure}</td></tr>
+            <tr><td style="padding:6px 0;color:#718096;">Type</td><td style="padding:6px 0;">{type_structure}</td></tr>
+          </table>
+
+          <div style="margin-top:24px;background:#F8FAFC;border-left:3px solid #2ECC9A;padding:16px 20px;border-radius:0 8px 8px 0;">
+            <p style="margin:0 0 6px;font-size:12px;font-weight:600;color:#718096;text-transform:uppercase;letter-spacing:.5px;">Message</p>
+            <p style="margin:0;font-size:14px;color:#1A202C;line-height:1.7;white-space:pre-wrap;">{message}</p>
+          </div>
+        </div>
+
+        <div style="background:#F8FAFC;padding:16px 32px;border-top:1px solid #F0F4F8;">
+          <p style="color:#A0AEC0;font-size:11px;margin:0;text-align:center;">
+            Facilim · Données hébergées en France · Conforme RGPD
+          </p>
+        </div>
+
+      </div>
+    </body>
+    </html>
+    """
+
+    text_body = (
+        f"Nouveau contact via facilim.fr\n\n"
+        f"Prénom    : {prenom}\n"
+        f"Nom       : {nom}\n"
+        f"Email     : {email}\n"
+        f"Structure : {structure}\n"
+        f"Type      : {type_structure}\n\n"
+        f"Message :\n{message}"
+    )
+
+    payload = {
+        "sender":      {"name": settings.brevo_sender_name, "email": settings.brevo_sender_email},
+        "to":          [{"email": notify_to}],
+        "replyTo":     {"email": email, "name": f"{prenom} {nom}"},
+        "subject":     subject,
+        "htmlContent": html_body,
+        "textContent": text_body,
+    }
+    headers = {
+        "api-key":      settings.brevo_api_key,
+        "Content-Type": "application/json",
+    }
+
+    try:
+        resp = requests.post(_BREVO_API_URL, json=payload, headers=headers, timeout=10)
+        if resp.status_code in (200, 201):
+            logger.info(f"[CONTACT] Notification envoyée à {notify_to} pour {email}")
+            return True
+        else:
+            logger.error(f"[CONTACT] Échec notification : {resp.status_code} {resp.text}")
+            return False
+    except Exception as e:
+        logger.error(f"[CONTACT] Échec notification : {e}")
+        return False
