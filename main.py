@@ -33,7 +33,7 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, RedirectResponse, JSONResponse
+from fastapi.responses import FileResponse, RedirectResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from config import get_settings
@@ -63,11 +63,26 @@ settings = get_settings()
 # --------------------------------------------------------------------------- #
 # Logging                                                                      #
 # --------------------------------------------------------------------------- #
-logging.basicConfig(
-    level=getattr(logging, settings.log_level.upper(), logging.INFO),
-    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+_log_level = getattr(logging, settings.log_level.upper(), logging.INFO)
+_log_format = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
+
+# ── Console (comportement actuel inchangé) ────────────────────────────────────
+logging.basicConfig(level=_log_level, format=_log_format)
+
+# ── Fichier facilim.log (rotation : 5 Mo max, 3 fichiers conservés) ──────────
+import logging.handlers as _lh
+_file_handler = _lh.RotatingFileHandler(
+    filename="facilim.log",
+    maxBytes=5 * 1024 * 1024,   # 5 Mo
+    backupCount=3,
+    encoding="utf-8",
 )
+_file_handler.setLevel(_log_level)
+_file_handler.setFormatter(logging.Formatter(_log_format))
+logging.getLogger().addHandler(_file_handler)
+
 logger = logging.getLogger(__name__)
+logger.info("[BOOT] Logging fichier actif → facilim.log")
 
 # --------------------------------------------------------------------------- #
 # Imports dynamiques des modules numérotés                                     #
@@ -611,6 +626,8 @@ async def initiate_dossier(request: InitiateDossierRequest):
                     f"Dossier {dossier_id} → DROITS_A_VALIDER "
                     f"| droits proposés={analyse.get('droits_identifies', [])}"
                 )
+                logger.info(f"🔵 Passage à DROITS_A_VALIDER (création) | appel de _demarrer_dialogue_cerfa | dossier={dossier_id}")
+                await _demarrer_dialogue_cerfa(dossier)
 
         dossier["questions_falc_envoyees"] = questions_falc_envoyees
         dossier["whatsapp_envoye"]         = whatsapp_envoye
@@ -646,6 +663,47 @@ async def initiate_dossier(request: InitiateDossierRequest):
         dossier["statut"] = "ERREUR"
         database.save_dossier(dossier)
         raise HTTPException(status_code=500, detail="Erreur interne du serveur.")
+
+
+async def _demarrer_dialogue_cerfa(dossier: dict) -> None:
+    """
+    Envoie la première question CERFA manquante sur WhatsApp dès qu'un dossier
+    passe à DROITS_A_VALIDER, sans attendre que la famille écrive en premier.
+    Non bloquant : un échec WhatsApp est loggué mais ne fait pas échouer l'appelant.
+    """
+    _did = dossier.get("dossier_id")
+    logger.info(f"🔵 _demarrer_dialogue_cerfa appelé | dossier={_did}")
+
+    phone = dossier.get("telephone_famille")
+    if not phone:
+        logger.info(f"🟠 Pas de téléphone famille | dossier={_did}")
+        return
+
+    cerfa_reponses = dossier.get("cerfa_reponses") or {}
+    prepopuler_cerfa_depuis_dossier(cerfa_reponses, dossier)
+    dossier["cerfa_reponses"] = cerfa_reponses
+    logger.info(f"🟢 cerfa_reponses prepopulé | champs={list(cerfa_reponses.keys())}")
+
+    first_field = get_next_cerfa_field(cerfa_reponses)
+    if not first_field:
+        logger.info(f"🟠 Aucun champ manquant — dialogue déjà complet | dossier={_did}")
+        return
+    logger.info(f"🟢 first_field = {first_field!r} | dossier={_did}")
+
+    _donnees = {**dossier, **cerfa_reponses}
+    resultat = await asyncio.to_thread(traiter_dossier_cerfa, _donnees)
+
+    message = resultat.get("message_a_envoyer", "")
+    if not message:
+        logger.info(f"🟠 message_a_envoyer vide | type_resultat={resultat.get('type')} | dossier={_did}")
+        return
+
+    try:
+        logger.info(f"📱 Envoi WhatsApp imminent | phone={phone} | message={message[:50]}...")
+        await asyncio.to_thread(send_text_message, phone, message)
+        logger.info(f"✅ Question WhatsApp envoyée | dossier={_did} | field={first_field}")
+    except Exception as e:
+        logger.warning(f"❌ Erreur envoi WhatsApp | dossier={_did} | erreur={e}")
 
 
 # --------------------------------------------------------------------------- #
@@ -768,6 +826,8 @@ async def _process_whatsapp_async(
                     f"Dossier {dossier['dossier_id']} → DROITS_A_VALIDER (webhook) "
                     f"| droits proposés={nouvelle_analyse.get('droits_identifies', [])}"
                 )
+                logger.info(f"🔵 Passage à DROITS_A_VALIDER (webhook) | appel de _demarrer_dialogue_cerfa | dossier={dossier['dossier_id']}")
+                await _demarrer_dialogue_cerfa(dossier)
 
         # ── Réponse intelligente via agent conversationnel ────────────────────
         # Note : on inclut "COMPLET" pour couvrir le cas où le LLM a dit COMPLET
@@ -1194,42 +1254,27 @@ async def valider_droits_dossier(
                 ),
             )
 
-        # ── Étape 2 : CERFA valide → générer le PDF résumé + envoyer les deux ──
+        # ── Étape 2 : CERFA valide → stocker les PDF pour revue professionnelle ──
+        # L'envoi à la famille est délégué à /envoyer-cerfa après prévisualisation.
         cerfa_bytes = _resultat_cerfa.get("pdf_bytes")   # CERFA 15692 pré-rempli
         pdf_bytes   = await asyncio.to_thread(generer_pdf_dossier, dossier)
-        pch_bytes   = None
-        rapo_bytes  = None
 
-        envoye = await asyncio.to_thread(
-            send_dossier_pdf,
-            email_famille, pdf_bytes, dossier_id,
-            cerfa_bytes, pch_bytes, rapo_bytes,
-        )
+        dossier["cerfa_bytes"]  = cerfa_bytes
+        dossier["pdf_bytes"]    = pdf_bytes
+        dossier["pdf_genere"]   = True
+        dossier["statut"]       = "PRET_POUR_REVUE"
+        dossier["updated_at"]   = datetime.now(timezone.utc).isoformat()
+        database.save_dossier(dossier)
+
         logger.info(
-            f"[VALIDATION] PDF + CERFA {'envoyés' if envoye else 'ÉCHEC'} "
-            f"| email={email_famille} | dossier={dossier_id}"
+            f"[VALIDATION] CERFA généré et stocké pour revue "
+            f"| dossier={dossier_id} | email_famille={email_famille}"
         )
-
-        if envoye:
-            # Notification WhatsApp à la famille
-            phone = dossier.get("telephone_famille")
-            if phone:
-                try:
-                    msg = _construire_message_complet(dossier)
-                    await asyncio.to_thread(send_text_message, phone, msg)
-                except Exception as wa_err:
-                    logger.warning(f"[VALIDATION] Message WhatsApp non envoyé : {wa_err}")
-            # Purge RGPD
-            try:
-                purge_dossier_pii(dossier_id)
-            except Exception as rgpd_err:
-                logger.error(f"[VALIDATION] Purge RGPD échouée : {rgpd_err}")
 
         return {
-            "status":         "ok",
-            "message":        "Droits validés et dossier CERFA envoyé à la famille.",
+            "status":         "pret_pour_revue",
+            "message":        "CERFA prêt à être vérifié avant envoi à la famille.",
             "droits_valides": droits_valides,
-            "email_envoye":   envoye,
         }
 
     except HTTPException:
@@ -1301,6 +1346,129 @@ async def relancer_cerfa_whatsapp(dossier_id: str):
         "message":          f"Question envoyée au {phone}.",
         "message_envoye":   message_wa,
         "erreurs_restantes": _resultat.get("erreurs", []),
+    }
+
+
+# --------------------------------------------------------------------------- #
+# ENDPOINT 4d — POST /api/v1/dossiers/{dossier_id}/previsualiser-cerfa        #
+# Retourne le CERFA PDF stocké pour prévisualisation dans le navigateur        #
+# --------------------------------------------------------------------------- #
+@app.post(
+    "/api/v1/dossiers/{dossier_id}/previsualiser-cerfa",
+    summary="Retourner le PDF CERFA stocké pour prévisualisation",
+    tags=["Dossiers"],
+)
+async def previsualiser_cerfa(dossier_id: str):
+    """
+    Retourne le PDF CERFA 15692 pré-rempli stocké après /valider-droits.
+    Permet au professionnel de vérifier le document avant envoi à la famille.
+    """
+    dossier = database.get_dossier_by_id(dossier_id)
+    if not dossier:
+        raise HTTPException(status_code=404, detail=f"Dossier '{dossier_id}' introuvable.")
+
+    if not dossier.get("pdf_genere"):
+        raise HTTPException(
+            status_code=404,
+            detail="Aucun CERFA prêt pour ce dossier. Validez d'abord les droits.",
+        )
+
+    cerfa_bytes = dossier.get("cerfa_bytes")
+    if not cerfa_bytes:
+        raise HTTPException(
+            status_code=404,
+            detail="Aucun CERFA prêt pour ce dossier. Validez d'abord les droits.",
+        )
+
+    logger.info(f"[PREVISUALISATION] CERFA consulté | dossier={dossier_id}")
+
+    return Response(
+        content=cerfa_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"inline; filename=cerfa_{dossier_id}.pdf"},
+    )
+
+
+# --------------------------------------------------------------------------- #
+# ENDPOINT 4e — POST /api/v1/dossiers/{dossier_id}/envoyer-cerfa              #
+# Envoie le CERFA PDF à la famille après validation professionnelle            #
+# --------------------------------------------------------------------------- #
+@app.post(
+    "/api/v1/dossiers/{dossier_id}/envoyer-cerfa",
+    summary="Envoyer le CERFA PDF validé à la famille par email",
+    tags=["Dossiers"],
+)
+async def envoyer_cerfa_famille(dossier_id: str):
+    """
+    Envoie à la famille le CERFA et le PDF résumé préalablement générés par /valider-droits.
+    Ne peut être appelé qu'après que le professionnel a prévisualisé et décidé d'envoyer.
+    """
+    dossier = database.get_dossier_by_id(dossier_id)
+    if not dossier:
+        raise HTTPException(status_code=404, detail=f"Dossier '{dossier_id}' introuvable.")
+
+    if not dossier.get("pdf_genere"):
+        raise HTTPException(
+            status_code=422,
+            detail="Aucun CERFA prêt pour ce dossier. Validez d'abord les droits via /valider-droits.",
+        )
+
+    cerfa_bytes = dossier.get("cerfa_bytes")
+    pdf_bytes   = dossier.get("pdf_bytes")
+    if not cerfa_bytes or not pdf_bytes:
+        raise HTTPException(
+            status_code=422,
+            detail="PDF manquant. Relancez /valider-droits pour régénérer le CERFA.",
+        )
+
+    email_famille = dossier.get("email_famille")
+    if not email_famille:
+        raise HTTPException(
+            status_code=422,
+            detail="Aucun email famille renseigné dans le dossier.",
+        )
+
+    # ── Envoi email avec les deux PDF ─────────────────────────────────────────
+    try:
+        envoye = await asyncio.to_thread(
+            send_dossier_pdf,
+            email_famille, pdf_bytes, dossier_id,
+            cerfa_bytes, None, None,
+        )
+    except Exception as mail_err:
+        logger.error(f"[ENVOI-CERFA] Erreur envoi email | dossier={dossier_id} | {mail_err}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Erreur lors de l'envoi email : {mail_err}")
+
+    if not envoye:
+        logger.error(f"[ENVOI-CERFA] Envoi email retourné False | dossier={dossier_id} | email={email_famille}")
+        raise HTTPException(status_code=500, detail="L'envoi email a échoué. Vérifiez la configuration Brevo.")
+
+    logger.info(f"[ENVOI-CERFA] Email envoyé | dossier={dossier_id} | email={email_famille}")
+
+    # ── Passage au statut COMPLET ─────────────────────────────────────────────
+    dossier["statut"]     = "COMPLET"
+    dossier["updated_at"] = datetime.now(timezone.utc).isoformat()
+    database.save_dossier(dossier)
+
+    # ── Notification WhatsApp à la famille ────────────────────────────────────
+    phone = dossier.get("telephone_famille")
+    if phone:
+        try:
+            msg = _construire_message_complet(dossier)
+            await asyncio.to_thread(send_text_message, phone, msg)
+            logger.info(f"[ENVOI-CERFA] WhatsApp confirmation envoyée | dossier={dossier_id} | phone={phone}")
+        except Exception as wa_err:
+            logger.warning(f"[ENVOI-CERFA] Message WhatsApp non envoyé (non bloquant) : {wa_err}")
+
+    # ── Purge RGPD ────────────────────────────────────────────────────────────
+    try:
+        purge_dossier_pii(dossier_id)
+    except Exception as rgpd_err:
+        logger.error(f"[ENVOI-CERFA] Purge RGPD échouée : {rgpd_err}")
+
+    return {
+        "status":  "envoye",
+        "message": f"CERFA envoyé à {email_famille}. Dossier marqué COMPLET.",
     }
 
 
@@ -1631,6 +1799,8 @@ async def _enrich_dossier_impl(
             f"[ENRICH] Dossier {dossier_id} → DROITS_A_VALIDER "
             f"| droits={dossier.get('analyse', {}).get('droits_identifies', [])}"
         )
+        logger.info(f"🔵 Passage à DROITS_A_VALIDER (enrichir) | appel de _demarrer_dialogue_cerfa | dossier={dossier_id}")
+        await _demarrer_dialogue_cerfa(dossier)
 
     return {
         "dossier_id":  dossier_id,
