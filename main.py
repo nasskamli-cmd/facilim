@@ -451,20 +451,11 @@ async def initiate_dossier(request: InitiateDossierRequest):
         # Stocker les champs enrichis directement dans l'analyse pour le dashboard
         _enrich_analyse_v2(analyse)
 
-        # ── Extraction CERFA complète depuis le texte du bilan ───────────────
-        # AVANT tout envoi WhatsApp : on extrait le maximum de champs depuis
-        # le document uploadé pour ne poser via WhatsApp que ce qui manque réellement.
-        try:
-            _cerfa_rep_init = dossier.get("cerfa_reponses") or {}
-            prepopuler_cerfa_depuis_dossier(_cerfa_rep_init, dossier)
-            _cerfa_rep_init = extraire_cerfa_depuis_bilan(texte_anon, _cerfa_rep_init)
-            dossier["cerfa_reponses"] = _cerfa_rep_init
-            logger.info(
-                f"[CERFA-INIT] Pré-extraction bilan : "
-                f"{sum(1 for v in _cerfa_rep_init.values() if v)} champs renseignés"
-            )
-        except Exception as _cerfa_init_err:
-            logger.warning(f"[CERFA-INIT] Extraction bilan échouée (non bloquant) : {_cerfa_init_err}")
+        # NOTE : cerfa_reponses est laissé VIDE à la création du dossier.
+        # Seul le dialogue WhatsApp (machine CERFA) collecte ces réponses.
+        # Les données du bilan (ds.*) restent disponibles via remplir_cerfa
+        # mais NE pré-remplissent pas cerfa_reponses pour ne pas court-circuiter
+        # le dialogue famille — voir traiter_dossier_cerfa dans valider-droits.
 
         database.save_dossier(dossier)
 
@@ -1624,18 +1615,10 @@ async def _enrich_dossier_impl(
     dossier["analyse"] = nouvelle_analyse
     dossier["statut"]  = nouvelle_analyse.get("statut", "INCOMPLET")
 
-    # ── Extraction CERFA depuis le nouveau texte enrichi ─────────────────────
-    try:
-        _cerfa_rep_enrich = dossier.get("cerfa_reponses") or {}
-        prepopuler_cerfa_depuis_dossier(_cerfa_rep_enrich, dossier)
-        _cerfa_rep_enrich = extraire_cerfa_depuis_bilan(texte_ajoute, _cerfa_rep_enrich)
-        dossier["cerfa_reponses"] = _cerfa_rep_enrich
-        logger.info(
-            f"[ENRICH-CERFA] {sum(1 for v in _cerfa_rep_enrich.values() if v)} "
-            f"champs CERFA après extraction bilan enrichi"
-        )
-    except Exception as _ce:
-        logger.warning(f"[ENRICH-CERFA] Extraction bilan échouée (non bloquant) : {_ce}")
+    # NOTE : l'enrichissement ne touche pas cerfa_reponses.
+    # Ces réponses sont réservées au dialogue WhatsApp famille.
+    # L'enrichissement met à jour ds.* (via nouvelle_analyse) et remplir_cerfa
+    # utilisera les nouvelles données structurées au moment de la génération.
 
     database.save_dossier(dossier)
     logger.info(f"[ENRICH] Dossier {dossier_id} enrichi | statut={dossier['statut']}")
