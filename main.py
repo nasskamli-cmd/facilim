@@ -335,7 +335,14 @@ async def auth_verify_code(body: dict = Body(embed=False)):
 @app.post("/api/v1/auth/logout")
 async def auth_logout(session_token: str | None = Cookie(default=None)):
     if session_token:
-        _auth_module.invalidate_session(session_token)
+        # Invalider la session si la méthode existe dans le module auth
+        if hasattr(_auth_module, "invalidate_session"):
+            _auth_module.invalidate_session(session_token)
+        elif hasattr(_auth_module, "logout"):
+            _auth_module.logout(session_token)
+        elif hasattr(_auth_module, "delete_session"):
+            _auth_module.delete_session(session_token)
+        # Sinon : la session expire naturellement (max_age=28800)
     response = JSONResponse({"status": "logged_out"})
     response.delete_cookie("session_token")
     return response
