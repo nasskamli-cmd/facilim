@@ -778,7 +778,10 @@ async def _process_whatsapp_async(
                 )
 
         # ── Réponse intelligente via agent conversationnel ────────────────────
-        if nouveau_statut == "INCOMPLET":
+        # Note : on inclut "COMPLET" pour couvrir le cas où le LLM a dit COMPLET
+        # mais le dossier est passé à DROITS_A_VALIDER — la machine CERFA doit
+        # quand même tourner pour collecter les réponses WhatsApp manquantes.
+        if nouveau_statut in ("INCOMPLET", "COMPLET"):
             elements_manquants = nouvelle_analyse.get("questions_manquantes", [])
             historique_conv = construire_historique_conversation(
                 dossier.get("historique_reponses", [])
@@ -831,6 +834,15 @@ async def _process_whatsapp_async(
 
             current_field = get_next_cerfa_field(cerfa_reponses)
 
+            # [TRACE] Log temporaire — à retirer après diagnostic
+            logger.info(
+                f"[TRACE-CERFA] dossier={dossier['dossier_id']} "
+                f"| nouveau_statut={nouveau_statut} "
+                f"| current_field={current_field!r} "
+                f"| cerfa_champs_remplis={sum(1 for v in cerfa_reponses.values() if v and str(v) not in ('__via_email__', 'sent'))} "
+                f"| cerfa_champs_total={len(cerfa_reponses)}"
+            )
+
             # Cas 1 : le prochain champ est le sentinel de redirection médicale
             force_medical_redirect = (current_field == _MEDICAL_REDIRECT_SENT_KEY)
             if force_medical_redirect:
@@ -855,6 +867,7 @@ async def _process_whatsapp_async(
 
             # Cas 3 : current_field is None → tous les champs CERFA collectés
             elif current_field is None:
+                logger.info(f"[TRACE-CERFA] Cas 3 active | dossier={dossier['dossier_id']}")
                 from services.cerfa_service import traiter_dossier_cerfa as _traiter_cerfa
                 # Fusion dossier + cerfa_reponses :
                 #   CERFAValidator a besoin des champs cerfa_reponses au niveau racine
@@ -864,7 +877,15 @@ async def _process_whatsapp_async(
                 _donnees_cerfa = {**dossier, **cerfa_reponses}
                 _resultat_cerfa = await asyncio.to_thread(_traiter_cerfa, _donnees_cerfa)
 
+                logger.info(
+                    f"[TRACE-CERFA] resultat traiter_dossier_cerfa "
+                    f"| type={_resultat_cerfa.get('type')} "
+                    f"| valide={_resultat_cerfa.get('valide')} "
+                    f"| nb_erreurs={len(_resultat_cerfa.get('erreurs', []))}"
+                )
+
                 if _resultat_cerfa.get("type") == "succes":
+                    logger.info(f"[TRACE-CERFA] Branche SUCCES atteinte | dossier={dossier['dossier_id']}")
                     # PDF généré → envoi email + message WhatsApp de confirmation
                     _email = dossier.get("email_famille")
                     if _email:
@@ -890,15 +911,20 @@ async def _process_whatsapp_async(
                     return  # terminé — generer_reponse_agent n'est pas appelé
 
                 elif _resultat_cerfa.get("type") == "validation":
+                    logger.info(f"[TRACE-CERFA] Branche VALIDATION atteinte | dossier={dossier['dossier_id']}")
                     # Des champs sont encore manquants → une seule question WhatsApp (FALC)
                     _msg_relance = _resultat_cerfa.get("message_a_envoyer", "")
                     if _msg_relance:
+                        logger.info(f"[TRACE-CERFA] message_a_envoyer = {_msg_relance[:80]!r}")
                         await asyncio.to_thread(send_text_message, phone_number, _msg_relance)
+                    else:
+                        logger.warning(f"[TRACE-CERFA] message_a_envoyer VIDE | erreurs={_resultat_cerfa.get('erreurs', [])}")
                     dossier["questions_en_attente"] = 1
                     database.save_dossier(dossier)
                     return  # on attend la réponse de l'usager
 
                 elif _resultat_cerfa.get("type") == "technique":
+                    logger.info(f"[TRACE-CERFA] Branche TECHNIQUE atteinte | dossier={dossier['dossier_id']}")
                     # Erreur interne → on log + message générique à l'usager
                     logger.error(
                         f"[CERFA_SERVICE] Erreur technique "
