@@ -853,6 +853,68 @@ async def _process_whatsapp_async(
                 except Exception as ex_err:
                     logger.warning(f"[CERFA] Extraction échouée pour '{current_field}': {ex_err}")
 
+            # Cas 3 : current_field is None → tous les champs CERFA collectés
+            elif current_field is None:
+                from services.cerfa_service import traiter_dossier_cerfa as _traiter_cerfa
+                # Fusion dossier + cerfa_reponses :
+                #   CERFAValidator a besoin des champs cerfa_reponses au niveau racine
+                #   (type_demande, nom_prenom, situation_familiale…)
+                #   remplir_cerfa a besoin de la structure complète du dossier
+                #   → un seul dict fusionné satisfait les deux.
+                _donnees_cerfa = {**dossier, **cerfa_reponses}
+                _resultat_cerfa = await asyncio.to_thread(_traiter_cerfa, _donnees_cerfa)
+
+                if _resultat_cerfa.get("type") == "succes":
+                    # PDF généré → envoi email + message WhatsApp de confirmation
+                    _email = dossier.get("email_famille")
+                    if _email:
+                        try:
+                            await asyncio.to_thread(
+                                send_dossier_pdf,
+                                _email,
+                                _resultat_cerfa["pdf_bytes"],
+                                dossier["dossier_id"],
+                                None, None, None,
+                            )
+                            logger.info(
+                                f"[CERFA_SERVICE] PDF envoyé "
+                                f"| dossier={dossier['dossier_id']} | email={_email}"
+                            )
+                        except Exception as _mail_err:
+                            logger.error(f"[CERFA_SERVICE] Envoi email échoué : {_mail_err}")
+                    await asyncio.to_thread(
+                        send_text_message, phone_number, _construire_message_complet(dossier)
+                    )
+                    dossier["statut"] = "COMPLET"
+                    database.save_dossier(dossier)
+                    return  # terminé — generer_reponse_agent n'est pas appelé
+
+                elif _resultat_cerfa.get("type") == "validation":
+                    # Des champs sont encore manquants → une seule question WhatsApp (FALC)
+                    _msg_relance = _resultat_cerfa.get("message_a_envoyer", "")
+                    if _msg_relance:
+                        await asyncio.to_thread(send_text_message, phone_number, _msg_relance)
+                    dossier["questions_en_attente"] = 1
+                    database.save_dossier(dossier)
+                    return  # on attend la réponse de l'usager
+
+                elif _resultat_cerfa.get("type") == "technique":
+                    # Erreur interne → on log + message générique à l'usager
+                    logger.error(
+                        f"[CERFA_SERVICE] Erreur technique "
+                        f"| dossier={dossier['dossier_id']} "
+                        f"| detail={_resultat_cerfa.get('erreur', '')}"
+                    )
+                    await asyncio.to_thread(
+                        send_text_message,
+                        phone_number,
+                        "Votre dossier a bien été enregistré. "
+                        "Un problème technique nous empêche de générer le formulaire pour l'instant. "
+                        "Votre accompagnateur sera prévenu et prendra en charge la suite.",
+                    )
+                    database.save_dossier(dossier)
+                    return
+
             reponse_envoyee = False
             try:
                 reponse_agent = await asyncio.to_thread(
