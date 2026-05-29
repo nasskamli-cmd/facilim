@@ -674,6 +674,15 @@ async def _demarrer_dialogue_cerfa(dossier: dict) -> None:
     _did = dossier.get("dossier_id")
     logger.info(f"🔵 _demarrer_dialogue_cerfa appelé | dossier={_did}")
 
+    # ── Guard anti-doublon ────────────────────────────────────────────────────
+    # Persisté en base immédiatement pour bloquer les appels concurrents
+    # (3 messages WhatsApp simultanés → 3 appels → seul le 1er passe)
+    if dossier.get("cerfa_dialogue_demarre"):
+        logger.info(f"🟠 Dialogue CERFA déjà démarré — envoi ignoré | dossier={_did}")
+        return
+    dossier["cerfa_dialogue_demarre"] = True
+    database.save_dossier(dossier)
+
     phone = dossier.get("telephone_famille")
     if not phone:
         logger.info(f"🟠 Pas de téléphone famille | dossier={_did}")

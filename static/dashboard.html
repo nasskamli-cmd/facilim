@@ -1250,6 +1250,49 @@
           </div>
         </div>
 
+        <!-- ── Dialogue CERFA (collapsible) ──────────────────────────────── -->
+        <div class="detail-section" id="section-cerfa-dialogue">
+          <div class="detail-section-toggle" onclick="toggleSection('cerfa-body')">
+            <div class="detail-section-title" style="margin-bottom:0;">
+              📋 Dialogue CERFA
+              <span id="cerfa-badge-statut" style="margin-left:8px;font-size:10px;font-weight:700;padding:2px 8px;border-radius:99px;background:#E5E7EB;color:#374151;text-transform:uppercase;letter-spacing:.5px;"></span>
+            </div>
+            <span class="toggle-arr" id="cerfa-body-arrow">▼</span>
+          </div>
+
+          <div id="cerfa-body" style="margin-top:12px;">
+
+            <!-- Checklist des champs CERFA -->
+            <div style="font-size:11px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">
+              Champs collectés
+            </div>
+            <div id="cerfa-checklist" style="display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:14px;"></div>
+
+            <!-- Champs manquants mis en avant -->
+            <div id="cerfa-manquants-bloc" style="display:none;margin-bottom:14px;">
+              <div style="font-size:11px;font-weight:700;color:#C2410C;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">
+                ❌ Champs encore manquants
+              </div>
+              <div id="cerfa-manquants-liste" style="display:flex;flex-wrap:wrap;gap:5px;"></div>
+            </div>
+
+            <!-- Question en attente -->
+            <div id="cerfa-question-bloc" style="display:none;padding:10px 14px;background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;margin-bottom:14px;">
+              <div style="font-size:11px;font-weight:700;color:#1E40AF;margin-bottom:4px;">📱 Question envoyée à la famille</div>
+              <div id="cerfa-question-texte" style="font-size:13px;color:#1E3A5F;line-height:1.5;"></div>
+            </div>
+
+            <!-- Réponses déjà reçues via dialogue CERFA -->
+            <div id="cerfa-reponses-bloc" style="display:none;">
+              <div style="font-size:11px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">
+                Réponses collectées via WhatsApp
+              </div>
+              <div id="cerfa-reponses-liste" style="display:flex;flex-direction:column;gap:5px;"></div>
+            </div>
+
+          </div>
+        </div>
+
       </div>
 
       <div class="modal-footer" style="gap:7px;">
@@ -1304,6 +1347,30 @@
         <button id="val-relancer-btn" onclick="relancerCerfaWhatsapp()"
           style="display:inline-flex;align-items:center;gap:6px;padding:8px 16px;background:#EA580C;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;">
           📱 Envoyer la prochaine question WhatsApp
+        </button>
+      </div>
+
+      <!-- Panneau CERFA prêt pour revue — affiché si HTTP 200 pret_pour_revue -->
+      <div id="val-cerfa-pret" style="display:none;margin:0 24px 12px;padding:14px 16px;background:#F0FDF4;border:1px solid #86EFAC;border-radius:8px;">
+        <div style="font-size:13px;font-weight:700;color:#15803D;margin-bottom:6px;">✅ CERFA prêt à être vérifié</div>
+        <div style="font-size:12px;color:#166534;margin-bottom:14px;">
+          Le CERFA a été généré avec succès. Prévisualisez-le avant de l'envoyer à la famille.
+        </div>
+        <div style="margin-bottom:12px;">
+          <button id="val-previsualiser-btn" onclick="previsualiserCerfa()"
+            style="display:inline-flex;align-items:center;gap:6px;padding:8px 16px;background:#1B3A6B;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;">
+            📄 Prévisualiser le CERFA
+          </button>
+        </div>
+        <!-- Checkbox de confirmation — débloque le bouton Envoyer -->
+        <label style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;background:#fff;border:1px solid #BBF7D0;border-radius:8px;cursor:pointer;margin-bottom:12px;font-size:13px;color:#166534;line-height:1.5;">
+          <input type="checkbox" id="val-confirm-checkbox" onchange="toggleEnvoyerBtn()"
+            style="width:16px;height:16px;margin-top:2px;flex-shrink:0;accent-color:#15803D;cursor:pointer;">
+          J'ai vérifié le CERFA et confirme qu'il est complet et prêt à être envoyé à la famille.
+        </label>
+        <button id="val-envoyer-btn" onclick="envoyerCerfaFamille()" disabled
+          style="display:inline-flex;align-items:center;gap:6px;padding:8px 16px;background:#9CA3AF;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:not-allowed;font-family:inherit;transition:background .2s,cursor .2s;">
+          ✉️ Envoyer le CERFA à la famille
         </button>
       </div>
 
@@ -2152,6 +2219,81 @@
             <div class="h-text">${(r.reponse || r.content || '').substring(0, 300)}</div>
           </div>`).join('');
 
+        // ── Dialogue CERFA ─────────────────────────────────────────────────
+        const CERFA_LABELS = {
+          nom_prenom:               'Nom & prénom',
+          date_naissance:           'Date de naissance',
+          genre:                    'Genre',
+          adresse_complete:         'Adresse',
+          situation_familiale:      'Situation familiale',
+          type_droits:              'Droits demandés',
+          type_demande:             'Type de demande',
+          enfants_a_charge:         'Enfants à charge',
+          type_logement_statut:     'Logement / statut',
+          organisme_payeur:         'Organisme payeur',
+          difficultes_quotidiennes: 'Difficultés quotidiennes',
+          protection_juridique:     'Protection juridique',
+          besoins_aide:             'Besoins d\'aide',
+        };
+        const cerfa     = d.cerfa_reponses || {};
+        const tousC     = Object.keys(CERFA_LABELS);
+        const rempl     = tousC.filter(k => cerfa[k] && !['__via_email__','sent'].includes(String(cerfa[k])));
+        const manq_c    = tousC.filter(k => !cerfa[k] || ['__via_email__','sent'].includes(String(cerfa[k])));
+
+        // Badge statut
+        const badgeEl = document.getElementById('cerfa-badge-statut');
+        if (d.cerfa_dialogue_demarre) {
+          const pct = Math.round(rempl.length / tousC.length * 100);
+          badgeEl.textContent = `${pct}% — ${rempl.length}/${tousC.length} champs`;
+          badgeEl.style.background = pct === 100 ? '#D1FAE5' : '#FEF3C7';
+          badgeEl.style.color      = pct === 100 ? '#065F46' : '#92400E';
+        } else {
+          badgeEl.textContent = 'Non démarré';
+          badgeEl.style.background = '#F3F4F6'; badgeEl.style.color = '#6B7280';
+        }
+
+        // Checklist
+        document.getElementById('cerfa-checklist').innerHTML = tousC.map(k => {
+          const ok  = rempl.includes(k);
+          const val = ok ? String(cerfa[k]).substring(0, 35) : '';
+          return `<div style="display:flex;align-items:flex-start;gap:6px;padding:5px 8px;border-radius:6px;background:${ok?'#F0FDF4':'#FFF7ED'};border:1px solid ${ok?'#BBF7D0':'#FED7AA'};">
+            <span style="flex-shrink:0;">${ok ? '✅' : '❌'}</span>
+            <div>
+              <div style="font-size:11px;font-weight:600;color:var(--text-2);">${CERFA_LABELS[k]}</div>
+              ${ok ? `<div style="font-size:11px;color:#065F46;">${val}${String(cerfa[k]).length>35?'…':''}</div>` : ''}
+            </div>
+          </div>`;
+        }).join('');
+
+        // Pilules champs manquants
+        const manqBloc = document.getElementById('cerfa-manquants-bloc');
+        if (manq_c.length) {
+          document.getElementById('cerfa-manquants-liste').innerHTML = manq_c
+            .map(k => `<span style="font-size:11px;padding:3px 10px;background:#FEF2F2;border:1px solid #FECACA;border-radius:99px;color:#991B1B;">${CERFA_LABELS[k]}</span>`)
+            .join('');
+          manqBloc.style.display = '';
+        } else { manqBloc.style.display = 'none'; }
+
+        // Question en attente
+        const dernierMsg = (d.historique_reponses || []).filter(r => r.role === 'assistant').slice(-1)[0];
+        const qBloc = document.getElementById('cerfa-question-bloc');
+        if (dernierMsg && d.statut === 'DROITS_A_VALIDER') {
+          document.getElementById('cerfa-question-texte').textContent = dernierMsg.content || dernierMsg.reponse || '';
+          qBloc.style.display = '';
+        } else { qBloc.style.display = 'none'; }
+
+        // Réponses collectées
+        const repBloc = document.getElementById('cerfa-reponses-bloc');
+        if (rempl.length) {
+          document.getElementById('cerfa-reponses-liste').innerHTML = rempl.map(k =>
+            `<div style="display:flex;gap:8px;padding:6px 10px;background:#F9FAFB;border-radius:6px;font-size:12px;">
+              <span style="color:var(--text-3);flex-shrink:0;min-width:130px;">${CERFA_LABELS[k]}</span>
+              <span style="color:var(--text-1);font-weight:500;">${String(cerfa[k]).substring(0,80)}</span>
+            </div>`
+          ).join('');
+          repBloc.style.display = '';
+        } else { repBloc.style.display = 'none'; }
+
         // Boutons footer
         document.getElementById('btn-force-relance-detail').style.display = ['EN_COURS','INCOMPLET'].includes(a.statut) ? '' : 'none';
         document.getElementById('btn-enrich-from-detail').style.display   = a.statut !== 'ERREUR' ? '' : 'none';
@@ -2225,10 +2367,17 @@
       document.getElementById('modal-validation').classList.remove('open');
       document.getElementById('val-cerfa-incomplet').style.display = 'none';
       document.getElementById('val-cerfa-erreurs').innerHTML = '';
+      document.getElementById('val-cerfa-pret').style.display = 'none';
+      document.getElementById('val-confirm-checkbox').checked = false;
       const relBtn = document.getElementById('val-relancer-btn');
       relBtn.disabled = false;
       relBtn.textContent = '📱 Envoyer la prochaine question WhatsApp';
       relBtn.style.background = '#EA580C';
+      const envBtn = document.getElementById('val-envoyer-btn');
+      envBtn.disabled = true;
+      envBtn.textContent = '✉️ Envoyer le CERFA à la famille';
+      envBtn.style.background = '#9CA3AF';
+      envBtn.style.cursor = 'not-allowed';
       _validationDossierId = null;
     }
 
@@ -2290,10 +2439,12 @@
           body: JSON.stringify({ droits_valides: droitsValides }),
         });
         const data = await res.json();
-        if (res.ok) {
-          closeValidationModal();
-          alert(`✅ CERFA généré et envoyé à la famille.\nDroits inclus dans le dossier : ${droitsValides.join(', ') || '(aucun)'}`);
-          loadDossiers();
+        if (res.ok && data.status === 'pret_pour_revue') {
+          // CERFA généré — afficher le panneau de prévisualisation/envoi
+          document.getElementById('val-cerfa-pret').style.display = 'block';
+          document.getElementById('val-cerfa-incomplet').style.display = 'none';
+          btn.disabled = false;
+          btn.textContent = '✓ Confirmer et générer le CERFA';
         } else if (res.status === 422 && data.detail?.status === 'cerfa_incomplet') {
           // Dialogue WhatsApp incomplet — afficher le panneau inline
           const erreurs = data.detail.erreurs || [];
@@ -2344,6 +2495,72 @@
         btn.disabled = false;
         btn.textContent = '📱 Envoyer la prochaine question WhatsApp';
         alert(`❌ Erreur réseau : ${e.message}`);
+      }
+    }
+
+    function toggleEnvoyerBtn() {
+      const checked = document.getElementById('val-confirm-checkbox').checked;
+      const btn     = document.getElementById('val-envoyer-btn');
+      btn.disabled         = !checked;
+      btn.style.background = checked ? '#15803D' : '#9CA3AF';
+      btn.style.cursor     = checked ? 'pointer'  : 'not-allowed';
+    }
+
+    async function previsualiserCerfa() {
+      if (!_validationDossierId) return;
+      const btn = document.getElementById('val-previsualiser-btn');
+      btn.disabled = true;
+      btn.textContent = '⏳ Chargement…';
+      try {
+        const res = await fetch(`/api/v1/dossiers/${_validationDossierId}/previsualiser-cerfa`, {
+          method: 'POST',
+          credentials: 'include',
+        });
+        if (!res.ok) {
+          const data = await res.json();
+          alert(`❌ ${data.detail || 'Impossible de charger le CERFA.'}`);
+          return;
+        }
+        // Créer un blob URL pour ouvrir le PDF dans un nouvel onglet
+        const blob = await res.blob();
+        const url  = URL.createObjectURL(blob);
+        window.open(url, '_blank');
+        // Libérer la mémoire après ouverture
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+      } catch (e) {
+        alert(`❌ Erreur réseau : ${e.message}`);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '📄 Prévisualiser le CERFA';
+      }
+    }
+
+    async function envoyerCerfaFamille() {
+      if (!_validationDossierId) return;
+      if (!confirm('Confirmer l\'envoi du CERFA à la famille ? Cette action est irréversible.')) return;
+      const btn = document.getElementById('val-envoyer-btn');
+      btn.disabled = true;
+      btn.textContent = '⏳ Envoi en cours…';
+      try {
+        const res  = await fetch(`/api/v1/dossiers/${_validationDossierId}/envoyer-cerfa`, {
+          method: 'POST',
+          credentials: 'include',
+        });
+        const data = await res.json();
+        if (res.ok) {
+          btn.textContent = '✅ CERFA envoyé !';
+          btn.style.background = '#15803D';
+          loadDossiers();
+          setTimeout(() => closeValidationModal(), 2000);
+        } else {
+          alert(`❌ ${data.detail || 'Erreur lors de l\'envoi.'}`);
+          btn.disabled = false;
+          btn.textContent = '✉️ Envoyer le CERFA à la famille';
+        }
+      } catch (e) {
+        alert(`❌ Erreur réseau : ${e.message}`);
+        btn.disabled = false;
+        btn.textContent = '✉️ Envoyer le CERFA à la famille';
       }
     }
 
