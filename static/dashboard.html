@@ -2365,13 +2365,22 @@
           const statutEl = document.getElementById('cerfa-email-medical-statut');
           const btnEl    = document.getElementById('btn-email-medical-recu');
           if (d.email_medical_recu) {
-            statutEl.innerHTML = '<span style="color:#065F46;font-weight:600;">✅ Email médical reçu et intégré</span>';
+            // Email reçu — afficher expéditeur + aperçu du contenu si disponible
+            let html = '<span style="color:#065F46;font-weight:600;">✅ Email médical reçu automatiquement</span>';
+            if (d.email_medical_sender) {
+              html += `<div style="font-size:11px;color:#374151;margin-top:4px;">De : ${d.email_medical_sender}</div>`;
+            }
+            if (d.email_medical_contenu) {
+              const apercu = d.email_medical_contenu.substring(0, 200).replace(/\n/g, ' ');
+              html += `<div style="font-size:11px;color:#374151;margin-top:6px;padding:8px;background:#D1FAE5;border-radius:6px;line-height:1.5;">${apercu}…</div>`;
+            }
+            statutEl.innerHTML = html;
             btnEl.disabled = true;
-            btnEl.textContent = '✅ Déjà confirmé';
+            btnEl.textContent = '✅ Reçu automatiquement';
             btnEl.style.background = '#6B7280';
             btnEl.style.cursor = 'default';
           } else {
-            statutEl.innerHTML = '<span style="color:#92400E;">⏳ En attente de l\'email de la famille</span>';
+            statutEl.innerHTML = '<span style="color:#92400E;">⏳ En attente de l\'email de la famille</span><div style="font-size:11px;color:#78350F;margin-top:4px;">La famille doit envoyer ses données médicales à <strong>medical@facilim.fr</strong></div>';
             btnEl.disabled = false;
             btnEl.textContent = '✅ J\'ai reçu l\'email médical';
             btnEl.style.background = '#7C3AED';

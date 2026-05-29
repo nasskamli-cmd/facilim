@@ -728,6 +728,76 @@ async def _demarrer_dialogue_cerfa(dossier: dict) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# ENDPOINT 1b — POST /api/v1/webhook/email-medical                            #
+# Brevo Inbound Parsing — reçoit les emails envoyés à medical@facilim.fr      #
+# Brevo appelle ce webhook automatiquement à chaque email reçu                #
+# --------------------------------------------------------------------------- #
+@app.post(
+    "/api/v1/webhook/email-medical",
+    summary="Webhook Brevo — réception d'un email médical de la famille",
+    tags=["Webhooks"],
+)
+async def webhook_email_medical(request: Request):
+    """
+    Appelé par Brevo Inbound Parsing quand un email arrive sur medical@facilim.fr.
+    Cherche le dossier correspondant (nom dans le sujet ou le corps),
+    stocke le contenu de l'email et marque email_medical_recu = True.
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+
+    # Brevo envoie les champs : sender, subject, textContent, htmlContent, headers
+    sender  = payload.get("sender", {}).get("email", "") or payload.get("from", "")
+    subject = payload.get("subject", "")
+    body    = payload.get("textContent") or payload.get("text", "") or ""
+    html    = payload.get("htmlContent") or payload.get("html", "") or ""
+    contenu = (body or html).strip()[:2000]
+
+    logger.info(f"[EMAIL-MED-WEBHOOK] Email reçu | de={sender} | sujet={subject[:60]}")
+
+    # ── Recherche du dossier par nom dans le sujet ou le corps ───────────────
+    dossier_trouve = None
+    tous_dossiers  = database.get_all_dossiers_actifs() if hasattr(database, "get_all_dossiers_actifs") else []
+
+    texte_recherche = f"{subject} {body}".lower()
+
+    for d in tous_dossiers:
+        nom    = (d.get("nom_enfant") or "").lower()
+        prenom = (d.get("prenom_enfant") or "").lower()
+        if nom and nom in texte_recherche:
+            dossier_trouve = d
+            break
+        if prenom and prenom in texte_recherche:
+            dossier_trouve = d
+            break
+        # Recherche par numéro de dossier dans le sujet
+        dossier_id_court = str(d.get("dossier_id", ""))[:8].lower()
+        if dossier_id_court and dossier_id_court in texte_recherche:
+            dossier_trouve = d
+            break
+
+    if not dossier_trouve:
+        logger.warning(
+            f"[EMAIL-MED-WEBHOOK] Aucun dossier trouvé pour cet email | sujet={subject[:60]}"
+        )
+        # On stocke l'email dans une file d'attente pour traitement manuel
+        return {"status": "non_associe", "message": "Email reçu mais aucun dossier correspondant trouvé."}
+
+    did = dossier_trouve.get("dossier_id")
+    dossier_trouve["email_medical_recu"]    = True
+    dossier_trouve["email_medical_recu_at"] = datetime.now(timezone.utc).isoformat()
+    dossier_trouve["email_medical_contenu"] = contenu
+    dossier_trouve["email_medical_sender"]  = sender
+    dossier_trouve["updated_at"]            = datetime.now(timezone.utc).isoformat()
+    database.save_dossier(dossier_trouve)
+
+    logger.info(f"[EMAIL-MED-WEBHOOK] Email médical associé | dossier={did} | de={sender}")
+    return {"status": "ok", "dossier_id": did}
+
+
+# --------------------------------------------------------------------------- #
 # ENDPOINT 2 — POST /api/v1/webhook/whatsapp                                  #
 # --------------------------------------------------------------------------- #
 
