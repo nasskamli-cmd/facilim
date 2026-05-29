@@ -67,20 +67,40 @@ def _detect_actes_essentiels(text: str) -> list[str]:
 def _parse_llm_json(raw_response: str) -> dict[str, Any]:
     """
     Extrait et parse le JSON retourné par le LLM.
-    Gère les cas où le modèle entoure le JSON de balises markdown (```json … ```).
+    Gère trois cas de défense :
+      1. Blocs markdown  (```json … ```)
+      2. Préfixe textuel (le LLM ajoute une phrase avant le JSON)
+      3. Troncature      (max_tokens atteint avant la fermeture du JSON)
     """
-    # Nettoyage des blocs markdown éventuels
     cleaned = raw_response.strip()
-    if cleaned.startswith("```"):
-        cleaned = cleaned.split("```")[1]
-        if cleaned.startswith("json"):
-            cleaned = cleaned[4:]
-        cleaned = cleaned.strip()
+
+    # Cas 1 : blocs markdown
+    if "```" in cleaned:
+        parts = cleaned.split("```")
+        for part in parts:
+            candidate = part.lstrip("json").strip()
+            if candidate.startswith("{"):
+                cleaned = candidate
+                break
+
+    # Cas 2 : préfixe textuel — extraire depuis le premier '{' jusqu'au dernier '}'
+    start = cleaned.find("{")
+    end   = cleaned.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        cleaned = cleaned[start : end + 1]
 
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError as e:
-        logger.error(f"Échec du parsing JSON LLM : {e}\nRéponse brute : {raw_response[:500]}")
+        # Log étendu pour diagnostiquer : début + fin de la réponse brute
+        _preview_start = raw_response[:400]
+        _preview_end   = raw_response[-200:] if len(raw_response) > 400 else ""
+        logger.error(
+            f"Échec du parsing JSON LLM : {e}\n"
+            f"Longueur réponse : {len(raw_response)} chars\n"
+            f"Début : {_preview_start!r}\n"
+            f"Fin   : {_preview_end!r}"
+        )
         # Réponse de secours : dossier marqué incomplet pour forcer une révision manuelle
         return {
             "statut": "INCOMPLET",
@@ -169,7 +189,7 @@ def validate_dossier(anonymized_text: str, departement_code: str) -> dict[str, A
         system_prompt=prompt_data["system_prompt"],
         user_message=prompt_data["user_prompt"],
         temperature=0.1,   # Légère créativité pour les recommandations, mais analyse rigoureuse
-        max_tokens=2048,
+        max_tokens=6000,   # FACILIM_MDPH_ENGINE v2 génère ~3 500-5 000 tokens (donnees_structurees + scoring)
     )
 
     analysis = _parse_llm_json(raw_response)
