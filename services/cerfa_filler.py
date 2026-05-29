@@ -623,6 +623,12 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     ):
         deja_connu_mdph = True
     numero_dossier_mdph  = (ds.get("numero_dossier_mdph") or cerfa_rep.get("numero_dossier_mdph") or "")
+    # Essayer d'extraire le numéro de dossier MDPH depuis la réponse WhatsApp historique_mdph
+    # (ex. "Oui, renouvellement, numéro 2021-12345-13" ou "mon dossier 4567890")
+    if not numero_dossier_mdph and _historique_mdph_rep:
+        _num_mdph_m = re.search(r'\b(\d{4,12})\b', _historique_mdph_rep)
+        if _num_mdph_m:
+            numero_dossier_mdph = _num_mdph_m.group(1)
     # urgence_droits et procedure_simplifiee : calculés après la lecture de cerfa_rep ci-dessous
 
     # Identité complémentaire
