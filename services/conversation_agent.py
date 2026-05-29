@@ -456,7 +456,144 @@ RÈGLES ABSOLUES :
 
 
 # ---------------------------------------------------------------------------
-# Logique de progression CERFA
+# Groupes de questions CERFA — max 5 messages au lieu de 22
+# Chaque groupe est envoyé en un seul message WhatsApp.
+# L'extraction multi-champs se fait sur chaque champ du groupe après réponse.
+# ---------------------------------------------------------------------------
+
+CERFA_GROUPES: list[dict] = [
+    {
+        "id": "type_demande",
+        "champs": ["type_demande", "urgence_droits"],
+        "question_falc": (
+            "Bonjour ! Pour démarrer votre dossier MDPH, j'ai besoin de quelques informations.\n\n"
+            "1️⃣ S'agit-il d'une *première demande* à la MDPH, ou d'un *renouvellement* de droits existants ?\n"
+            "2️⃣ Si c'est un renouvellement : vos droits actuels expirent-ils dans moins de 2 mois ?"
+        ),
+    },
+    {
+        "id": "situation_vie",
+        "champs": [
+            "situation_familiale", "enfants_a_charge",
+            "type_logement_statut", "organisme_payeur", "protection_juridique",
+        ],
+        "question_falc": (
+            "Merci ! Quelques questions sur votre situation de vie :\n\n"
+            "1️⃣ Êtes-vous *célibataire*, marié·e, en couple, divorcé·e ou veuf·ve ?\n"
+            "2️⃣ Avez-vous des *enfants à charge* ? (oui/non, et combien)\n"
+            "3️⃣ Quel est votre *type de logement* ? (appartement, maison…) et êtes-vous propriétaire ou locataire ?\n"
+            "4️⃣ Votre organisme d'allocations : *CAF* ou *MSA* ?\n"
+            "5️⃣ Êtes-vous sous *tutelle ou curatelle* ? (oui/non)"
+        ),
+    },
+    {
+        "id": "difficultes",
+        "champs": ["difficultes_quotidiennes", "besoins_aide", "ressources_actuelles"],
+        "question_falc": (
+            "Maintenant, parlez-moi de votre quotidien :\n\n"
+            "1️⃣ Quelles sont vos *principales difficultés* dans la vie de tous les jours ?\n"
+            "   (ce que vous ne pouvez pas faire seul·e, ce qui est épuisant ou douloureux)\n"
+            "2️⃣ De quelles *aides* avez-vous besoin ?\n"
+            "   (aide humaine, matériel, aménagements…)\n"
+            "3️⃣ Quelles sont vos *ressources actuelles* ?\n"
+            "   (allocations comme AAH, APL, pension d'invalidité, ou aucune)"
+        ),
+    },
+    {
+        "id": "parcours",
+        "champs": ["situation_pro_scolaire", "qualification_parcours", "scolarite_details"],
+        "question_falc": (
+            "Quelques questions sur votre parcours :\n\n"
+            "1️⃣ Quelle est votre *situation actuelle* ?\n"
+            "   (en emploi, en recherche d'emploi, en formation, sans activité, scolarisé·e…)\n"
+            "2️⃣ Quel est votre *niveau de formation* et votre dernier emploi ou métier ?\n"
+            "   (exemple : CAP plombier, dernier emploi caissière en 2020)"
+        ),
+    },
+    {
+        "id": "droits",
+        "champs": ["type_droits", "cmi_type", "emploi_accompagne", "historique_mdph"],
+        "question_falc": (
+            "Dernière étape !\n\n"
+            "1️⃣ Quels *droits souhaitez-vous demander* à la MDPH ?\n"
+            "   (exemples : AAH, RQTH, PCH, CMI, orientation ESAT/IME…)\n"
+            "2️⃣ Si vous demandez une *carte mobilité* (CMI) :\n"
+            "   - Priorité (difficultés à rester debout longtemps) ?\n"
+            "   - Stationnement (déplacements très limités) ?\n"
+            "   - Ou les deux ?\n"
+            "3️⃣ Si vous avez déjà un dossier MDPH : quel est votre *numéro de dossier* ?"
+        ),
+    },
+]
+
+
+def get_next_groupe_cerfa(cerfa_reponses: dict) -> dict | None:
+    """
+    Retourne le prochain groupe de questions à envoyer sur WhatsApp.
+    Un groupe est "à envoyer" si AU MOINS UN champ non-médical est encore vide
+    ET que le sentinel '__groupe_<id>__' n'est pas encore 'sent'.
+    Retourne None quand tous les groupes sont couverts.
+    """
+    type_d          = cerfa_reponses.get("type_demande", "").lower()
+    is_first        = any(w in type_d for w in ["premiere", "première", "jamais", "nouveau"])
+    is_renouvellement = "renouvellement" in type_d
+    type_droits_val = cerfa_reponses.get("type_droits", "").lower()
+    has_cmi = any(w in type_droits_val for w in ["cmi", "carte mobilite", "carte invalidite"])
+    has_orp = any(w in type_droits_val for w in ["orp", "rqth", "emploi", "esat"])
+
+    for groupe in CERFA_GROUPES:
+        gid = f"__groupe_{groupe['id']}__"
+
+        # Groupe déjà envoyé → suivant
+        if cerfa_reponses.get(gid) == "sent":
+            continue
+
+        # Construire la liste des champs vraiment utiles (non médicaux, non déjà remplis)
+        champs_utiles = []
+        for c in groupe["champs"]:
+            if c in MEDICAL_FIELDS:
+                continue
+            if cerfa_reponses.get(c) and str(cerfa_reponses[c]) not in ("__via_email__", "sent", ""):
+                continue  # déjà rempli
+
+            # Règles conditionnelles identiques à get_next_cerfa_field
+            if c == "urgence_droits":
+                if is_first or (type_d and not is_renouvellement):
+                    continue
+            if c == "historique_mdph" and is_first:
+                continue
+            if c == "cmi_type" and not has_cmi:
+                continue
+            if c == "emploi_accompagne" and not has_orp:
+                continue
+            if c == "scolarite_details":
+                ddn = cerfa_reponses.get("date_naissance", "")
+                if ddn:
+                    try:
+                        from datetime import date as _dt
+                        p = ddn.split("/")
+                        if len(p) == 3:
+                            age = (_dt.today() - _dt(int(p[2]), int(p[1]), int(p[0]))).days // 365
+                            if age >= 18:
+                                continue  # adulte → pas de scolarité
+                    except Exception:
+                        pass
+                else:
+                    continue  # âge inconnu → reporter scolarité
+            if c == "qualification_parcours":
+                if not any(w in type_droits_val for w in ["rqth", "orp", "aah", "emploi"]):
+                    continue
+
+            champs_utiles.append(c)
+
+        if champs_utiles:
+            return groupe
+
+    return None  # tous les groupes sont couverts
+
+
+# ---------------------------------------------------------------------------
+# Logique de progression CERFA (champ par champ — utilisé en fallback)
 # ---------------------------------------------------------------------------
 
 def get_next_cerfa_field(cerfa_reponses: dict[str, str]) -> str | None:
@@ -663,16 +800,86 @@ def generer_reponse_agent(
     """
     cerfa_reponses = cerfa_reponses or {}
 
-    # Redirection canal sécurisé (champs médicaux)
+    # ── Cas 0 : Redirection canal sécurisé (champs médicaux) ─────────────────
     if force_medical_redirect:
         logger.info("[CONV_AGENT] Message de redirection canal sécurisé envoyé.")
         return _MESSAGE_CANAL_SECURISE
 
+    # ── Cas 1 : Prochain GROUPE de questions disponible ───────────────────────
+    # On envoie d'abord les groupes (max 5 messages) avant de tomber en mode
+    # champ-par-champ pour les champs résiduels ou conditionnels isolés.
+    prochain_groupe = get_next_groupe_cerfa(cerfa_reponses)
+    if prochain_groupe:
+        gid = f"__groupe_{prochain_groupe['id']}__"
+        # Marquer le groupe comme envoyé pour éviter les doublons
+        cerfa_reponses[gid] = "sent"
+        logger.info(f"[CONV_AGENT] Groupe '{prochain_groupe['id']}' envoyé.")
+
+        # Si c'est la première prise de contact (groupe type_demande) :
+        # on envoie la question pré-rédigée directement, sans LLM.
+        if prochain_groupe["id"] == "type_demande" and not any(
+            v for k, v in cerfa_reponses.items() if not k.startswith("__")
+        ):
+            return prochain_groupe["question_falc"]
+
+        # Pour les groupes suivants : l'IA accuse réception puis pose le groupe
+        answered_lines = [
+            f"  ✓ {CERFA_FIELD_LABELS.get(f, f)} : {v}"
+            for f, v in cerfa_reponses.items()
+            if v and not f.startswith("__") and str(v) not in ("__via_email__", "sent")
+        ]
+        answered_ctx = "\n".join(answered_lines) if answered_lines else "  (aucun champ encore renseigné)"
+        sujet = "de l'enfant" if is_enfant else "de la personne"
+
+        _msg_lower = message_entrant.lower()
+        _is_urgence = any(p in _msg_lower for p in ["urgent", "en urgence", "rapidement", "vite"])
+        urgence_note = (
+            "\n⚠️ LA PERSONNE SIGNALE UNE URGENCE. Accuse réception en 1 phrase, rassure-la.\n"
+            if _is_urgence else ""
+        )
+
+        system_groupe = (
+            f"Tu es l'Assistant Facilim, spécialisé MDPH. Tu discutes via WhatsApp {sujet}.\n"
+            f"Langue : français simple, bienveillant, FALC (phrases courtes).\n"
+            f"{urgence_note}\n"
+            f"NE JAMAIS demander : diagnostic, médicaments, médecin, NIR, taux d'incapacité.\n\n"
+            f"DONNÉES DÉJÀ COLLECTÉES (ne pas re-demander) :\n{answered_ctx}\n\n"
+            f"RÈGLES :\n"
+            f"- Accuse réception en 1 phrase courte et chaleureuse\n"
+            f"- Puis pose EXACTEMENT les questions ci-dessous, mot pour mot, sans en ajouter\n"
+            f"- Ne demande pas d'autres informations\n"
+            f"- N'invente jamais d'information\n\n"
+            f"QUESTIONS À POSER (copier-coller après l'accusé de réception) :\n"
+            f"{prochain_groupe['question_falc']}"
+        )
+
+        messages = [{"role": "system", "content": system_groupe}]
+        for msg in historique[-6:]:
+            role    = msg.get("role", "user")
+            content = msg.get("content") or msg.get("reponse") or ""
+            if content and role in ("user", "assistant"):
+                messages.append({"role": role, "content": str(content)})
+        messages.append({"role": "user", "content": message_entrant})
+
+        try:
+            response = openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=messages,
+                max_tokens=400,
+                temperature=0.4,
+            )
+            reponse = response.choices[0].message.content.strip()
+            logger.info(f"[CONV_AGENT] Groupe={prochain_groupe['id']} | {len(reponse)} chars")
+            return reponse
+        except Exception as e:
+            logger.error(f"[CONV_AGENT] Erreur LLM groupe : {e}")
+            return prochain_groupe["question_falc"]
+
+    # ── Cas 2 : Plus de groupe → champ résiduel isolé (conditionnel tardif) ───
     next_field = get_next_cerfa_field(cerfa_reponses)
 
-    # Le sentinel indique que le message de redirection doit être envoyé
     if next_field == _MEDICAL_REDIRECT_SENT_KEY:
-        logger.info("[CONV_AGENT] Sentinel médical détecté → redirection canal sécurisé.")
+        logger.info("[CONV_AGENT] Sentinel médical → redirection canal sécurisé.")
         return _MESSAGE_CANAL_SECURISE
 
     if next_field is None:
@@ -686,118 +893,47 @@ def generer_reponse_agent(
 
     next_label = CERFA_FIELD_LABELS[next_field]
 
-    # Contexte : champs déjà renseignés (uniquement les champs avec valeur)
     answered_lines = [
         f"  ✓ {CERFA_FIELD_LABELS.get(f, f)} : {v}"
         for f, v in cerfa_reponses.items()
-        if v and not f.startswith("__")
+        if v and not f.startswith("__") and str(v) not in ("__via_email__", "sent")
     ]
-    answered_ctx = (
-        "\n".join(answered_lines)
-        if answered_lines
-        else "  (aucun champ encore renseigné)"
-    )
-
+    answered_ctx = "\n".join(answered_lines) if answered_lines else "  (aucun champ encore renseigné)"
     sujet = "de l'enfant" if is_enfant else "de la personne"
 
-    # Instructions spécifiques par champ
-    field_hints = {
-        "urgence_droits": (
-            "Explique brièvement pourquoi c'est important : si les droits expirent dans moins "
-            "de 2 mois, on peut utiliser une procédure simplifiée pour éviter une interruption."
-        ),
-        "protection_juridique": (
-            "Si la personne est sous tutelle ou curatelle, précise que le tuteur/curateur "
-            "devra donner son accord par écrit ou par mail, ou être l'interlocuteur principal."
-        ),
-        "cmi_type": (
-            "CMI priorité = difficultés à rester debout longtemps (file d'attente, supermarché). "
-            "CMI stationnement = difficultés à se déplacer ou périmètre de marche limité à 200m."
-        ),
-        "emploi_accompagne": (
-            "Droit commun = la personne peut chercher un emploi seule (service public de l'emploi). "
-            "Emploi accompagné = la personne a un projet professionnel mais a besoin d'un soutien "
-            "renforcé pour trouver et maintenir un emploi."
-        ),
-        "ressources_actuelles": (
-            "Demande : allocations déjà reçues (AAH, APL, ARE, ASS, pension invalidité) "
-            "ET frais importants liés au handicap non remboursés (transports, matériel, soins…)."
-        ),
-        "organisme_payeur": (
-            "CAF = Caisse d'Allocations Familiales (la plupart des familles). "
-            "MSA = Mutualité Sociale Agricole (agriculteurs et salariés agricoles)."
-        ),
-        "type_logement_statut": (
-            "Exemple de réponses attendues : 'appartement locataire', 'maison propriétaire', "
-            "'hébergé chez ses parents', 'foyer de vie'. "
-            "Si la personne vit dans un établissement médico-social, le préciser."
-        ),
-        "scolarite_details": (
-            "PPS = Projet Personnalisé de Scolarisation (accompagnement spécifique pour élève en situation de handicap). "
-            "PAI = Projet d'Accueil Individualisé (aménagements pour maladie ou allergie). "
-            "AESH = Accompagnant des Élèves en Situation de Handicap (aide humaine en classe). "
-            "ULIS = dispositif spécialisé en classe ordinaire."
-        ),
-        "qualification_parcours": (
-            "Cette information sert à remplir le parcours professionnel dans le dossier MDPH. "
-            "Exemple : 'CAP menuisier, dernier emploi magasinier chez Leroy Merlin en 2019'. "
-            "Ou : 'Bac pro comptabilité, en formation depuis 2022'. "
-            "Ou : 'sans qualification, a toujours travaillé dans le bâtiment'. "
-            "Si la personne n'a jamais travaillé, préciser simplement 'sans emploi depuis toujours'."
-        ),
-    }
-    hint = field_hints.get(next_field, "")
-
-    # Détecter si l'utilisateur signale que l'info est déjà dans le bilan / déjà répondu
     _msg_lower = message_entrant.lower()
     _deja_patterns = [
         "déjà répondu", "deja repondu", "j'ai déjà", "j'ai deja",
-        "dans le bilan", "dans le dossier", "dans mon dossier",
-        "c'est noté", "c'est inscrit", "c'est transmis", "c'est indiqué",
-        "mon accompagnateur", "déjà transmis", "deja transmis",
-        "déjà indiqué", "deja indique", "vous l'avez", "tu l'as",
+        "dans le bilan", "dans le dossier", "c'est noté", "c'est transmis",
+        "déjà transmis", "déjà indiqué", "vous l'avez",
     ]
-    _urgence_patterns = ["en urgence", "urgent", "j'ai besoin", "rapidement", "vite"]
-    _is_deja_bilan   = any(p in _msg_lower for p in _deja_patterns)
-    _is_urgence      = any(p in _msg_lower for p in _urgence_patterns)
+    _is_deja_bilan = any(p in _msg_lower for p in _deja_patterns)
+    _is_urgence    = any(p in _msg_lower for p in ["urgent", "en urgence", "rapidement", "vite"])
 
-    # Note de contexte urgence
     urgence_note = (
-        "\n⚠️  LA PERSONNE SIGNALE UNE URGENCE. Accuse réception de l'urgence en 1 phrase, "
-        "rassure-la, et pose la question essentielle sans perdre de temps.\n"
+        "\n⚠️ LA PERSONNE SIGNALE UNE URGENCE. Accuse réception en 1 phrase, rassure-la.\n"
         if _is_urgence else ""
     )
-
-    # Note de contexte "déjà répondu / dans le bilan"
     deja_note = (
-        "\n⚠️  LA PERSONNE DIT QUE L'INFORMATION EST DÉJÀ DANS LE BILAN OU QU'ELLE A DÉJÀ RÉPONDU. "
-        "NE PAS reposer la question. Répondre : 'Bien reçu, j'ai cette information dans le dossier.' "
-        "puis passer directement à la prochaine question non encore renseignée.\n"
+        "\n⚠️ LA PERSONNE DIT QUE L'INFO EST DÉJÀ DANS LE DOSSIER. "
+        "NE PAS reposer la question. Répondre 'Bien reçu.' puis poser la suivante.\n"
         if _is_deja_bilan else ""
     )
 
     system = (
-        f"Tu es l'Assistant Facilim, spécialisé dans la constitution de dossiers MDPH.\n"
-        f"Tu discutes via WhatsApp pour constituer le dossier MDPH {sujet}.\n"
-        f"Langue : français simple, bienveillant, FALC (phrases courtes, mots courants).\n"
+        f"Tu es l'Assistant Facilim, spécialisé MDPH. Tu discutes via WhatsApp {sujet}.\n"
+        f"Langue : français simple, bienveillant, FALC.\n"
         f"{urgence_note}{deja_note}\n"
-        f"RÔLE DU CERFA : Le formulaire MDPH porte sur les conséquences concrètes du\n"
-        f"handicap dans la vie quotidienne — pas sur les données médicales.\n"
-        f"NE JAMAIS demander : diagnostic, médicaments, nom du médecin, taux d'incapacité,\n"
-        f"numéro de sécurité sociale (ces infos sont collectées par le médecin/l'éducateur).\n\n"
-        f"DONNÉES DÉJÀ COLLECTÉES (ne pas re-demander) :\n{answered_ctx}\n\n"
-        f"PROCHAIN CHAMP À COLLECTER : {next_label}\n"
-        f"{('CONSEIL POUR CE CHAMP : ' + hint) if hint else ''}\n\n"
-        f"RÈGLES ABSOLUES :\n"
-        f"- Accuse d'abord réception en 1 phrase courte et chaleureuse\n"
-        f"- Si l'information est dans 'DONNÉES DÉJÀ COLLECTÉES' → ne la re-demande PAS\n"
+        f"NE JAMAIS demander : diagnostic, médicaments, médecin, NIR, taux d'incapacité.\n\n"
+        f"DONNÉES DÉJÀ COLLECTÉES :\n{answered_ctx}\n\n"
+        f"PROCHAIN CHAMP : {next_label}\n\n"
+        f"RÈGLES :\n"
+        f"- Accuse réception en 1 phrase courte\n"
         f"- Pose UNIQUEMENT la question sur : {next_label}\n"
-        f"- Pour les champs fonctionnels (difficultés, besoins) : formule en termes\n"
-        f"  de vie quotidienne, pas médicaux. Ex : 'Qu'est-ce qui est difficile au quotidien ?'\n"
-        f"- Ne demande PAS d'autres informations dans ce message\n"
-        f"- Ne répète jamais une question déjà posée et répondue\n"
+        f"- Ne demande PAS d'autres informations\n"
+        f"- Ne répète jamais une question déjà répondue\n"
         f"- N'invente jamais d'information\n"
-        f"- Réponse max : 3 phrases + 1 question"
+        f"- Réponse max : 2 phrases + 1 question"
     )
 
     messages = [{"role": "system", "content": system}]
@@ -816,10 +952,10 @@ def generer_reponse_agent(
             temperature=0.5,
         )
         reponse = response.choices[0].message.content.strip()
-        logger.info(f"[CONV_AGENT] Champ={next_field} | {len(reponse)} chars")
+        logger.info(f"[CONV_AGENT] Champ résiduel={next_field} | {len(reponse)} chars")
         return reponse
     except Exception as e:
-        logger.error(f"[CONV_AGENT] Erreur LLM : {e}")
+        logger.error(f"[CONV_AGENT] Erreur LLM champ résiduel : {e}")
         return f"Merci pour votre message. Pouvez-vous me préciser : {next_label} ?"
 
 

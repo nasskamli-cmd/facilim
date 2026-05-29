@@ -51,9 +51,11 @@ from services.conversation_agent import (
     construire_historique_conversation,
     extract_cerfa_field_from_reply,
     get_next_cerfa_field,
+    get_next_groupe_cerfa,
     prepopuler_cerfa_depuis_dossier,
     extraire_cerfa_depuis_bilan,
     MEDICAL_FIELDS,
+    CERFA_GROUPES,
     _MEDICAL_REDIRECT_SENT_KEY,
     _MESSAGE_CANAL_SECURISE,
 )
@@ -693,24 +695,34 @@ async def _demarrer_dialogue_cerfa(dossier: dict) -> None:
     dossier["cerfa_reponses"] = cerfa_reponses
     logger.info(f"🟢 cerfa_reponses prepopulé | champs={list(cerfa_reponses.keys())}")
 
-    first_field = get_next_cerfa_field(cerfa_reponses)
-    if not first_field:
-        logger.info(f"🟠 Aucun champ manquant — dialogue déjà complet | dossier={_did}")
-        return
-    logger.info(f"🟢 first_field = {first_field!r} | dossier={_did}")
-
-    _donnees = {**dossier, **cerfa_reponses}
-    resultat = await asyncio.to_thread(traiter_dossier_cerfa, _donnees)
-
-    message = resultat.get("message_a_envoyer", "")
-    if not message:
-        logger.info(f"🟠 message_a_envoyer vide | type_resultat={resultat.get('type')} | dossier={_did}")
-        return
+    # ── Utiliser les groupes de questions en priorité ─────────────────────────
+    prochain_groupe = get_next_groupe_cerfa(cerfa_reponses)
+    if prochain_groupe:
+        # Marquer le groupe comme envoyé
+        gid = f"__groupe_{prochain_groupe['id']}__"
+        cerfa_reponses[gid] = "sent"
+        dossier["cerfa_reponses"] = cerfa_reponses
+        database.save_dossier(dossier)
+        message = prochain_groupe["question_falc"]
+        logger.info(f"🟢 Premier groupe = '{prochain_groupe['id']}' | dossier={_did}")
+    else:
+        # Fallback champ par champ si tous les groupes sont déjà couverts
+        first_field = get_next_cerfa_field(cerfa_reponses)
+        if not first_field:
+            logger.info(f"🟠 Aucun champ manquant — dialogue déjà complet | dossier={_did}")
+            return
+        logger.info(f"🟢 first_field résiduel = {first_field!r} | dossier={_did}")
+        _donnees = {**dossier, **cerfa_reponses}
+        resultat = await asyncio.to_thread(traiter_dossier_cerfa, _donnees)
+        message  = resultat.get("message_a_envoyer", "")
+        if not message:
+            logger.info(f"🟠 message_a_envoyer vide | type={resultat.get('type')} | dossier={_did}")
+            return
 
     try:
-        logger.info(f"📱 Envoi WhatsApp imminent | phone={phone} | message={message[:50]}...")
+        logger.info(f"📱 Envoi WhatsApp imminent | phone={phone} | message={message[:60]}...")
         await asyncio.to_thread(send_text_message, phone, message)
-        logger.info(f"✅ Question WhatsApp envoyée | dossier={_did} | field={first_field}")
+        logger.info(f"✅ Premier message CERFA envoyé | dossier={_did}")
     except Exception as e:
         logger.warning(f"❌ Erreur envoi WhatsApp | dossier={_did} | erreur={e}")
 
@@ -913,18 +925,38 @@ async def _process_whatsapp_async(
                 dossier["cerfa_reponses"] = cerfa_reponses
                 logger.info("[CERFA] Redirection canal sécurisé à envoyer.")
 
-            # Cas 2 : champ non-médical — tenter d'extraire la valeur depuis la réponse
+            # Cas 2 : champ non-médical — extraire depuis la réponse.
+            # Mode GROUPE : on tente d'extraire tous les champs du dernier groupe envoyé.
+            # Mode CHAMP : on extrait uniquement le champ courant (fallback résiduel).
             elif current_field and current_field not in MEDICAL_FIELDS:
-                try:
-                    valeur = await asyncio.to_thread(
-                        extract_cerfa_field_from_reply, user_reply, current_field, _oai_client
-                    )
-                    if valeur:
-                        cerfa_reponses[current_field] = valeur
-                        dossier["cerfa_reponses"] = cerfa_reponses
-                        logger.info(f"[CERFA] Champ '{current_field}' extrait : {valeur[:40]}")
-                except Exception as ex_err:
-                    logger.warning(f"[CERFA] Extraction échouée pour '{current_field}': {ex_err}")
+                # Identifier quel groupe était actif (dernier groupe dont le sentinel est 'sent')
+                _groupe_actif_champs = []
+                for _g in CERFA_GROUPES:
+                    _gid = f"__groupe_{_g['id']}__"
+                    if cerfa_reponses.get(_gid) == "sent":
+                        # Champs du groupe encore vides → à extraire depuis la réponse
+                        _groupe_actif_champs = [
+                            c for c in _g["champs"]
+                            if c not in MEDICAL_FIELDS
+                            and (not cerfa_reponses.get(c) or str(cerfa_reponses[c]) in ("__via_email__", "sent", ""))
+                        ]
+                        # On garde le dernier groupe envoyé (le plus récent)
+
+                champs_a_extraire = _groupe_actif_champs if _groupe_actif_champs else [current_field]
+
+                for _champ in champs_a_extraire:
+                    if cerfa_reponses.get(_champ) and str(cerfa_reponses[_champ]) not in ("__via_email__", "sent", ""):
+                        continue  # déjà rempli
+                    try:
+                        valeur = await asyncio.to_thread(
+                            extract_cerfa_field_from_reply, user_reply, _champ, _oai_client
+                        )
+                        if valeur:
+                            cerfa_reponses[_champ] = valeur
+                            dossier["cerfa_reponses"] = cerfa_reponses
+                            logger.info(f"[CERFA] Champ '{_champ}' extrait : {valeur[:40]}")
+                    except Exception as ex_err:
+                        logger.warning(f"[CERFA] Extraction échouée pour '{_champ}': {ex_err}")
 
             # Cas 3 : current_field is None → tous les champs CERFA collectés
             elif current_field is None:
