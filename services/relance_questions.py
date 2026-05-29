@@ -172,7 +172,7 @@ _ERREUR_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"prestation\s+inconnue|type\s+de\s+droit|droits?\s+demand", re.I), "type_droits"),
     (re.compile(r"situation\s+famil", re.I), "situation_familiale"),
     (re.compile(r"date\s+de\s+naissance|ddn", re.I), "date_naissance"),
-    (re.compile(r"num[eé]ro\s+de\s+s[eé]curit[eé]|nir\b|num[eé]ro\s+ss", re.I), "numero_securite_sociale"),
+    (re.compile(r"numero_securite_sociale|num[eé]ro\s+de\s+s[eé]curit[eé]|nir\b|num[eé]ro\s+ss", re.I), "numero_securite_sociale"),
     (re.compile(r"diagnostic|pathologie", re.I), "diagnostic_principal"),
     (re.compile(r"m[eé]decin\s+traitant", re.I), "medecin_traitant"),
     (re.compile(r"traitement|m[eé]dicament", re.I), "traitements_en_cours"),
