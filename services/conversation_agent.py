@@ -74,6 +74,7 @@ CERFA_FIELD_ORDER: list[str] = [
     "adresse_complete",           # numero, rue, CP, ville
     "situation_familiale",        # celibataire, marie, en couple...
     "enfants_a_charge",           # nombre (0 si aucun)
+    "type_logement_statut",       # ★ P5 : type logement + statut occupation (maison/appart + proprio/locataire)
     "organisme_payeur",           # CAF ou MSA - systematique (expert Q2)
     "protection_juridique",       # tutelle / curatelle / aucune (expert Q8)
     # Section B — Vie quotidienne & retentissements fonctionnels
@@ -83,10 +84,12 @@ CERFA_FIELD_ORDER: list[str] = [
     "ressources_actuelles",       # allocations recues + frais handicap non rembourses
     # Section C/D — Parcours scolaire / professionnel
     "situation_pro_scolaire",     # emploi, scolarite, formation, recherche d'emploi, inactivite
+    "scolarite_details",          # ★ P9-12 : type etablissement, classe, PPS/PAI/AESH (conditionnel: mineur)
     # Section E — Demandes
     "type_droits",                # AAH, RQTH, PCH, AEEH, CMI, orientation IME/ESAT/SESSAD
     "cmi_type",                   # priorite (station debout) ou stationnement (PMR/<200m) ou les deux
     "emploi_accompagne",          # emploi accompagne vs droit commun (conditionnel: si ORP demande)
+    "qualification_parcours",     # ★ D1/D2 : niveau formation + dernier poste (conditionnel: adulte RQTH/ORP/AAH, apres type_droits)
     "historique_mdph",            # date derniere notification (conditionnel: si renouvellement)
     # Donnees medicales — collectees HORS WhatsApp par l'educateur [MED]
     "numero_securite_sociale",    # [MED] NIR
@@ -106,6 +109,7 @@ CERFA_FIELD_LABELS: dict[str, str] = {
     "adresse_complete":           "l'adresse complète (numéro, rue, code postal, ville)",
     "situation_familiale":        "la situation familiale (célibataire, marié·e, en couple, divorcé·e…)",
     "enfants_a_charge":           "le nombre d'enfants à charge (indiquez 0 si aucun)",
+    "type_logement_statut":       "le type de logement (maison, appartement, foyer…) et le statut d'occupation (propriétaire, locataire, ou hébergé chez quelqu'un)",
     "organisme_payeur":           "l'organisme qui verse les allocations familiales : CAF ou MSA ?",
     "protection_juridique":       "si la personne est sous mesure de protection juridique (tutelle, curatelle, ou aucune)",
     # Fonctionnel — cœur du CERFA
@@ -115,6 +119,8 @@ CERFA_FIELD_LABELS: dict[str, str] = {
     "ressources_actuelles":       "les ressources actuelles (ex : AAH, APL, pension d'invalidité, ARE, ASS, ou aucune) et les frais importants liés au handicap qui ne sont pas remboursés",
     # Parcours
     "situation_pro_scolaire":     "la situation professionnelle ou scolaire actuelle (emploi, scolarité, formation, recherche d'emploi, inactivité…)",
+    "scolarite_details":          "le type d'établissement scolaire (classe ordinaire, ULIS, IME, SESSAD…), la classe actuelle, et si un PPS, PAI ou une AESH est en place",
+    "qualification_parcours":     "le niveau de formation obtenu (CAP, BAC, BTS, licence…) et le dernier métier ou poste occupé avant l'arrêt ou le handicap",
     # Demandes
     "type_droits":                "le ou les types de droits demandés à la MDPH (AAH, RQTH, PCH, AEEH, CMI, orientation IME/ESAT/SESSAD…)",
     "cmi_type":                   "le type de CMI souhaité : priorité (difficultés à rester debout longtemps), stationnement (déplacements réduits ou périmètre de marche inférieur à 200 mètres), ou les deux",
@@ -137,6 +143,8 @@ _URGENCE           = "urgence_droits"
 _CMI_TYPE          = "cmi_type"
 _EMPLOI_ACCOMPAGNE = "emploi_accompagne"
 _AIDANT_IDENTITE   = "aidant_identite"
+_SCOLARITE         = "scolarite_details"
+_QUALIFICATION     = "qualification_parcours"
 
 
 # ---------------------------------------------------------------------------
@@ -261,10 +269,18 @@ def prepopuler_cerfa_depuis_dossier(cerfa_reponses: dict, dossier: dict) -> None
     elif ds.get("a_enfants_charge") is False:
         _set("enfants_a_charge", "0")
 
-    # Pré-remplissage fonctionnel depuis la synthèse GEVA
-    syntheses = analyse.get("synthese_agents") or {}
-    geva_pro  = str(syntheses.get("geva_pro") or "").strip()
-    if geva_pro and len(geva_pro) > 40:
+    # Pré-remplissage fonctionnel — préférer expressions_libres (texte rédigé pour le CERFA)
+    # à geva_pro (synthèse analytique contenant du jargon non adapté aux champs CERFA).
+    syntheses          = analyse.get("synthese_agents") or {}
+    geva_pro           = str(syntheses.get("geva_pro") or "").strip()
+    expressions_libres = analyse.get("expressions_libres") or {}
+    _vie_quotidienne   = str(expressions_libres.get("vie_quotidienne") or "").strip()
+    _autonomie         = str(expressions_libres.get("autonomie") or "").strip()
+
+    # difficultes_quotidiennes : vie_quotidienne CERFA-ready > geva_pro analytique
+    if _vie_quotidienne and len(_vie_quotidienne) > 20:
+        _set("difficultes_quotidiennes", _vie_quotidienne[:500])
+    elif geva_pro and len(geva_pro) > 40:
         _set("difficultes_quotidiennes", geva_pro[:500])
 
     # Besoins d'aide — depuis les données structurées
@@ -274,10 +290,12 @@ def prepopuler_cerfa_depuis_dossier(cerfa_reponses: dict, dossier: dict) -> None
     elif ds.get("besoins_aide_humaine"):
         _set("besoins_aide", "Aide humaine nécessaire")
 
-    # Besoins d'aide — narrative depuis synthèse GEVA (plus riche que aides_actuelles)
-    geva_narratif = str(syntheses.get("geva_pro") or "")
-    if geva_narratif and len(geva_narratif) > 30 and not cerfa_reponses.get("besoins_aide"):
-        _set("besoins_aide", geva_narratif[:300])
+    # besoins_aide : autonomie CERFA-ready > geva_pro analytique
+    if not cerfa_reponses.get("besoins_aide"):
+        if _autonomie and len(_autonomie) > 20:
+            _set("besoins_aide", _autonomie[:300])
+        elif geva_pro and len(geva_pro) > 30:
+            _set("besoins_aide", geva_pro[:300])
 
     # Situation professionnelle — enrichie depuis projet_professionnel si disponible
     projet_pro = (ds.get("projet_professionnel") or "").strip()
@@ -310,6 +328,46 @@ def prepopuler_cerfa_depuis_dossier(cerfa_reponses: dict, dossier: dict) -> None
         if not _type_dem and ds.get("deja_connu_mdph"):
             _type_dem = "renouvellement"
         _set("type_demande", _type_dem)
+
+    # ── Nouveaux champs (P5, P9-12, D1/D2) ──────────────────────────────────
+
+    # type_logement_statut — P5 (logement + statut occupation)
+    _tl = (ds.get("type_logement") or "").strip()
+    _so = (ds.get("statut_occupation") or "").strip()
+    if _tl or _so:
+        _combined = " / ".join(p for p in [_tl, _so] if p)
+        _set("type_logement_statut", _combined)
+
+    # scolarite_details — P9-P12 (pour les mineurs)
+    _scol_parts: list[str] = []
+    if ds.get("type_etablissement_scolaire"):
+        _scol_parts.append(str(ds["type_etablissement_scolaire"]))
+    if ds.get("nom_ecole"):
+        _scol_parts.append(str(ds["nom_ecole"]))
+    if ds.get("classe_scolaire"):
+        _scol_parts.append(f"classe {ds['classe_scolaire']}")
+    if ds.get("a_pps"):
+        _scol_parts.append("PPS")
+    if ds.get("a_pai"):
+        _scol_parts.append("PAI")
+    if ds.get("a_ulis"):
+        _scol_parts.append("ULIS")
+    if _scol_parts:
+        _set("scolarite_details", " | ".join(_scol_parts))
+
+    # qualification_parcours — D1/D2 (adultes, parcours pro + niveau qualification)
+    _qual  = (ds.get("niveau_qualification") or "").strip()
+    _poste = (ds.get("poste_occupe") or "").strip()
+    _emp   = (ds.get("nom_employeur") or "").strip()
+    _qp_parts: list[str] = []
+    if _qual:
+        _qp_parts.append(_qual)
+    if _poste:
+        _qp_parts.append(f"poste : {_poste}")
+    if _emp:
+        _qp_parts.append(f"chez {_emp}")
+    if _qp_parts:
+        _set("qualification_parcours", " / ".join(_qp_parts))
 
 
 # ---------------------------------------------------------------------------
@@ -485,6 +543,49 @@ def get_next_cerfa_field(cerfa_reponses: dict[str, str]) -> str | None:
             if not any(w in besoins_txt for w in _mots_aide):
                 continue  # Pas d'aide humaine confirmée → ne pas poser la question
 
+        # scolarite_details : uniquement pour les mineurs (< 18 ans)
+        if field == _SCOLARITE:
+            _ddn = cerfa_reponses.get("date_naissance", "")
+            _is_minor = None
+            if _ddn and "/" in _ddn:
+                try:
+                    from datetime import date as _dt
+                    _p = _ddn.split("/")
+                    if len(_p) == 3:
+                        _age = (_dt.today() - _dt(int(_p[2]), int(_p[1]), int(_p[0]))).days // 365
+                        _is_minor = _age < 18
+                except Exception:
+                    pass
+            if _is_minor is not True:
+                continue  # adulte ou âge inconnu → sauter P9-P12
+
+        # qualification_parcours : uniquement pour les adultes avec RQTH / ORP / AAH demandé.
+        # Ce champ vient APRÈS type_droits dans l'ordre → on attend que type_droits soit renseigné.
+        if field == _QUALIFICATION:
+            _ddn = cerfa_reponses.get("date_naissance", "")
+            _is_adult = True  # défaut : adulte (pas de mineur sans date connue)
+            if _ddn and "/" in _ddn:
+                try:
+                    from datetime import date as _dt
+                    _p = _ddn.split("/")
+                    if len(_p) == 3:
+                        _age = (_dt.today() - _dt(int(_p[2]), int(_p[1]), int(_p[0]))).days // 365
+                        _is_adult = _age >= 18
+                except Exception:
+                    pass
+            if not _is_adult:
+                continue  # mineur → sauter D1/D2
+            # Attendre que type_droits soit renseigné (qualification suit logiquement les droits)
+            _td = cerfa_reponses.get("type_droits", "").lower()
+            if not _td:
+                continue  # type_droits pas encore renseigné → sauter pour l'instant
+            # Poser uniquement si le contexte est professionnel (RQTH, ORP, AAH, emploi)
+            _has_pro_droits = any(
+                w in _td for w in ["rqth", "orp", "aah", "emploi", "cdi", "cdd", "formation"]
+            )
+            if not _has_pro_droits:
+                continue  # Droits sans contexte professionnel → sauter
+
         # taux_incapacite : uniquement si renouvellement (redondant avec MEDICAL_FIELDS mais garde)
         if field == _TAUX_FIELD:
             hist     = cerfa_reponses.get(_HISTORIQUE, "").lower()
@@ -630,6 +731,24 @@ def generer_reponse_agent(
         "organisme_payeur": (
             "CAF = Caisse d'Allocations Familiales (la plupart des familles). "
             "MSA = Mutualité Sociale Agricole (agriculteurs et salariés agricoles)."
+        ),
+        "type_logement_statut": (
+            "Exemple de réponses attendues : 'appartement locataire', 'maison propriétaire', "
+            "'hébergé chez ses parents', 'foyer de vie'. "
+            "Si la personne vit dans un établissement médico-social, le préciser."
+        ),
+        "scolarite_details": (
+            "PPS = Projet Personnalisé de Scolarisation (accompagnement spécifique pour élève en situation de handicap). "
+            "PAI = Projet d'Accueil Individualisé (aménagements pour maladie ou allergie). "
+            "AESH = Accompagnant des Élèves en Situation de Handicap (aide humaine en classe). "
+            "ULIS = dispositif spécialisé en classe ordinaire."
+        ),
+        "qualification_parcours": (
+            "Cette information sert à remplir le parcours professionnel dans le dossier MDPH. "
+            "Exemple : 'CAP menuisier, dernier emploi magasinier chez Leroy Merlin en 2019'. "
+            "Ou : 'Bac pro comptabilité, en formation depuis 2022'. "
+            "Ou : 'sans qualification, a toujours travaillé dans le bâtiment'. "
+            "Si la personne n'a jamais travaillé, préciser simplement 'sans emploi depuis toujours'."
         ),
     }
     hint = field_hints.get(next_field, "")

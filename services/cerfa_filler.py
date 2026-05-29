@@ -666,6 +666,31 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     a_ulis                 = ds.get("a_ulis", False)
     classe_ordinaire       = ds.get("classe_ordinaire", True)
 
+    # Enrichissement depuis la réponse WhatsApp "scolarite_details" (pour les mineurs)
+    _scol_rep = (cerfa_rep.get("scolarite_details") or "").lower()
+    if _scol_rep and is_enfant:
+        scolarise = True   # si on a des détails de scolarité, la personne est bien scolarisée
+        if not type_etablissement:
+            for _et in ["ime", "sessad", "itep", "ulis", "spécialisé", "specialise", "uema", "uem"]:
+                if _et in _scol_rep:
+                    type_etablissement = _et
+                    classe_ordinaire   = _et == "ulis"
+                    break
+        if not a_pps and "pps" in _scol_rep:
+            a_pps = True
+        if not a_pai and "pai" in _scol_rep:
+            a_pai = True
+        if not a_ulis and "ulis" in _scol_rep:
+            a_ulis = True
+        if not classe_scolaire:
+            import re as _re
+            _cls_m = _re.search(
+                r"\b(cp|ce1|ce2|cm1|cm2|6e|6ème|5e|5ème|4e|4ème|3e|3ème|"
+                r"2nde|seconde|1ère|terminale|bac pro|bts)\b", _scol_rep
+            )
+            if _cls_m:
+                classe_scolaire = _cls_m.group(1).upper()
+
     # ── Situation professionnelle détaillée (P13-P16) ────────────────────────
     date_debut_emploi      = ds.get("date_debut_emploi") or ""
     type_contrat           = (ds.get("type_contrat") or "").lower()
@@ -677,12 +702,46 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     nom_formation          = ds.get("nom_formation") or ""
     organisme_formation    = ds.get("organisme_formation") or ""
 
+    # Enrichissement depuis la réponse WhatsApp "qualification_parcours" (D1/D2)
+    _qual_rep = (cerfa_rep.get("qualification_parcours") or "").lower()
+    if _qual_rep:
+        if not poste_occupe:
+            # Essayer d'extraire le poste depuis la réponse
+            import re as _re
+            _poste_m = _re.search(r"\b(poste\s*:?\s*|emploi\s*:?\s*|métier\s*:?\s*|dernier\s+emploi\s*:?\s*)([^,/\n]{3,40})", _qual_rep)
+            if _poste_m:
+                poste_occupe = _poste_m.group(2).strip()
+        if not nom_employeur:
+            _emp_m = _re.search(r"\b(chez\s+|employeur\s*:?\s*)([A-Za-zÀ-ÿ][^,/\n]{2,35})", _qual_rep)
+            if _emp_m:
+                nom_employeur = _emp_m.group(2).strip()
+        # Stocker dans projet_professionnel si pas encore défini (contexte D2/D3)
+        if not projet_professionnel:
+            projet_professionnel = cerfa_rep.get("qualification_parcours", "")[:200]
+
     # ── Logement / vie quotidienne (P5-P7) ───────────────────────────────────
     type_logement_detail   = (ds.get("type_logement") or "").lower()
     vie_en_couple          = ds.get("vie_en_couple", False)
     vie_en_famille         = ds.get("vie_en_famille", False)   # pas de défaut is_enfant — doit être confirmé
     logement_adapte        = ds.get("logement_adapte")
     statut_occupation      = (ds.get("statut_occupation") or "").lower()
+
+    # Enrichissement depuis la réponse WhatsApp "type_logement_statut"
+    # (collectée par le bot quand ds ne fournit pas les infos logement)
+    _logement_rep = (cerfa_rep.get("type_logement_statut") or "").lower()
+    if _logement_rep:
+        if not type_logement_detail:
+            for _tl_kw in ["maison", "appartement", "studio", "foyer", "chambre", "hlm", "hlt"]:
+                if _tl_kw in _logement_rep:
+                    type_logement_detail = _tl_kw
+                    break
+        if not statut_occupation:
+            if any(w in _logement_rep for w in ["propriétaire", "proprietaire"]):
+                statut_occupation = "proprietaire"
+            elif "locataire" in _logement_rep:
+                statut_occupation = "locataire"
+            elif any(w in _logement_rep for w in ["hébergé", "heberge", "hébergée"]):
+                statut_occupation = "heberge"
 
     # ── Aides humaines (P6) ──────────────────────────────────────────────────
     a_aide_soignante       = ds.get("a_aide_soignante", False)
@@ -1058,12 +1117,15 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     # ════════════════════════════════════════════════════════════════════════
     # PAGE 6 — Aides humaines et soins
     # ════════════════════════════════════════════════════════════════════════
+    # Sources pour la détection des cases P6 (aides humaines et soins) :
+    #   ✓ aides_actuelles : liste structurée des aides (source IA fiable)
+    #   ✓ besoins_aide_str : réponse WhatsApp "besoins_aide" (confirmée par la famille)
+    #   ✗ difficultes_quotidiennes : description narrative libre — volontairement exclue
+    #     pour éviter les faux positifs (ex : "besoin d'aide non documenté" dans geva_pro
+    #     déclencherait P6 7 même si l'aide humaine n'est pas confirmée).
     aides_str = " ".join(aides_actuelles).lower() if aides_actuelles else ""
-    # Compléter avec les données WhatsApp
     if besoins_aide_str:
         aides_str = f"{aides_str} {besoins_aide_str.lower()}"
-    if difficultes_quotidiennes:
-        aides_str = f"{aides_str} {difficultes_quotidiennes.lower()}"
 
     # Soins médicaux en cours — uniquement si soins médicaux réels confirmés
     # (pas juste des aides humaines ou scolaires)
