@@ -1294,6 +1294,19 @@
 
       <div id="val-warning" style="display:none;margin:0 24px 8px;padding:10px 14px;background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;font-size:12px;color:#991B1B;line-height:1.5;"></div>
 
+      <!-- Panneau CERFA incomplet — affiché si HTTP 422 cerfa_incomplet -->
+      <div id="val-cerfa-incomplet" style="display:none;margin:0 24px 12px;padding:14px 16px;background:#FFF7ED;border:1px solid #FED7AA;border-radius:8px;">
+        <div style="font-size:13px;font-weight:700;color:#C2410C;margin-bottom:6px;">⚠️ Dialogue WhatsApp incomplet</div>
+        <div style="font-size:12px;color:#7C3C00;margin-bottom:10px;">
+          Le CERFA ne peut pas encore être généré. Ces informations n'ont pas encore été collectées auprès de la famille :
+        </div>
+        <ul id="val-cerfa-erreurs" style="font-size:12px;color:#7C3C00;margin:0 0 14px 16px;padding:0;line-height:2;"></ul>
+        <button id="val-relancer-btn" onclick="relancerCerfaWhatsapp()"
+          style="display:inline-flex;align-items:center;gap:6px;padding:8px 16px;background:#EA580C;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;">
+          📱 Envoyer la prochaine question WhatsApp
+        </button>
+      </div>
+
       <div class="modal-footer" style="justify-content:space-between;align-items:center;">
         <button onclick="closeValidationModal()" style="padding:8px 16px;border:1px solid var(--border);background:var(--surface);border-radius:8px;font-size:13px;cursor:pointer;font-family:inherit;">
           Annuler
@@ -2210,6 +2223,12 @@
 
     function closeValidationModal() {
       document.getElementById('modal-validation').classList.remove('open');
+      document.getElementById('val-cerfa-incomplet').style.display = 'none';
+      document.getElementById('val-cerfa-erreurs').innerHTML = '';
+      const relBtn = document.getElementById('val-relancer-btn');
+      relBtn.disabled = false;
+      relBtn.textContent = '📱 Envoyer la prochaine question WhatsApp';
+      relBtn.style.background = '#EA580C';
       _validationDossierId = null;
     }
 
@@ -2275,15 +2294,56 @@
           closeValidationModal();
           alert(`✅ CERFA généré et envoyé à la famille.\nDroits inclus dans le dossier : ${droitsValides.join(', ') || '(aucun)'}`);
           loadDossiers();
-        } else {
-          alert(`❌ Erreur : ${data.detail || 'Une erreur est survenue.'}`);
+        } else if (res.status === 422 && data.detail?.status === 'cerfa_incomplet') {
+          // Dialogue WhatsApp incomplet — afficher le panneau inline
+          const erreurs = data.detail.erreurs || [];
+          const ul = document.getElementById('val-cerfa-erreurs');
+          ul.innerHTML = erreurs
+            .map(e => `<li>${e.replace('champ requis manquant : ', '')}</li>`)
+            .join('') || '<li>Informations manquantes non précisées</li>';
+          document.getElementById('val-cerfa-incomplet').style.display = 'block';
           btn.disabled = false;
-          btn.textContent = '✓ Valider et envoyer le CERFA';
+          btn.textContent = '✓ Confirmer et générer le CERFA';
+        } else {
+          alert(`❌ Erreur : ${data.detail?.message || data.detail || 'Une erreur est survenue.'}`);
+          btn.disabled = false;
+          btn.textContent = '✓ Confirmer et générer le CERFA';
         }
       } catch (e) {
         alert(`❌ Erreur réseau : ${e.message}`);
         btn.disabled = false;
         btn.textContent = '✓ Valider et envoyer le CERFA';
+      }
+    }
+
+    async function relancerCerfaWhatsapp() {
+      if (!_validationDossierId) return;
+      const btn = document.getElementById('val-relancer-btn');
+      btn.disabled = true;
+      btn.textContent = '⏳ Envoi en cours…';
+      try {
+        const res = await fetch(`/api/v1/dossiers/${_validationDossierId}/relancer-cerfa`, {
+          method: 'POST',
+          credentials: 'include',
+        });
+        const data = await res.json();
+        if (res.ok && data.status === 'question_envoyee') {
+          btn.textContent = '✅ Question envoyée sur WhatsApp !';
+          btn.style.background = '#16A34A';
+          setTimeout(() => closeValidationModal(), 2000);
+        } else if (res.ok && data.status === 'cerfa_complet') {
+          btn.textContent = '✅ Toutes les infos sont déjà collectées';
+          btn.style.background = '#16A34A';
+          setTimeout(() => closeValidationModal(), 2000);
+        } else {
+          btn.disabled = false;
+          btn.textContent = '📱 Envoyer la prochaine question WhatsApp';
+          alert(`❌ ${data.detail || 'Erreur lors de l\'envoi WhatsApp.'}`);
+        }
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = '📱 Envoyer la prochaine question WhatsApp';
+        alert(`❌ Erreur réseau : ${e.message}`);
       }
     }
 

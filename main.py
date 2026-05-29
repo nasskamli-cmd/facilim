@@ -1249,6 +1249,71 @@ async def valider_droits_dossier(
 
 
 # --------------------------------------------------------------------------- #
+# ENDPOINT 4c — POST /api/v1/dossiers/{dossier_id}/relancer-cerfa             #
+# Envoie la prochaine question CERFA manquante par WhatsApp (depuis dashboard) #
+# --------------------------------------------------------------------------- #
+@app.post(
+    "/api/v1/dossiers/{dossier_id}/relancer-cerfa",
+    summary="Envoyer la prochaine question CERFA par WhatsApp",
+    tags=["Dossiers"],
+)
+async def relancer_cerfa_whatsapp(dossier_id: str):
+    """
+    Calcule la prochaine question CERFA manquante et l'envoie à la famille par WhatsApp.
+    Appelé par le dashboard quand l'éducateur constate que le dialogue est incomplet.
+    """
+    dossier = database.get_dossier_by_id(dossier_id)
+    if not dossier:
+        raise HTTPException(status_code=404, detail=f"Dossier '{dossier_id}' introuvable.")
+
+    phone = dossier.get("telephone_famille")
+    if not phone:
+        raise HTTPException(status_code=422, detail="Numéro de téléphone manquant dans le dossier.")
+
+    cerfa_reponses = dossier.get("cerfa_reponses") or {}
+    _donnees_cerfa = {**dossier, **cerfa_reponses}
+    _resultat = await asyncio.to_thread(traiter_dossier_cerfa, _donnees_cerfa)
+
+    if _resultat.get("type") == "succes":
+        return {
+            "status":  "cerfa_complet",
+            "message": "Toutes les informations CERFA sont déjà collectées — aucune question à envoyer.",
+        }
+
+    if _resultat.get("type") == "technique":
+        raise HTTPException(
+            status_code=500,
+            detail=_resultat.get("erreur", "Erreur technique lors du calcul de la relance."),
+        )
+
+    # type == "validation" — on envoie la prochaine question
+    message_wa = _resultat.get("message_a_envoyer", "")
+    if not message_wa:
+        raise HTTPException(
+            status_code=500,
+            detail="Impossible de générer une question de relance pour ce dossier.",
+        )
+
+    try:
+        await asyncio.to_thread(send_text_message, phone, message_wa)
+    except Exception as wa_err:
+        logger.error(
+            f"[RELANCE-CERFA] Envoi WhatsApp échoué | dossier={dossier_id} | {wa_err}"
+        )
+        raise HTTPException(status_code=502, detail=f"Erreur d'envoi WhatsApp : {wa_err}")
+
+    logger.info(
+        f"[RELANCE-CERFA] Question envoyée | dossier={dossier_id} | phone={phone}"
+    )
+    return {
+        "status":           "question_envoyee",
+        "message":          f"Question envoyée au {phone}.",
+        "message_envoye":   message_wa,
+        "erreurs_restantes": _resultat.get("erreurs", []),
+    }
+
+
+# --------------------------------------------------------------------------- #
 # ENDPOINT 5 — DELETE /api/v1/dossiers/{dossier_id}                           #
 # --------------------------------------------------------------------------- #
 @app.delete(
