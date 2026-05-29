@@ -512,6 +512,53 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
             return v
         return cerfa_rep.get(cerfa_key, default)
 
+    # ── Fallback identité : ds > cerfa_rep comblent les champs dossier vides ───
+    # Les champs dossier.* sont remplis par l'éducateur dans le formulaire.
+    # Si certains sont vides (ex. adresse non saisie), on remonte vers l'IA
+    # (ds = donnees_structurees) puis vers les réponses extraites (cerfa_rep).
+    if not nom:
+        _nom_fb = (ds.get("nom") or "").strip()
+        nom = _nom_fb.upper() if _nom_fb else nom
+    if not prenom:
+        prenom = (ds.get("prenom") or "").strip() or prenom
+    # Si nom ET prénom toujours vides → parser cerfa_rep["nom_prenom"]
+    if not nom and not prenom:
+        _np = (cerfa_rep.get("nom_prenom") or "").strip()
+        if _np:
+            _np_parts = _np.rsplit(" ", 1)
+            if len(_np_parts) == 2:
+                prenom = _np_parts[0].strip()
+                nom    = _np_parts[1].strip().upper()
+            else:
+                nom = _np.upper()
+    if not ddn:
+        ddn = (cerfa_rep.get("date_naissance") or ds.get("date_naissance") or "").strip()
+        if ddn and "/" in ddn:
+            _dp = ddn.split("/")
+            if len(_dp) == 3:
+                ddn_jour, ddn_mois, ddn_annee = _dp[0], _dp[1], _dp[2]
+    if not adresse:
+        adresse = (ds.get("adresse") or ds.get("adresse_beneficiaire") or "").strip()
+    if not cp:
+        cp = (ds.get("code_postal") or "").strip()
+    if not commune:
+        _comm_fb = (ds.get("commune") or "").strip()
+        commune = _comm_fb.upper() if _comm_fb else commune
+    # Fallback bloc adresse depuis cerfa_rep["adresse_complete"] si toujours vide
+    if not adresse and not cp and not commune:
+        _ac = (cerfa_rep.get("adresse_complete") or "").strip()
+        if _ac:
+            _ac_parts = [p.strip() for p in _ac.split(",")]
+            if len(_ac_parts) >= 3:
+                adresse = _ac_parts[0]
+                cp      = re.sub(r'\D', '', _ac_parts[1])[:5]
+                commune = _ac_parts[2].upper()
+            elif len(_ac_parts) == 2:
+                adresse = _ac_parts[0]
+                commune = _ac_parts[1].upper()
+            else:
+                adresse = _ac
+
     # CMI : interpréter la réponse textuelle "priorité / stationnement / les deux"
     _cmi_rep = (cerfa_rep.get("cmi_type") or "").lower()
     _cmi_priorite_rep   = "priorité" in _cmi_rep or "priorite" in _cmi_rep or "les deux" in _cmi_rep
@@ -544,11 +591,11 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
             is_enfant = True
     else:
         is_enfant = True  # inconnu : défaut conservateur
-    genre                  = (ds.get("genre") or "").lower()
-    situation_familiale    = (ds.get("situation_familiale") or "").lower()
+    genre                  = (ds.get("genre") or cerfa_rep.get("genre") or "").lower()
+    situation_familiale    = (ds.get("situation_familiale") or cerfa_rep.get("situation_familiale") or "").lower()
     vie_seule              = ds.get("vie_seule", False)
     a_enfants_charge       = ds.get("a_enfants_charge", False)
-    situation_pro          = (ds.get("situation_professionnelle") or "").lower()
+    situation_pro          = (ds.get("situation_professionnelle") or cerfa_rep.get("situation_pro_scolaire") or "").lower()
     nom_employeur          = ds.get("nom_employeur") or ""
     poste_occupe           = ds.get("poste_occupe") or ""
     projet_professionnel   = ds.get("projet_professionnel") or ""
@@ -584,10 +631,10 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     departement_naissance  = ds.get("departement_naissance") or ""
     pays_naissance         = (ds.get("pays_naissance") or "").strip()  # pas de défaut "France"
     nom_usage              = ds.get("nom_usage") or ""
-    organisme_payeur       = (ds.get("organisme_payeur") or "").lower()
+    organisme_payeur       = (ds.get("organisme_payeur") or cerfa_rep.get("organisme_payeur") or "").lower()
     numero_allocataire     = ds.get("numero_allocataire") or ""
     organisme_assurance    = (ds.get("organisme_assurance_maladie") or "cpam").lower()
-    protection_juridique   = (ds.get("protection_juridique") or "aucune").lower()
+    protection_juridique   = (ds.get("protection_juridique") or cerfa_rep.get("protection_juridique") or "aucune").lower()
 
     # CMI nuances (expert) — cases distinctes dans le CERFA
     # Priorité : ds > WhatsApp réponse textuelle cmi_type
