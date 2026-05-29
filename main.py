@@ -1224,7 +1224,7 @@ async def valider_droits_dossier(
     if not dossier:
         raise HTTPException(status_code=404, detail=f"Dossier '{dossier_id}' introuvable.")
 
-    if dossier.get("statut") not in ("DROITS_A_VALIDER", "COMPLET", "INCOMPLET"):
+    if dossier.get("statut") not in ("DROITS_A_VALIDER", "COMPLET", "INCOMPLET", "PRET_POUR_REVUE"):
         raise HTTPException(
             status_code=409,
             detail=f"Le dossier est au statut '{dossier.get('statut')}' — validation des droits non applicable.",
@@ -1560,6 +1560,43 @@ async def saisir_champ_cerfa(dossier_id: str, body: dict = Body(embed=False)):
         f"| champ={champ} | valeur={valeur[:40]}"
     )
     return {"status": "ok", "champ": champ, "valeur": valeur}
+
+
+# --------------------------------------------------------------------------- #
+# ENDPOINT 4h — POST /api/v1/dossiers/{dossier_id}/reset-cerfa                #
+# Efface cerfa_reponses et remet le dossier en DROITS_A_VALIDER               #
+# Utile quand des valeurs inventées se trouvent dans un ancien dossier         #
+# --------------------------------------------------------------------------- #
+@app.post(
+    "/api/v1/dossiers/{dossier_id}/reset-cerfa",
+    summary="Réinitialiser les réponses CERFA d'un dossier",
+    tags=["Dossiers"],
+)
+async def reset_cerfa_dossier(dossier_id: str):
+    dossier = database.get_dossier_by_id(dossier_id)
+    if not dossier:
+        raise HTTPException(status_code=404, detail=f"Dossier '{dossier_id}' introuvable.")
+    # Effacer uniquement les champs non-fiables (pas nom/prénom/DDN/adresse)
+    _champs_a_effacer = [
+        "type_demande", "urgence_droits", "situation_familiale", "enfants_a_charge",
+        "type_logement_statut", "organisme_payeur", "protection_juridique",
+        "historique_mdph", "cerfa_dialogue_demarre", "pdf_genere", "pdf_bytes",
+        "cerfa_bytes", "__medical_redirect_sent__",
+        # Sentinels groupes
+        "__groupe_type_demande__", "__groupe_situation_vie__", "__groupe_difficultes__",
+        "__groupe_parcours__", "__groupe_droits__",
+    ]
+    cerfa_reponses = dossier.get("cerfa_reponses") or {}
+    for champ in _champs_a_effacer:
+        cerfa_reponses.pop(champ, None)
+        dossier.pop(champ, None)
+    dossier["cerfa_reponses"]      = cerfa_reponses
+    dossier["cerfa_dialogue_demarre"] = False
+    dossier["statut"]              = "DROITS_A_VALIDER"
+    dossier["updated_at"]          = datetime.now(timezone.utc).isoformat()
+    database.save_dossier(dossier)
+    logger.info(f"[RESET-CERFA] Réponses CERFA effacées | dossier={dossier_id}")
+    return {"status": "ok", "message": "Réponses CERFA réinitialisées. Le dialogue peut redémarrer."}
 
 
 # --------------------------------------------------------------------------- #
