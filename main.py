@@ -43,6 +43,7 @@ import auth as _auth_module
 from services.email_client import send_verification_code, send_dossier_pdf
 from services.pdf_generator import generer_pdf_dossier
 from services.cerfa_filler import remplir_cerfa
+from services.cerfa_service import traiter_dossier_cerfa
 from services.humanizer import humaniser_texte
 from services.ocr_image import ocr_image
 from services.conversation_agent import (
@@ -1165,14 +1166,48 @@ async def valider_droits_dossier(
         }
 
     try:
+        # ── Étape 1 : validation CERFA + génération via traiter_dossier_cerfa ───
+        cerfa_reponses  = dossier.get("cerfa_reponses") or {}
+        _donnees_cerfa  = {**dossier, **cerfa_reponses}
+        _resultat_cerfa = await asyncio.to_thread(traiter_dossier_cerfa, _donnees_cerfa)
+
+        if _resultat_cerfa.get("type") == "validation":
+            # Champs CERFA encore manquants → bloquer, informer l'éducateur
+            logger.info(
+                f"[VALIDATION] CERFA incomplet | dossier={dossier_id} "
+                f"| erreurs={_resultat_cerfa.get('erreurs', [])}"
+            )
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "status":            "cerfa_incomplet",
+                    "message":           (
+                        "Le dialogue WhatsApp n'est pas terminé. "
+                        "Le CERFA ne peut pas encore être généré."
+                    ),
+                    "erreurs":           _resultat_cerfa.get("erreurs", []),
+                    "message_a_envoyer": _resultat_cerfa.get("message_a_envoyer", ""),
+                },
+            )
+
+        if _resultat_cerfa.get("type") == "technique":
+            logger.error(
+                f"[VALIDATION] Erreur technique CERFA | dossier={dossier_id} "
+                f"| detail={_resultat_cerfa.get('erreur', '')}"
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"Erreur lors de la validation du CERFA : "
+                    f"{_resultat_cerfa.get('erreur', '')}"
+                ),
+            )
+
+        # ── Étape 2 : CERFA valide → générer le PDF résumé + envoyer les deux ──
+        cerfa_bytes = _resultat_cerfa.get("pdf_bytes")   # CERFA 15692 pré-rempli
         pdf_bytes   = await asyncio.to_thread(generer_pdf_dossier, dossier)
-        cerfa_bytes = None
         pch_bytes   = None
         rapo_bytes  = None
-        try:
-            cerfa_bytes = await asyncio.to_thread(remplir_cerfa, dossier)
-        except Exception as cerfa_err:
-            logger.warning(f"[VALIDATION] CERFA non généré : {cerfa_err}", exc_info=True)
 
         envoye = await asyncio.to_thread(
             send_dossier_pdf,
@@ -1200,12 +1235,14 @@ async def valider_droits_dossier(
                 logger.error(f"[VALIDATION] Purge RGPD échouée : {rgpd_err}")
 
         return {
-            "status":        "ok",
-            "message":       "Droits validés et dossier CERFA envoyé à la famille.",
+            "status":         "ok",
+            "message":        "Droits validés et dossier CERFA envoyé à la famille.",
             "droits_valides": droits_valides,
-            "email_envoye":  envoye,
+            "email_envoye":   envoye,
         }
 
+    except HTTPException:
+        raise   # re-propager les 422/500 sans les avaler dans le except ci-dessous
     except Exception as pdf_err:
         logger.error(f"[VALIDATION] Erreur génération PDF : {pdf_err}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Erreur lors de la génération du PDF : {pdf_err}")
