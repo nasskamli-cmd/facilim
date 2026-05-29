@@ -1290,6 +1290,21 @@
               <div id="cerfa-reponses-liste" style="display:flex;flex-direction:column;gap:5px;"></div>
             </div>
 
+            <!-- Suivi email médical -->
+            <div id="cerfa-email-medical-bloc" style="display:none;margin-top:14px;padding:12px 14px;background:#F5F3FF;border:1px solid #C4B5FD;border-radius:8px;">
+              <div style="font-size:11px;font-weight:700;color:#5B21B6;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">
+                📧 Données médicales — canal email
+              </div>
+              <div style="font-size:12px;color:#4C1D95;margin-bottom:10px;">
+                La famille a été invitée à envoyer ses données médicales à <strong>contactfacilim@gmail.com</strong>
+              </div>
+              <div id="cerfa-email-medical-statut" style="font-size:12px;margin-bottom:10px;"></div>
+              <button id="btn-email-medical-recu" onclick="confirmerEmailMedicalRecu()"
+                style="display:inline-flex;align-items:center;gap:6px;padding:7px 14px;background:#7C3AED;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;">
+                ✅ J'ai reçu l'email médical
+              </button>
+            </div>
+
           </div>
         </div>
 
@@ -2221,24 +2236,55 @@
 
         // ── Dialogue CERFA ─────────────────────────────────────────────────
         const CERFA_LABELS = {
+          // Section A — Identité & administrative
+          type_demande:             'Type de demande',
+          urgence_droits:           'Urgence droits',
           nom_prenom:               'Nom & prénom',
           date_naissance:           'Date de naissance',
           genre:                    'Genre',
           adresse_complete:         'Adresse',
           situation_familiale:      'Situation familiale',
-          type_droits:              'Droits demandés',
-          type_demande:             'Type de demande',
           enfants_a_charge:         'Enfants à charge',
           type_logement_statut:     'Logement / statut',
           organisme_payeur:         'Organisme payeur',
-          difficultes_quotidiennes: 'Difficultés quotidiennes',
           protection_juridique:     'Protection juridique',
+          // Section B — Fonctionnel
+          difficultes_quotidiennes: 'Difficultés quotidiennes',
           besoins_aide:             'Besoins d\'aide',
+          aidant_identite:          'Aidant (identité)',
+          ressources_actuelles:     'Ressources actuelles',
+          // Section C/D — Parcours
+          situation_pro_scolaire:   'Situation pro / scolaire',
+          scolarite_details:        'Scolarité (détails)',
+          qualification_parcours:   'Formation & parcours pro',
+          // Section E — Droits
+          type_droits:              'Droits demandés',
+          cmi_type:                 'Type CMI',
+          emploi_accompagne:        'Emploi accompagné',
+          historique_mdph:          'Historique MDPH',
         };
-        const cerfa     = d.cerfa_reponses || {};
-        const tousC     = Object.keys(CERFA_LABELS);
-        const rempl     = tousC.filter(k => cerfa[k] && !['__via_email__','sent'].includes(String(cerfa[k])));
-        const manq_c    = tousC.filter(k => !cerfa[k] || ['__via_email__','sent'].includes(String(cerfa[k])));
+
+        // Source indicative par champ (aide le pro à savoir où chercher l'info)
+        const CERFA_SOURCES = {
+          type_demande:'famille', urgence_droits:'famille',
+          nom_prenom:'document', date_naissance:'document', genre:'document', adresse_complete:'document',
+          situation_familiale:'famille', enfants_a_charge:'famille', type_logement_statut:'famille',
+          organisme_payeur:'famille', protection_juridique:'famille',
+          difficultes_quotidiennes:'famille', besoins_aide:'famille', aidant_identite:'famille',
+          ressources_actuelles:'famille', situation_pro_scolaire:'famille',
+          scolarite_details:'famille', qualification_parcours:'famille',
+          type_droits:'professionnel', cmi_type:'famille', emploi_accompagne:'famille', historique_mdph:'famille',
+        };
+        const SC = {
+          document:      { bg:'#EFF6FF', bd:'#BFDBFE', tx:'#1E40AF', lbl:'📄 doc' },
+          famille:       { bg:'#FFF7ED', bd:'#FED7AA', tx:'#C2410C', lbl:'📱 WA'  },
+          professionnel: { bg:'#F0FDF4', bd:'#BBF7D0', tx:'#15803D', lbl:'👤 pro' },
+        };
+
+        const cerfa  = d.cerfa_reponses || {};
+        const tousC  = Object.keys(CERFA_LABELS);
+        const rempl  = tousC.filter(k => cerfa[k] && !['__via_email__','sent'].includes(String(cerfa[k])));
+        const manq_c = tousC.filter(k => !cerfa[k] || ['__via_email__','sent'].includes(String(cerfa[k])));
 
         // Badge statut
         const badgeEl = document.getElementById('cerfa-badge-statut');
@@ -2252,17 +2298,34 @@
           badgeEl.style.background = '#F3F4F6'; badgeEl.style.color = '#6B7280';
         }
 
-        // Checklist
+        // Checklist 22 champs — ✅ rempli | ❌ manquant + source + bouton ✏️
         document.getElementById('cerfa-checklist').innerHTML = tousC.map(k => {
           const ok  = rempl.includes(k);
-          const val = ok ? String(cerfa[k]).substring(0, 35) : '';
-          return `<div style="display:flex;align-items:flex-start;gap:6px;padding:5px 8px;border-radius:6px;background:${ok?'#F0FDF4':'#FFF7ED'};border:1px solid ${ok?'#BBF7D0':'#FED7AA'};">
-            <span style="flex-shrink:0;">${ok ? '✅' : '❌'}</span>
-            <div>
-              <div style="font-size:11px;font-weight:600;color:var(--text-2);">${CERFA_LABELS[k]}</div>
-              ${ok ? `<div style="font-size:11px;color:#065F46;">${val}${String(cerfa[k]).length>35?'…':''}</div>` : ''}
-            </div>
-          </div>`;
+          const val = ok ? String(cerfa[k]).substring(0, 40) : '';
+          const sc  = SC[CERFA_SOURCES[k] || 'famille'];
+          if (ok) {
+            return `<div style="display:flex;align-items:flex-start;gap:6px;padding:5px 8px;border-radius:6px;background:#F0FDF4;border:1px solid #BBF7D0;">
+              <span style="flex-shrink:0;">✅</span>
+              <div style="min-width:0;">
+                <div style="font-size:11px;font-weight:600;color:var(--text-2);">${CERFA_LABELS[k]}</div>
+                <div style="font-size:11px;color:#065F46;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${val}${String(cerfa[k]).length>40?'…':''}</div>
+              </div>
+            </div>`;
+          } else {
+            const lbl = CERFA_LABELS[k].replace(/'/g, "\\'");
+            return `<div style="display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:6px;background:#FFF7ED;border:1px solid #FED7AA;">
+              <span style="flex-shrink:0;">❌</span>
+              <div style="flex:1;min-width:0;">
+                <div style="font-size:11px;font-weight:600;color:var(--text-2);">${CERFA_LABELS[k]}</div>
+                <span style="font-size:10px;padding:1px 5px;border-radius:99px;background:${sc.bg};border:1px solid ${sc.bd};color:${sc.tx};">${sc.lbl}</span>
+              </div>
+              <button onclick="ouvrirSaisieChamp('${k}','${lbl}')"
+                title="Remplir ce champ"
+                style="flex-shrink:0;padding:3px 8px;background:#1B3A6B;color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer;font-family:inherit;">
+                ✏️
+              </button>
+            </div>`;
+          }
         }).join('');
 
         // Pilules champs manquants
@@ -2287,12 +2350,34 @@
         if (rempl.length) {
           document.getElementById('cerfa-reponses-liste').innerHTML = rempl.map(k =>
             `<div style="display:flex;gap:8px;padding:6px 10px;background:#F9FAFB;border-radius:6px;font-size:12px;">
-              <span style="color:var(--text-3);flex-shrink:0;min-width:130px;">${CERFA_LABELS[k]}</span>
+              <span style="color:var(--text-3);flex-shrink:0;min-width:140px;">${CERFA_LABELS[k]}</span>
               <span style="color:var(--text-1);font-weight:500;">${String(cerfa[k]).substring(0,80)}</span>
             </div>`
           ).join('');
           repBloc.style.display = '';
         } else { repBloc.style.display = 'none'; }
+
+        // Bloc email médical — visible si le message de redirection a été envoyé
+        const emailMedBloc = document.getElementById('cerfa-email-medical-bloc');
+        const medSent = cerfa['__medical_redirect_sent__'] === 'sent';
+        emailMedBloc.style.display = medSent ? '' : 'none';
+        if (medSent) {
+          const statutEl = document.getElementById('cerfa-email-medical-statut');
+          const btnEl    = document.getElementById('btn-email-medical-recu');
+          if (d.email_medical_recu) {
+            statutEl.innerHTML = '<span style="color:#065F46;font-weight:600;">✅ Email médical reçu et intégré</span>';
+            btnEl.disabled = true;
+            btnEl.textContent = '✅ Déjà confirmé';
+            btnEl.style.background = '#6B7280';
+            btnEl.style.cursor = 'default';
+          } else {
+            statutEl.innerHTML = '<span style="color:#92400E;">⏳ En attente de l\'email de la famille</span>';
+            btnEl.disabled = false;
+            btnEl.textContent = '✅ J\'ai reçu l\'email médical';
+            btnEl.style.background = '#7C3AED';
+            btnEl.style.cursor = 'pointer';
+          }
+        }
 
         // Boutons footer
         document.getElementById('btn-force-relance-detail').style.display = ['EN_COURS','INCOMPLET'].includes(a.statut) ? '' : 'none';
@@ -2561,6 +2646,87 @@
         alert(`❌ Erreur réseau : ${e.message}`);
         btn.disabled = false;
         btn.textContent = '✉️ Envoyer le CERFA à la famille';
+      }
+    }
+
+    function ouvrirSaisieChamp(field, label) {
+      const existing = document.getElementById('modal-saisie-champ');
+      if (existing) existing.remove();
+      const overlay = document.createElement('div');
+      overlay.id = 'modal-saisie-champ';
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center;';
+      overlay.innerHTML = `
+        <div style="background:#fff;border-radius:12px;padding:24px;width:400px;max-width:90vw;box-shadow:0 20px 60px rgba(0,0,0,.3);">
+          <div style="font-size:14px;font-weight:700;color:#111827;margin-bottom:6px;">Remplir : ${label}</div>
+          <div style="font-size:12px;color:#6B7280;margin-bottom:14px;">
+            Cette valeur sera enregistrée dans le dossier.<br>
+            La famille ne sera <strong>pas</strong> redemandée pour ce champ.
+          </div>
+          <textarea id="saisie-champ-valeur" rows="3"
+            style="width:100%;box-sizing:border-box;padding:10px;border:1px solid #D1D5DB;border-radius:8px;font-size:13px;font-family:inherit;resize:vertical;"
+            placeholder="Saisir la valeur…"></textarea>
+          <div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end;">
+            <button onclick="document.getElementById('modal-saisie-champ').remove()"
+              style="padding:8px 16px;border:1px solid #D1D5DB;background:#F9FAFB;border-radius:8px;font-size:13px;cursor:pointer;font-family:inherit;">
+              Annuler
+            </button>
+            <button onclick="enregistrerChampCerfa('${field}')"
+              style="padding:8px 16px;background:#1B3A6B;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;">
+              Enregistrer
+            </button>
+          </div>
+        </div>`;
+      document.body.appendChild(overlay);
+      overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+      setTimeout(() => document.getElementById('saisie-champ-valeur')?.focus(), 50);
+    }
+
+    async function enregistrerChampCerfa(field) {
+      const valeur = (document.getElementById('saisie-champ-valeur')?.value || '').trim();
+      if (!valeur) { alert('Veuillez saisir une valeur.'); return; }
+      if (!_currentDetailDossierId) return;
+      try {
+        const res = await fetch(`/api/v1/dossiers/${_currentDetailDossierId}/cerfa-champ`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ champ: field, valeur }),
+        });
+        if (res.ok) {
+          document.getElementById('modal-saisie-champ')?.remove();
+          openDetailModal(_currentDetailDossierId);
+          loadDossiers();
+        } else {
+          const data = await res.json();
+          alert('Erreur : ' + (data.detail || 'Impossible d\'enregistrer.'));
+        }
+      } catch(e) {
+        alert('Erreur réseau : ' + e.message);
+      }
+    }
+
+    async function confirmerEmailMedicalRecu() {
+      if (!_currentDetailDossierId) return;
+      const btn = document.getElementById('btn-email-medical-recu');
+      btn.disabled = true; btn.textContent = '⏳ Enregistrement…';
+      try {
+        const res = await fetch(`/api/v1/dossiers/${_currentDetailDossierId}/email-medical-recu`, {
+          method: 'POST', credentials: 'include'
+        });
+        if (res.ok) {
+          btn.textContent = '✅ Confirmé';
+          btn.style.background = '#065F46';
+          btn.style.cursor = 'default';
+          document.getElementById('cerfa-email-medical-statut').innerHTML =
+            '<span style="color:#065F46;font-weight:600;">✅ Email médical reçu et intégré</span>';
+          loadDossiers();
+        } else {
+          btn.disabled = false; btn.textContent = '✅ J\'ai reçu l\'email médical';
+          alert('Erreur lors de l\'enregistrement.');
+        }
+      } catch(e) {
+        btn.disabled = false; btn.textContent = '✅ J\'ai reçu l\'email médical';
+        alert('Erreur réseau : ' + e.message);
       }
     }
 

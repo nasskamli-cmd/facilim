@@ -1482,6 +1482,81 @@ async def envoyer_cerfa_famille(dossier_id: str):
 
 
 # --------------------------------------------------------------------------- #
+# ENDPOINT 4g — POST /api/v1/dossiers/{dossier_id}/cerfa-champ                #
+# Le professionnel saisit directement un champ CERFA manquant                 #
+# Le champ est stocké dans cerfa_reponses → ne sera plus redemandé à la famille
+# --------------------------------------------------------------------------- #
+@app.post(
+    "/api/v1/dossiers/{dossier_id}/cerfa-champ",
+    summary="Saisir directement un champ CERFA depuis le dashboard",
+    tags=["Dossiers"],
+)
+async def saisir_champ_cerfa(dossier_id: str, body: dict = Body(embed=False)):
+    """
+    Enregistre la valeur d'un champ CERFA saisi par le professionnel.
+    Stocké dans cerfa_reponses — get_next_cerfa_field le verra comme rempli
+    et ne le redemandera pas à la famille.
+    Les champs médicaux sont bloqués (ils doivent passer par l'email sécurisé).
+    """
+    dossier = database.get_dossier_by_id(dossier_id)
+    if not dossier:
+        raise HTTPException(status_code=404, detail=f"Dossier '{dossier_id}' introuvable.")
+
+    champ  = str(body.get("champ",  "")).strip()
+    valeur = str(body.get("valeur", "")).strip()
+
+    if not champ:
+        raise HTTPException(status_code=422, detail="Le champ 'champ' est requis.")
+    if not valeur:
+        raise HTTPException(status_code=422, detail="Le champ 'valeur' ne peut pas être vide.")
+
+    # Champs médicaux interdits — canal email sécurisé uniquement
+    if champ in MEDICAL_FIELDS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Le champ '{champ}' est médical — il doit passer par contactfacilim@gmail.com.",
+        )
+
+    cerfa_reponses        = dossier.get("cerfa_reponses") or {}
+    cerfa_reponses[champ] = valeur
+    dossier["cerfa_reponses"] = cerfa_reponses
+    dossier["updated_at"]     = datetime.now(timezone.utc).isoformat()
+    database.save_dossier(dossier)
+
+    logger.info(
+        f"[CERFA-CHAMP] Champ saisi par professionnel | dossier={dossier_id} "
+        f"| champ={champ} | valeur={valeur[:40]}"
+    )
+    return {"status": "ok", "champ": champ, "valeur": valeur}
+
+
+# --------------------------------------------------------------------------- #
+# ENDPOINT 4f — POST /api/v1/dossiers/{dossier_id}/email-medical-recu         #
+# Le professionnel confirme avoir reçu les données médicales par email        #
+# --------------------------------------------------------------------------- #
+@app.post(
+    "/api/v1/dossiers/{dossier_id}/email-medical-recu",
+    summary="Confirmer la réception des données médicales par email",
+    tags=["Dossiers"],
+)
+async def confirmer_email_medical_recu(dossier_id: str):
+    """
+    Marque le dossier comme ayant reçu les données médicales par email
+    (numéro de sécurité sociale, diagnostic, médecin traitant, traitements).
+    Appelé par le professionnel depuis le dashboard après réception de l'email.
+    """
+    dossier = database.get_dossier_by_id(dossier_id)
+    if not dossier:
+        raise HTTPException(status_code=404, detail=f"Dossier '{dossier_id}' introuvable.")
+    dossier["email_medical_recu"]    = True
+    dossier["email_medical_recu_at"] = datetime.now(timezone.utc).isoformat()
+    dossier["updated_at"]            = datetime.now(timezone.utc).isoformat()
+    database.save_dossier(dossier)
+    logger.info(f"[EMAIL-MED] Données médicales confirmées reçues | dossier={dossier_id}")
+    return {"status": "ok", "message": "Données médicales marquées comme reçues."}
+
+
+# --------------------------------------------------------------------------- #
 # ENDPOINT 5 — DELETE /api/v1/dossiers/{dossier_id}                           #
 # --------------------------------------------------------------------------- #
 @app.delete(
