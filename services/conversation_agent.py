@@ -189,10 +189,7 @@ def prepopuler_cerfa_depuis_dossier(cerfa_reponses: dict, dossier: dict) -> None
         parts = [p for p in [adresse, cp, commune] if p]
         _set("adresse_complete", ", ".join(parts))
 
-    # Situation familiale
-    _set("situation_familiale", ds.get("situation_familiale"))
-
-    # Type de droits demandés
+    # Type de droits demandés (seul champ métier pré-rempli — vient de l'analyse IA, pas du bilan)
     droits = analyse.get("droits_identifies") or []
     if droits:
         _set("type_droits", ", ".join(droits))
@@ -200,17 +197,15 @@ def prepopuler_cerfa_depuis_dossier(cerfa_reponses: dict, dossier: dict) -> None
     # Situation professionnelle / scolaire
     _set("situation_pro_scolaire", ds.get("situation_professionnelle"))
 
-    # Type de demande (première / renouvellement)
-    _set("type_demande", ds.get("type_demande"))
-
-    # Historique MDPH
-    _set("historique_mdph", ds.get("historique_mdph"))
-
-    # Organisme payeur (CAF/MSA)
-    _set("organisme_payeur", ds.get("organisme_payeur"))
-
-    # Protection juridique
-    _set("protection_juridique", ds.get("protection_juridique"))
+    # ── Champs JAMAIS pré-remplis — toujours demander à la famille via WhatsApp ──
+    # Ces informations peuvent avoir changé depuis le document, ou n'y figurent pas :
+    #   - situation_familiale  : peut avoir évolué (mariage, veuvage, séparation…)
+    #   - type_demande         : première demande ou renouvellement → à confirmer
+    #   - organisme_payeur     : CAF / MSA / autre → ne pas supposer
+    #   - protection_juridique : tutelle / curatelle → ne pas supposer "aucune"
+    #   - historique_mdph      : numéro de dossier existant → jamais dans un bilan
+    #   - numero_secu          : jamais dans un bilan professionnel
+    # Ces champs restent VIDES ici et seront collectés par le dialogue WhatsApp.
 
     # CMI type (si déjà connu)
     cmi_p = ds.get("cmi_priorite", False)
