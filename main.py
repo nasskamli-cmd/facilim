@@ -936,20 +936,15 @@ async def _process_whatsapp_async(
                     f"Dossier {dossier['dossier_id']} | PDF BLOQUÉ (webhook) "
                     f"— champs manquants : {champs_pdf_manquants}"
                 )
-                _ds_wh = nouvelle_analyse.get("donnees_structurees") or {}
-                _is_enf_wh = _ds_wh.get("is_enfant", True)
-                questions_falc_bl = simplify_questions(questions_blocage[:4], is_enfant=_is_enf_wh)
-                langue_famille = dossier.get("langue_famille", "fr")
-                questions_falc_bl = translate_to_language(questions_falc_bl, langue_famille)
-                wa_bl = format_for_whatsapp(questions_falc_bl)
-                await asyncio.to_thread(
-                    send_questions_sequence,
-                    phone_number,
-                    wa_bl,
-                    "Nous avons presque toutes les informations nécessaires. "
-                    "Il nous manque encore quelques détails pour finaliser le dossier.",
+                # CORRECTION 3 : ne PAS envoyer les questions de blocage ici.
+                # Le CERFA agent (bloc ligne ~970) va aussi envoyer une question
+                # au même message → double envoi. Les champs manquants sont stockés
+                # dans questions_manquantes et seront couverts par le CERFA agent.
+                # On log uniquement pour traçabilité.
+                logger.info(
+                    f"[BLOCAGE-CERFA] Champs manquants signalés dans questions_manquantes "
+                    f"— le CERFA agent prend en charge | champs={champs_pdf_manquants}"
                 )
-                dossier["questions_en_attente"] = len(questions_falc_bl)
                 database.save_dossier(dossier)
 
             else:
@@ -964,10 +959,12 @@ async def _process_whatsapp_async(
                 await _demarrer_dialogue_cerfa(dossier)
 
         # ── Réponse intelligente via agent conversationnel ────────────────────
-        # Note : on inclut "COMPLET" pour couvrir le cas où le LLM a dit COMPLET
-        # mais le dossier est passé à DROITS_A_VALIDER — la machine CERFA doit
-        # quand même tourner pour collecter les réponses WhatsApp manquantes.
-        if nouveau_statut in ("INCOMPLET", "COMPLET"):
+        # CORRECTION 2 : ajout de "DROITS_A_VALIDER" dans la condition.
+        # Quand le dossier est déjà en phase de dialogue CERFA (DROITS_A_VALIDER),
+        # validate_dossier peut retourner ce statut directement. Sans ce cas,
+        # le CERFA agent ne tournait pas → réponses de la famille ignorées,
+        # aucune question suivante envoyée.
+        if nouveau_statut in ("INCOMPLET", "COMPLET", "DROITS_A_VALIDER"):
             elements_manquants = nouvelle_analyse.get("questions_manquantes", [])
             historique_conv = construire_historique_conversation(
                 dossier.get("historique_reponses", [])

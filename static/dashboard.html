@@ -1705,7 +1705,7 @@
               ${['INCOMPLET','EN_COURS'].includes(d.statut)
                 ? `<button class="btn-act ba-relance" onclick="forceRelance('${d.dossier_id}', this)">Relancer</button>`
                 : ''}
-              ${d.statut === 'DROITS_A_VALIDER'
+              ${['DROITS_A_VALIDER','INCOMPLET','COMPLET'].includes(d.statut)
                 ? `<button class="btn-act" style="background:#FFF7ED;color:#C2410C;border:1px solid #FED7AA;font-weight:700;"
                            onclick="openValidationModal('${d.dossier_id}')">🔶 Valider droits</button>`
                 : ''}

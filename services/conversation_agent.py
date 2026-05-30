@@ -463,12 +463,26 @@ RÈGLES ABSOLUES :
 
 CERFA_GROUPES: list[dict] = [
     {
+        # CORRECTION 4 : ajout de nom_prenom, date_naissance, genre, adresse_complete.
+        # Ces champs étaient absents de tous les groupes → posés un par un en mode
+        # résiduel APRÈS les 5 groupes, ce qui donnait l'impression que le nom/prénom
+        # était demandé à la fin. prepopuler_cerfa_depuis_dossier les remplit
+        # automatiquement si le dossier les contient — dans ce cas ils sont skippés
+        # et la question de groupe ne les mentionne pas (get_next_groupe_cerfa filtre
+        # les champs déjà remplis avant d'envoyer).
         "id": "type_demande",
-        "champs": ["type_demande", "urgence_droits"],
+        "champs": [
+            "type_demande", "urgence_droits",
+            "nom_prenom", "date_naissance", "genre", "adresse_complete",
+        ],
         "question_falc": (
             "Bonjour 👋 Je suis Mathilde, de l'équipe Facilim. Je vous accompagne pour constituer votre dossier MDPH via WhatsApp. Pour commencer, j'ai quelques questions simples.\n\n"
             "1️⃣ S'agit-il d'une *première demande* à la MDPH, ou d'un *renouvellement* de droits existants ?\n"
-            "2️⃣ Si c'est un renouvellement : vos droits actuels expirent-ils dans moins de 2 mois ?"
+            "2️⃣ Si c'est un renouvellement : vos droits actuels expirent-ils dans moins de 2 mois ?\n"
+            "3️⃣ Quel est le *nom et prénom complet* de la personne concernée ?\n"
+            "4️⃣ Quelle est sa *date de naissance* ? (format JJ/MM/AAAA)\n"
+            "5️⃣ Est-ce un *homme* ou une *femme* ?\n"
+            "6️⃣ Quelle est son *adresse complète* ? (numéro, rue, code postal, ville)"
         ),
     },
     {
