@@ -840,21 +840,9 @@ async def _process_whatsapp_async(
     la boucle d'événements.
     """
     try:
-        # ── Heures silencieuses : 19h00 – 07h00 heure de Paris ───────────────
-        from zoneinfo import ZoneInfo
-        _heure_paris = datetime.now(ZoneInfo("Europe/Paris")).hour
-        if _heure_paris >= 19 or _heure_paris < 7:
-            logger.info(f"[SILENCIEUX] Message reçu hors horaires ({_heure_paris}h) | {phone_number}")
-            try:
-                await asyncio.to_thread(
-                    send_text_message, phone_number,
-                    "Bonsoir 🌙 Nous avons bien reçu votre message.\n"
-                    "Afin de respecter votre tranquillité, notre assistant ne répond pas entre 19h et 7h.\n"
-                    "Nous reviendrons vers vous dès demain matin. Bonne nuit ! 😊"
-                )
-            except Exception:
-                pass
-            return
+        # ── Heures silencieuses : DÉSACTIVÉ temporairement pour les tests ───────
+        # TODO : réactiver avant mise en production
+        # if _heure_paris >= 19 or _heure_paris < 7: ...
 
         # ── Refus de documents envoyés par WhatsApp (RGPD / légal) ──────────
         if message_type in ("image", "document", "video"):
@@ -1799,14 +1787,9 @@ async def envoyer_message_pro(dossier_id: str, body: dict = Body(embed=False)):
     if len(message) > 1000:
         raise HTTPException(status_code=422, detail="Message trop long (max 1000 caractères).")
 
-    # Vérifier les heures silencieuses
-    from zoneinfo import ZoneInfo
-    _heure_paris = datetime.now(ZoneInfo("Europe/Paris")).hour
-    if _heure_paris >= 19 or _heure_paris < 7:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Heures silencieuses actives ({_heure_paris}h). Messages autorisés de 7h à 19h.",
-        )
+    # Heures silencieuses : DÉSACTIVÉ temporairement pour les tests
+    # TODO : réactiver avant mise en production
+    # if _heure_paris >= 19 or _heure_paris < 7: raise HTTPException(403, ...)
 
     try:
         await asyncio.to_thread(send_text_message, phone, message)
