@@ -33,6 +33,9 @@ Contraintes absolues :
 - Ne supprime aucune information substantielle — reformule uniquement
 - Longueur finale proche de l'original
 - Réponds UNIQUEMENT avec le texte réécrit, sans introduction ni commentaire
+- CRITIQUE : les tokens d'anonymisation ([USAGER_A], [USAGER_B], [ADRESSE_1], [NIR_1], etc.)
+  doivent être conservés EXACTEMENT tels quels — ne les remplace JAMAIS par un nom, une adresse
+  ou toute autre valeur inventée. Ces tokens sont des marqueurs RGPD obligatoires.
 """
 
 
