@@ -4,3 +4,260 @@
 2026-05-30 21:28:58,474 | INFO     | main | [V2] api_agents router chargé avec succès.
 2026-05-30 21:30:40,950 | INFO     | main | [BOOT] Logging fichier actif → facilim.log
 2026-05-30 21:30:41,170 | INFO     | main | [V2] api_agents router chargé avec succès.
+2026-05-30 21:31:39,758 | INFO     | main | [BOOT] Logging fichier actif → facilim.log
+2026-05-30 21:31:39,969 | INFO     | main | [V2] api_agents router chargé avec succès.
+2026-05-30 21:31:41,197 | INFO     | main | [BOOT] Logging fichier actif → facilim.log
+2026-05-30 21:31:41,419 | INFO     | main | [V2] api_agents router chargé avec succès.
+2026-05-30 21:31:41,469 | INFO     | database | Migration : colonne 'cerfa_dialogue_demarre' ajoutée.
+2026-05-30 21:31:41,472 | INFO     | database | Migration : colonne 'email_medical_recu' ajoutée.
+2026-05-30 21:31:41,477 | INFO     | database | Migration : colonne 'email_medical_recu_at' ajoutée.
+2026-05-30 21:31:41,480 | INFO     | database | Migration : colonne 'email_medical_contenu' ajoutée.
+2026-05-30 21:31:41,483 | INFO     | database | Migration : colonne 'email_medical_sender' ajoutée.
+2026-05-30 21:31:41,486 | INFO     | database | Migration : colonne 'pdf_genere' ajoutée.
+2026-05-30 21:31:41,489 | INFO     | database | Migration : colonne 'pdf_bytes' ajoutée.
+2026-05-30 21:31:41,494 | INFO     | database | Migration : colonne 'cerfa_bytes' ajoutée.
+2026-05-30 21:31:41,494 | INFO     | database | Base de données initialisée | fichier=C:\Users\Nassim KAMLI\mdph-backbone\mdph_dossiers.db
+2026-05-30 21:31:41,514 | INFO     | facilim.db_ext | [DB_EXT] Colonne 'urgence' ajoutée à 'dossiers'.
+2026-05-30 21:31:41,516 | INFO     | facilim.db_ext | [DB_EXT] Colonne 'langue_preferee' ajoutée à 'dossiers'.
+2026-05-30 21:31:41,517 | INFO     | facilim.db_ext | [DB_EXT] Colonne 'agent_actuel' ajoutée à 'dossiers'.
+2026-05-30 21:31:41,519 | INFO     | facilim.db_ext | [DB_EXT] Colonne 'type_dossier' ajoutée à 'dossiers'.
+2026-05-30 21:31:41,521 | INFO     | facilim.db_ext | [DB_EXT] Colonne 'cellule_assignee' ajoutée à 'dossiers'.
+2026-05-30 21:31:41,523 | INFO     | facilim.db_ext | [DB_EXT] Colonne 'manager_local' ajoutée à 'dossiers'.
+2026-05-30 21:31:41,527 | INFO     | facilim.db_ext | [DB_EXT] Colonne 'nb_relances' ajoutée à 'dossiers'.
+2026-05-30 21:31:41,529 | INFO     | facilim.db_ext | [DB_EXT] Colonne 'statut_relance' ajoutée à 'dossiers'.
+2026-05-30 21:31:41,530 | INFO     | facilim.db_ext | [DB_EXT] Colonne 'derniere_relance_at' ajoutée à 'dossiers'.
+2026-05-30 21:31:41,532 | INFO     | facilim.db_ext | [DB_EXT] Colonne 'score_actuel' ajoutée à 'dossiers'.
+2026-05-30 21:31:41,534 | INFO     | facilim.db_ext | [DB_EXT] Colonne 'score_potentiel' ajoutée à 'dossiers'.
+2026-05-30 21:31:41,536 | INFO     | facilim.db_ext | [DB_EXT] Colonne 'score_suggestion' ajoutée à 'dossiers'.
+2026-05-30 21:31:41,538 | INFO     | facilim.db_ext | [DB_EXT] Colonne 'score_justification' ajoutée à 'dossiers'.
+2026-05-30 21:31:41,540 | INFO     | facilim.db_ext | [DB_EXT] Colonne 'taux_incapacite' ajoutée à 'dossiers'.
+2026-05-30 21:31:41,545 | INFO     | facilim.db_ext | [DB_EXT] Colonne 'taux_justification' ajoutée à 'dossiers'.
+2026-05-30 21:31:41,545 | INFO     | watchfiles.main | 3 changes detected
+2026-05-30 21:31:41,547 | INFO     | facilim.db_ext | [DB_EXT] Colonne 'rag_sources' ajoutée à 'dossiers'.
+2026-05-30 21:31:41,549 | INFO     | facilim.db_ext | [DB_EXT] Colonne 'donnees_normalisees_json' ajoutée à 'dossiers'.
+2026-05-30 21:31:41,550 | INFO     | facilim.db_ext | [DB_EXT] Colonne 'nom_enfant_chiffre' ajoutée à 'dossiers'.
+2026-05-30 21:31:41,553 | INFO     | facilim.db_ext | [DB_EXT] Colonne 'prenom_enfant_chiffre' ajoutée à 'dossiers'.
+2026-05-30 21:31:41,555 | INFO     | facilim.db_ext | [DB_EXT] Colonne 'telephone_famille_chiffre' ajoutée à 'dossiers'.
+2026-05-30 21:31:41,557 | INFO     | facilim.db_ext | [DB_EXT] Colonne 'email_famille_chiffre' ajoutée à 'dossiers'.
+2026-05-30 21:31:41,557 | INFO     | facilim.db_ext | [DB_EXT] Extensions DB initialisées.
+2026-05-30 21:31:41,561 | INFO     | main | [STARTUP] derniere_relance_at initialisé pour les dossiers sans relance précédente.
+2026-05-30 21:31:41,563 | INFO     | facilim.db_ext | [DB_EXT] Extensions DB initialisées.
+2026-05-30 21:31:41,564 | INFO     | facilim.api_agents | [API_AGENTS] Extensions DB initialisées.
+2026-05-30 21:31:41,565 | INFO     | facilim.scheduler | [SCHEDULER] Scheduler de relances démarré (cycle 1h).
+2026-05-30 21:31:41,565 | INFO     | main | MDPH-Backbone V2 démarré (agents multi-niveaux actifs).
+2026-05-30 21:31:41,572 | INFO     | facilim.scheduler | [SCHEDULER] Démarrage dans 5 minutes (délai anti-spam post-démarrage).
+2026-05-30 21:31:41,899 | INFO     | watchfiles.main | 17 changes detected
+2026-05-30 21:35:21,370 | INFO     | watchfiles.main | 2 changes detected
+2026-05-30 21:36:41,575 | INFO     | facilim.scheduler | [SCHEDULER] Cycle de relances actif.
+2026-05-30 21:38:26,541 | INFO     | watchfiles.main | 15 changes detected
+2026-05-30 21:38:26,901 | INFO     | watchfiles.main | 30 changes detected
+2026-05-30 21:38:28,318 | INFO     | watchfiles.main | 1 change detected
+2026-05-30 21:38:30,510 | INFO     | watchfiles.main | 6 changes detected
+2026-05-30 21:41:30,874 | INFO     | watchfiles.main | 7 changes detected
+2026-05-30 21:41:34,629 | INFO     | watchfiles.main | 3 changes detected
+2026-05-30 21:48:47,770 | INFO     | watchfiles.main | 1 change detected
+2026-05-30 22:20:21,611 | INFO     | watchfiles.main | 5 changes detected
+2026-05-30 22:20:30,995 | INFO     | watchfiles.main | 4 changes detected
+2026-05-30 22:20:32,027 | INFO     | watchfiles.main | 2 changes detected
+2026-05-30 22:20:32,394 | INFO     | watchfiles.main | 5 changes detected
+2026-05-30 22:20:33,208 | INFO     | main | [BOOT] Logging fichier actif → facilim.log
+2026-05-30 22:20:33,434 | INFO     | main | [V2] api_agents router chargé avec succès.
+2026-05-30 22:20:33,482 | INFO     | database | Base de données initialisée | fichier=C:\Users\Nassim KAMLI\mdph-backbone\mdph_dossiers.db
+2026-05-30 22:20:33,484 | INFO     | facilim.db_ext | [DB_EXT] Extensions DB initialisées.
+2026-05-30 22:20:33,484 | INFO     | main | [STARTUP] derniere_relance_at initialisé pour les dossiers sans relance précédente.
+2026-05-30 22:20:33,486 | INFO     | facilim.db_ext | [DB_EXT] Extensions DB initialisées.
+2026-05-30 22:20:33,486 | INFO     | facilim.api_agents | [API_AGENTS] Extensions DB initialisées.
+2026-05-30 22:20:33,487 | INFO     | facilim.scheduler | [SCHEDULER] Scheduler de relances démarré (cycle 1h).
+2026-05-30 22:20:33,487 | INFO     | main | MDPH-Backbone V2 démarré (agents multi-niveaux actifs).
+2026-05-30 22:20:33,489 | INFO     | facilim.scheduler | [SCHEDULER] Démarrage dans 5 minutes (délai anti-spam post-démarrage).
+2026-05-30 22:20:44,927 | INFO     | watchfiles.main | 4 changes detected
+2026-05-30 22:20:45,959 | INFO     | watchfiles.main | 6 changes detected
+2026-05-30 22:20:46,843 | INFO     | main | [BOOT] Logging fichier actif → facilim.log
+2026-05-30 22:20:47,073 | INFO     | main | [V2] api_agents router chargé avec succès.
+2026-05-30 22:20:47,119 | INFO     | database | Base de données initialisée | fichier=C:\Users\Nassim KAMLI\mdph-backbone\mdph_dossiers.db
+2026-05-30 22:20:47,120 | INFO     | facilim.db_ext | [DB_EXT] Extensions DB initialisées.
+2026-05-30 22:20:47,121 | INFO     | main | [STARTUP] derniere_relance_at initialisé pour les dossiers sans relance précédente.
+2026-05-30 22:20:47,122 | INFO     | facilim.db_ext | [DB_EXT] Extensions DB initialisées.
+2026-05-30 22:20:47,123 | INFO     | facilim.api_agents | [API_AGENTS] Extensions DB initialisées.
+2026-05-30 22:20:47,124 | INFO     | facilim.scheduler | [SCHEDULER] Scheduler de relances démarré (cycle 1h).
+2026-05-30 22:20:47,125 | INFO     | main | MDPH-Backbone V2 démarré (agents multi-niveaux actifs).
+2026-05-30 22:20:47,128 | INFO     | facilim.scheduler | [SCHEDULER] Démarrage dans 5 minutes (délai anti-spam post-démarrage).
+2026-05-30 22:21:03,271 | INFO     | watchfiles.main | 5 changes detected
+2026-05-30 22:21:04,260 | INFO     | watchfiles.main | 1 change detected
+2026-05-30 22:21:05,128 | INFO     | main | [BOOT] Logging fichier actif → facilim.log
+2026-05-30 22:21:05,183 | INFO     | watchfiles.main | 5 changes detected
+2026-05-30 22:21:05,365 | INFO     | main | [V2] api_agents router chargé avec succès.
+2026-05-30 22:21:05,407 | INFO     | database | Base de données initialisée | fichier=C:\Users\Nassim KAMLI\mdph-backbone\mdph_dossiers.db
+2026-05-30 22:21:05,408 | INFO     | facilim.db_ext | [DB_EXT] Extensions DB initialisées.
+2026-05-30 22:21:05,409 | INFO     | main | [STARTUP] derniere_relance_at initialisé pour les dossiers sans relance précédente.
+2026-05-30 22:21:05,411 | INFO     | facilim.db_ext | [DB_EXT] Extensions DB initialisées.
+2026-05-30 22:21:05,412 | INFO     | facilim.api_agents | [API_AGENTS] Extensions DB initialisées.
+2026-05-30 22:21:05,413 | INFO     | facilim.scheduler | [SCHEDULER] Scheduler de relances démarré (cycle 1h).
+2026-05-30 22:21:05,413 | INFO     | main | MDPH-Backbone V2 démarré (agents multi-niveaux actifs).
+2026-05-30 22:21:05,414 | INFO     | facilim.scheduler | [SCHEDULER] Démarrage dans 5 minutes (délai anti-spam post-démarrage).
+2026-05-30 22:21:54,529 | INFO     | watchfiles.main | 18 changes detected
+2026-05-30 22:21:54,889 | INFO     | watchfiles.main | 38 changes detected
+2026-05-30 22:21:55,956 | INFO     | watchfiles.main | 1 change detected
+2026-05-30 22:21:58,043 | INFO     | watchfiles.main | 6 changes detected
+2026-05-30 22:23:49,277 | INFO     | watchfiles.main | 5 changes detected
+2026-05-30 22:23:50,350 | INFO     | watchfiles.main | 1 change detected
+2026-05-30 22:23:50,855 | INFO     | watchfiles.main | 5 changes detected
+2026-05-30 22:23:51,198 | INFO     | main | [BOOT] Logging fichier actif → facilim.log
+2026-05-30 22:23:51,418 | INFO     | main | [V2] api_agents router chargé avec succès.
+2026-05-30 22:23:51,459 | INFO     | database | Base de données initialisée | fichier=C:\Users\Nassim KAMLI\mdph-backbone\mdph_dossiers.db
+2026-05-30 22:23:51,460 | INFO     | facilim.db_ext | [DB_EXT] Extensions DB initialisées.
+2026-05-30 22:23:51,461 | INFO     | main | [STARTUP] derniere_relance_at initialisé pour les dossiers sans relance précédente.
+2026-05-30 22:23:51,462 | INFO     | facilim.db_ext | [DB_EXT] Extensions DB initialisées.
+2026-05-30 22:23:51,462 | INFO     | facilim.api_agents | [API_AGENTS] Extensions DB initialisées.
+2026-05-30 22:23:51,463 | INFO     | facilim.scheduler | [SCHEDULER] Scheduler de relances démarré (cycle 1h).
+2026-05-30 22:23:51,463 | INFO     | main | MDPH-Backbone V2 démarré (agents multi-niveaux actifs).
+2026-05-30 22:23:51,465 | INFO     | facilim.scheduler | [SCHEDULER] Démarrage dans 5 minutes (délai anti-spam post-démarrage).
+2026-05-30 22:24:24,152 | INFO     | watchfiles.main | 38 changes detected
+2026-05-30 22:24:25,835 | INFO     | watchfiles.main | 2 changes detected
+2026-05-30 22:26:14,974 | INFO     | watchfiles.main | 18 changes detected
+2026-05-30 22:26:16,098 | INFO     | watchfiles.main | 5 changes detected
+2026-05-30 22:28:51,469 | INFO     | facilim.scheduler | [SCHEDULER] Cycle de relances actif.
+2026-05-30 22:37:52,618 | INFO     | watchfiles.main | 5 changes detected
+2026-05-30 22:37:53,667 | INFO     | watchfiles.main | 1 change detected
+2026-05-30 22:37:54,804 | INFO     | main | [BOOT] Logging fichier actif → facilim.log
+2026-05-30 22:37:54,888 | INFO     | watchfiles.main | 5 changes detected
+2026-05-30 22:37:55,141 | INFO     | main | [V2] api_agents router chargé avec succès.
+2026-05-30 22:37:55,227 | INFO     | database | Base de données initialisée | fichier=C:\Users\Nassim KAMLI\mdph-backbone\mdph_dossiers.db
+2026-05-30 22:37:55,229 | INFO     | facilim.db_ext | [DB_EXT] Extensions DB initialisées.
+2026-05-30 22:37:55,231 | INFO     | main | [STARTUP] derniere_relance_at initialisé pour les dossiers sans relance précédente.
+2026-05-30 22:37:55,234 | INFO     | facilim.db_ext | [DB_EXT] Extensions DB initialisées.
+2026-05-30 22:37:55,235 | INFO     | facilim.api_agents | [API_AGENTS] Extensions DB initialisées.
+2026-05-30 22:37:55,236 | INFO     | facilim.scheduler | [SCHEDULER] Scheduler de relances démarré (cycle 1h).
+2026-05-30 22:37:55,236 | INFO     | main | MDPH-Backbone V2 démarré (agents multi-niveaux actifs).
+2026-05-30 22:37:55,239 | INFO     | facilim.scheduler | [SCHEDULER] Démarrage dans 5 minutes (délai anti-spam post-démarrage).
+2026-05-30 22:38:04,423 | INFO     | watchfiles.main | 5 changes detected
+2026-05-30 22:38:05,445 | INFO     | watchfiles.main | 1 change detected
+2026-05-30 22:38:05,848 | INFO     | watchfiles.main | 5 changes detected
+2026-05-30 22:38:06,175 | INFO     | main | [BOOT] Logging fichier actif → facilim.log
+2026-05-30 22:38:06,385 | INFO     | main | [V2] api_agents router chargé avec succès.
+2026-05-30 22:38:06,424 | INFO     | database | Base de données initialisée | fichier=C:\Users\Nassim KAMLI\mdph-backbone\mdph_dossiers.db
+2026-05-30 22:38:06,425 | INFO     | facilim.db_ext | [DB_EXT] Extensions DB initialisées.
+2026-05-30 22:38:06,426 | INFO     | main | [STARTUP] derniere_relance_at initialisé pour les dossiers sans relance précédente.
+2026-05-30 22:38:06,427 | INFO     | facilim.db_ext | [DB_EXT] Extensions DB initialisées.
+2026-05-30 22:38:06,427 | INFO     | facilim.api_agents | [API_AGENTS] Extensions DB initialisées.
+2026-05-30 22:38:06,427 | INFO     | facilim.scheduler | [SCHEDULER] Scheduler de relances démarré (cycle 1h).
+2026-05-30 22:38:06,427 | INFO     | main | MDPH-Backbone V2 démarré (agents multi-niveaux actifs).
+2026-05-30 22:38:06,429 | INFO     | facilim.scheduler | [SCHEDULER] Démarrage dans 5 minutes (délai anti-spam post-démarrage).
+2026-05-30 22:40:51,773 | INFO     | watchfiles.main | 5 changes detected
+2026-05-30 22:40:52,784 | INFO     | watchfiles.main | 1 change detected
+2026-05-30 22:40:53,542 | INFO     | watchfiles.main | 5 changes detected
+2026-05-30 22:40:54,015 | INFO     | main | [BOOT] Logging fichier actif → facilim.log
+2026-05-30 22:40:54,266 | INFO     | main | [V2] api_agents router chargé avec succès.
+2026-05-30 22:40:54,311 | INFO     | database | Base de données initialisée | fichier=C:\Users\Nassim KAMLI\mdph-backbone\mdph_dossiers.db
+2026-05-30 22:40:54,313 | INFO     | facilim.db_ext | [DB_EXT] Extensions DB initialisées.
+2026-05-30 22:40:54,313 | INFO     | main | [STARTUP] derniere_relance_at initialisé pour les dossiers sans relance précédente.
+2026-05-30 22:40:54,315 | INFO     | facilim.db_ext | [DB_EXT] Extensions DB initialisées.
+2026-05-30 22:40:54,315 | INFO     | facilim.api_agents | [API_AGENTS] Extensions DB initialisées.
+2026-05-30 22:40:54,316 | INFO     | facilim.scheduler | [SCHEDULER] Scheduler de relances démarré (cycle 1h).
+2026-05-30 22:40:54,316 | INFO     | main | MDPH-Backbone V2 démarré (agents multi-niveaux actifs).
+2026-05-30 22:40:54,318 | INFO     | facilim.scheduler | [SCHEDULER] Démarrage dans 5 minutes (délai anti-spam post-démarrage).
+2026-05-30 22:41:16,989 | INFO     | watchfiles.main | 5 changes detected
+2026-05-30 22:41:18,003 | INFO     | watchfiles.main | 1 change detected
+2026-05-30 22:41:18,365 | INFO     | watchfiles.main | 5 changes detected
+2026-05-30 22:41:18,734 | INFO     | main | [BOOT] Logging fichier actif → facilim.log
+2026-05-30 22:41:18,938 | INFO     | main | [V2] api_agents router chargé avec succès.
+2026-05-30 22:41:18,976 | INFO     | database | Base de données initialisée | fichier=C:\Users\Nassim KAMLI\mdph-backbone\mdph_dossiers.db
+2026-05-30 22:41:18,977 | INFO     | facilim.db_ext | [DB_EXT] Extensions DB initialisées.
+2026-05-30 22:41:18,978 | INFO     | main | [STARTUP] derniere_relance_at initialisé pour les dossiers sans relance précédente.
+2026-05-30 22:41:18,979 | INFO     | facilim.db_ext | [DB_EXT] Extensions DB initialisées.
+2026-05-30 22:41:18,980 | INFO     | facilim.api_agents | [API_AGENTS] Extensions DB initialisées.
+2026-05-30 22:41:18,981 | INFO     | facilim.scheduler | [SCHEDULER] Scheduler de relances démarré (cycle 1h).
+2026-05-30 22:41:18,981 | INFO     | main | MDPH-Backbone V2 démarré (agents multi-niveaux actifs).
+2026-05-30 22:41:18,983 | INFO     | facilim.scheduler | [SCHEDULER] Démarrage dans 5 minutes (délai anti-spam post-démarrage).
+2026-05-30 22:41:27,073 | INFO     | watchfiles.main | 5 changes detected
+2026-05-30 22:41:28,154 | INFO     | watchfiles.main | 1 change detected
+2026-05-30 22:41:28,570 | INFO     | watchfiles.main | 5 changes detected
+2026-05-30 22:41:29,062 | INFO     | main | [BOOT] Logging fichier actif → facilim.log
+2026-05-30 22:41:29,323 | INFO     | main | [V2] api_agents router chargé avec succès.
+2026-05-30 22:41:29,370 | INFO     | database | Base de données initialisée | fichier=C:\Users\Nassim KAMLI\mdph-backbone\mdph_dossiers.db
+2026-05-30 22:41:29,374 | INFO     | facilim.db_ext | [DB_EXT] Extensions DB initialisées.
+2026-05-30 22:41:29,376 | INFO     | main | [STARTUP] derniere_relance_at initialisé pour les dossiers sans relance précédente.
+2026-05-30 22:41:29,378 | INFO     | facilim.db_ext | [DB_EXT] Extensions DB initialisées.
+2026-05-30 22:41:29,378 | INFO     | facilim.api_agents | [API_AGENTS] Extensions DB initialisées.
+2026-05-30 22:41:29,379 | INFO     | facilim.scheduler | [SCHEDULER] Scheduler de relances démarré (cycle 1h).
+2026-05-30 22:41:29,379 | INFO     | main | MDPH-Backbone V2 démarré (agents multi-niveaux actifs).
+2026-05-30 22:41:29,382 | INFO     | facilim.scheduler | [SCHEDULER] Démarrage dans 5 minutes (délai anti-spam post-démarrage).
+2026-05-30 22:41:33,548 | INFO     | watchfiles.main | 5 changes detected
+2026-05-30 22:41:34,555 | INFO     | watchfiles.main | 1 change detected
+2026-05-30 22:41:35,066 | INFO     | watchfiles.main | 5 changes detected
+2026-05-30 22:41:35,523 | INFO     | main | [BOOT] Logging fichier actif → facilim.log
+2026-05-30 22:41:35,757 | INFO     | main | [V2] api_agents router chargé avec succès.
+2026-05-30 22:41:35,800 | INFO     | database | Base de données initialisée | fichier=C:\Users\Nassim KAMLI\mdph-backbone\mdph_dossiers.db
+2026-05-30 22:41:35,801 | INFO     | facilim.db_ext | [DB_EXT] Extensions DB initialisées.
+2026-05-30 22:41:35,802 | INFO     | main | [STARTUP] derniere_relance_at initialisé pour les dossiers sans relance précédente.
+2026-05-30 22:41:35,803 | INFO     | facilim.db_ext | [DB_EXT] Extensions DB initialisées.
+2026-05-30 22:41:35,804 | INFO     | facilim.api_agents | [API_AGENTS] Extensions DB initialisées.
+2026-05-30 22:41:35,807 | INFO     | facilim.scheduler | [SCHEDULER] Scheduler de relances démarré (cycle 1h).
+2026-05-30 22:41:35,807 | INFO     | main | MDPH-Backbone V2 démarré (agents multi-niveaux actifs).
+2026-05-30 22:41:35,809 | INFO     | facilim.scheduler | [SCHEDULER] Démarrage dans 5 minutes (délai anti-spam post-démarrage).
+2026-05-30 22:41:42,770 | INFO     | watchfiles.main | 5 changes detected
+2026-05-30 22:41:43,852 | INFO     | watchfiles.main | 1 change detected
+2026-05-30 22:41:44,372 | INFO     | watchfiles.main | 5 changes detected
+2026-05-30 22:41:44,845 | INFO     | main | [BOOT] Logging fichier actif → facilim.log
+2026-05-30 22:41:45,087 | INFO     | main | [V2] api_agents router chargé avec succès.
+2026-05-30 22:41:45,131 | INFO     | database | Base de données initialisée | fichier=C:\Users\Nassim KAMLI\mdph-backbone\mdph_dossiers.db
+2026-05-30 22:41:45,132 | INFO     | facilim.db_ext | [DB_EXT] Extensions DB initialisées.
+2026-05-30 22:41:45,133 | INFO     | main | [STARTUP] derniere_relance_at initialisé pour les dossiers sans relance précédente.
+2026-05-30 22:41:45,134 | INFO     | facilim.db_ext | [DB_EXT] Extensions DB initialisées.
+2026-05-30 22:41:45,135 | INFO     | facilim.api_agents | [API_AGENTS] Extensions DB initialisées.
+2026-05-30 22:41:45,136 | INFO     | facilim.scheduler | [SCHEDULER] Scheduler de relances démarré (cycle 1h).
+2026-05-30 22:41:45,136 | INFO     | main | MDPH-Backbone V2 démarré (agents multi-niveaux actifs).
+2026-05-30 22:41:45,139 | INFO     | facilim.scheduler | [SCHEDULER] Démarrage dans 5 minutes (délai anti-spam post-démarrage).
+2026-05-30 22:41:49,439 | INFO     | watchfiles.main | 5 changes detected
+2026-05-30 22:41:50,453 | INFO     | watchfiles.main | 1 change detected
+2026-05-30 22:41:50,818 | INFO     | watchfiles.main | 5 changes detected
+2026-05-30 22:41:51,199 | INFO     | main | [BOOT] Logging fichier actif → facilim.log
+2026-05-30 22:41:51,403 | INFO     | main | [V2] api_agents router chargé avec succès.
+2026-05-30 22:41:51,444 | INFO     | database | Base de données initialisée | fichier=C:\Users\Nassim KAMLI\mdph-backbone\mdph_dossiers.db
+2026-05-30 22:41:51,445 | INFO     | facilim.db_ext | [DB_EXT] Extensions DB initialisées.
+2026-05-30 22:41:51,446 | INFO     | main | [STARTUP] derniere_relance_at initialisé pour les dossiers sans relance précédente.
+2026-05-30 22:41:51,447 | INFO     | facilim.db_ext | [DB_EXT] Extensions DB initialisées.
+2026-05-30 22:41:51,447 | INFO     | facilim.api_agents | [API_AGENTS] Extensions DB initialisées.
+2026-05-30 22:41:51,448 | INFO     | facilim.scheduler | [SCHEDULER] Scheduler de relances démarré (cycle 1h).
+2026-05-30 22:41:51,449 | INFO     | main | MDPH-Backbone V2 démarré (agents multi-niveaux actifs).
+2026-05-30 22:41:51,451 | INFO     | facilim.scheduler | [SCHEDULER] Démarrage dans 5 minutes (délai anti-spam post-démarrage).
+2026-05-30 22:42:16,781 | INFO     | watchfiles.main | 5 changes detected
+2026-05-30 22:42:17,814 | INFO     | watchfiles.main | 1 change detected
+2026-05-30 22:42:18,323 | INFO     | watchfiles.main | 5 changes detected
+2026-05-30 22:42:18,792 | INFO     | main | [BOOT] Logging fichier actif → facilim.log
+2026-05-30 22:42:19,042 | INFO     | main | [V2] api_agents router chargé avec succès.
+2026-05-30 22:42:19,091 | INFO     | database | Base de données initialisée | fichier=C:\Users\Nassim KAMLI\mdph-backbone\mdph_dossiers.db
+2026-05-30 22:42:19,092 | INFO     | facilim.db_ext | [DB_EXT] Extensions DB initialisées.
+2026-05-30 22:42:19,093 | INFO     | main | [STARTUP] derniere_relance_at initialisé pour les dossiers sans relance précédente.
+2026-05-30 22:42:19,094 | INFO     | facilim.db_ext | [DB_EXT] Extensions DB initialisées.
+2026-05-30 22:42:19,094 | INFO     | facilim.api_agents | [API_AGENTS] Extensions DB initialisées.
+2026-05-30 22:42:19,095 | INFO     | facilim.scheduler | [SCHEDULER] Scheduler de relances démarré (cycle 1h).
+2026-05-30 22:42:19,095 | INFO     | main | MDPH-Backbone V2 démarré (agents multi-niveaux actifs).
+2026-05-30 22:42:19,097 | INFO     | facilim.scheduler | [SCHEDULER] Démarrage dans 5 minutes (délai anti-spam post-démarrage).
+2026-05-30 22:42:36,859 | INFO     | watchfiles.main | 5 changes detected
+2026-05-30 22:42:37,930 | INFO     | watchfiles.main | 1 change detected
+2026-05-30 22:42:38,385 | INFO     | watchfiles.main | 5 changes detected
+2026-05-30 22:42:38,842 | INFO     | main | [BOOT] Logging fichier actif → facilim.log
+2026-05-30 22:42:39,067 | INFO     | main | [V2] api_agents router chargé avec succès.
+2026-05-30 22:42:39,107 | INFO     | database | Base de données initialisée | fichier=C:\Users\Nassim KAMLI\mdph-backbone\mdph_dossiers.db
+2026-05-30 22:42:39,108 | INFO     | facilim.db_ext | [DB_EXT] Extensions DB initialisées.
+2026-05-30 22:42:39,109 | INFO     | main | [STARTUP] derniere_relance_at initialisé pour les dossiers sans relance précédente.
+2026-05-30 22:42:39,110 | INFO     | facilim.db_ext | [DB_EXT] Extensions DB initialisées.
+2026-05-30 22:42:39,110 | INFO     | facilim.api_agents | [API_AGENTS] Extensions DB initialisées.
+2026-05-30 22:42:39,111 | INFO     | facilim.scheduler | [SCHEDULER] Scheduler de relances démarré (cycle 1h).
+2026-05-30 22:42:39,111 | INFO     | main | MDPH-Backbone V2 démarré (agents multi-niveaux actifs).
+2026-05-30 22:42:39,113 | INFO     | facilim.scheduler | [SCHEDULER] Démarrage dans 5 minutes (délai anti-spam post-démarrage).
+2026-05-30 22:44:17,011 | INFO     | watchfiles.main | 5 changes detected
+2026-05-30 22:44:17,993 | INFO     | watchfiles.main | 1 change detected
+2026-05-30 22:44:18,749 | INFO     | watchfiles.main | 5 changes detected
+2026-05-30 22:44:19,276 | INFO     | main | [BOOT] Logging fichier actif → facilim.log
+2026-05-30 22:44:19,551 | INFO     | main | [V2] api_agents router chargé avec succès.
+2026-05-30 22:44:19,623 | INFO     | database | Base de données initialisée | fichier=C:\Users\Nassim KAMLI\mdph-backbone\mdph_dossiers.db
+2026-05-30 22:44:19,625 | INFO     | facilim.db_ext | [DB_EXT] Extensions DB initialisées.
+2026-05-30 22:44:19,626 | INFO     | main | [STARTUP] derniere_relance_at initialisé pour les dossiers sans relance précédente.
+2026-05-30 22:44:19,629 | INFO     | facilim.db_ext | [DB_EXT] Extensions DB initialisées.
+2026-05-30 22:44:19,629 | INFO     | facilim.api_agents | [API_AGENTS] Extensions DB initialisées.
+2026-05-30 22:44:19,631 | INFO     | facilim.scheduler | [SCHEDULER] Scheduler de relances démarré (cycle 1h).
+2026-05-30 22:44:19,632 | INFO     | main | MDPH-Backbone V2 démarré (agents multi-niveaux actifs).
+2026-05-30 22:44:19,635 | INFO     | facilim.scheduler | [SCHEDULER] Démarrage dans 5 minutes (délai anti-spam post-démarrage).
+2026-05-30 22:44:32,988 | INFO     | watchfiles.main | 5 changes detected

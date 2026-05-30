@@ -46,7 +46,9 @@ _MSG_CANAL_SECURISE = (
     "pas être partagées par WhatsApp.\n\n"
     "Merci de nous envoyer les éléments suivants *par email* à :\n"
     "📧 *contactfacilim@gmail.com*\n\n"
-    "• Votre numéro de sécurité sociale\n"
+    "• Le numéro de sécurité sociale (15 chiffres)\n"
+    "  → Pour un enfant : indiquez le NIR du *parent qui dépose le dossier*\n"
+    "  → Pour un adulte : indiquez votre propre NIR\n"
     "• Votre diagnostic médical et sa date\n"
     "• Le nom et la ville de votre médecin traitant\n"
     "• Vos traitements en cours\n"
@@ -111,7 +113,9 @@ MAPPING_CHAMP_QUESTION: dict[str, str] = {
     ),
     "aidant_identite": (
         "Qui aide la personne au quotidien ? Merci d'indiquer le *prénom, le nom et le lien* "
-        "avec la personne aidée (ex : Marie Dupont, épouse)."
+        "avec la personne aidée (ex : Marie Dupont, épouse).\n"
+        "Si cette personne a *réduit ou arrêté son activité professionnelle* pour s'occuper "
+        "de la personne aidée, merci de le préciser."
     ),
     "ressources_actuelles": (
         "Quelles sont les *ressources actuelles* de la personne ? "

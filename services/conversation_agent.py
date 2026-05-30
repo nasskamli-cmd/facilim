@@ -230,6 +230,17 @@ def prepopuler_cerfa_depuis_dossier(cerfa_reponses: dict, dossier: dict) -> None
     elif _lien_a:
         _set("aidant_identite", _lien_a)
 
+    # Lieu de naissance (page 2) — depuis les données structurées de l'analyse IA
+    # Ces champs ne sont jamais demandés via WhatsApp (trop intrusifs) :
+    # ils viennent du bilan ou de la saisie éducateur uniquement.
+    _set("commune_naissance",     ds.get("commune_naissance"))
+    _set("departement_naissance", ds.get("departement_naissance"))
+    _set("pays_naissance",        ds.get("pays_naissance"))
+
+    # NSS — pré-rempli si déjà connu via canal sécurisé (email médical)
+    # Pour un enfant, c'est le NIR du parent déclarant (pas celui de l'enfant).
+    _set("numero_securite_sociale", ds.get("nss") or ds.get("numero_securite_sociale"))
+
     # Date de naissance — dossier (formulaire éducateur) > ds (bilan)
     _set("date_naissance", dossier.get("ddn_enfant") or ds.get("date_naissance"))
 

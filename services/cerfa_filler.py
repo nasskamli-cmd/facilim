@@ -58,6 +58,8 @@ def _composer_description_p8(
     projet_professionnel: str = "",
     difficultes_quotidiennes: str = "",
     besoins_aide: str = "",
+    prenom: str = "",
+    nom: str = "",
 ) -> str:
     """
     Compose le texte narratif de la page 8 du CERFA 15692 :
@@ -97,11 +99,17 @@ def _composer_description_p8(
         _settings = _get_settings()
         _client   = _openai.OpenAI(api_key=_settings.openai_api_key)
 
-        sujet    = "de l'enfant" if is_enfant else "de la personne"
+        # POINT 5 : utiliser le vrai prénom/nom pour personnaliser la narration
+        _prenom_clean = prenom.strip() if prenom else ""
+        _nom_clean    = nom.strip()    if nom    else ""
+        _identite     = f"{_prenom_clean} {_nom_clean}".strip() or ("l'enfant" if is_enfant else "la personne")
+        _civilite     = _identite  # ex. "Yasmine BENALI" ou "M. Dupont"
+
+        sujet    = f"de {_identite}" if _identite not in ("l'enfant", "la personne") else ("de l'enfant" if is_enfant else "de la personne")
         personne = (
-            "l'enfant (à la 3ème personne, ex : « il/elle ne peut pas… »)"
+            f"{_civilite} (à la 3ème personne, ex : « {_civilite} ne peut pas… », « il/elle ne peut pas… »)"
             if is_enfant else
-            "la personne elle-même (à la 1ère personne, ex : « je ne peux pas… »)"
+            f"{_civilite} elle-même (à la 1ère personne, ex : « je ne peux pas… »)"
         )
         projet_str = f"\nProjet de vie : {projet_professionnel}" if projet_professionnel else ""
 
@@ -865,6 +873,15 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         ])
     )
 
+    # POINT 7 (CORRIGÉ) — Pages 19-20 NON automatiques.
+    # Conditions pour remplir : aidant explicitement nommé (nom_aidant, aidant_identite)
+    # OU éducateur a confirmé que quelqu'un a réduit son temps de travail pour aider.
+    # Ne JAMAIS déduire automatiquement depuis is_enfant ou besoins_aide_humaine seuls.
+    _aidant_temps_partiel = ds.get("aidant_reduction_travail", False)
+    if _aidant_temps_partiel and not nom_aidant:
+        # Reduction de travail confirmée mais identité non collectée → déclencher sans nom
+        _a_aidant_confirme = True
+
     # Tranche d'âge — détermine les sections applicables du formulaire
     age_tranche = "enfant"
     if not is_enfant:
@@ -889,6 +906,8 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         projet_professionnel="",   # ← intentionnellement vide : projet pro = section D3
         difficultes_quotidiennes=difficultes_quotidiennes,
         besoins_aide=besoins_aide_str,
+        prenom=prenom,
+        nom=nom,
     )
 
     # ── Droits → liste de cases P17/P18 ─────────────────────────────────────
@@ -956,6 +975,14 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     # Aidant familial (P1 2) — cocher si l'aidant souhaite exprimer sa situation
     if nom_aidant:
         cases.append("Case à cocher P1 2")
+
+    # POINT 4 — Traitement rapide (urgence)
+    # Cocher si : urgence droits explicite OU situation de logement critique
+    _logement_critique = any(x in (type_logement_detail or "").lower() for x in [
+        "sans domicile", "sans abri", "sdf", "urgence", "expulsion", "ne peut plus vivre",
+    ])
+    if urgence_droits or _logement_critique:
+        cases.append("Case à cocher P1 urgence")
 
     # ════════════════════════════════════════════════════════════════════════
     # PAGE 2 — Identité complète de la personne
@@ -1063,8 +1090,10 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
             cases.append("Case à cocher P3 6")
     else:
         # Adulte : agit seul ou sous mesure de protection
-        # NB : ne pas cocher P3 2 "agit seul" par défaut — laisser vide si pas de protection connue
-        if protection_juridique not in ("aucune", "", "none", "non"):
+        if protection_juridique in ("aucune", "", "none", "non"):
+            # Pas de mesure → cocher "agit seul" (P3 2)
+            cases.append("Case à cocher P3 2")
+        else:
             cases.append("Case à cocher P 3 3")   # Représentant désigné
             if "tutelle" in protection_juridique:
                 cases.append("Case à cocher P3 4")
@@ -1072,6 +1101,13 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
                 cases.append("Case à cocher P3 5")
             elif "sauvegarde" in protection_juridique:
                 cases.append("Case à cocher P3 6")
+            # Nom du tuteur/curateur si connu
+            _nom_tuteur = (ds.get("nom_tuteur") or ds.get("nom_representant") or "").strip()
+            if _nom_tuteur:
+                champs["REPRESENTANT LEGAL 1"] = _nom_tuteur
+                champs["REPRESENTANT LEGAL 3"] = (
+                    "Tuteur" if "tutelle" in protection_juridique else "Curateur"
+                )
 
     # ════════════════════════════════════════════════════════════════════════
     # PAGE 4 — Situation personnelle, familiale
@@ -1160,29 +1196,41 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     _en_etablissement = any(x in tl for x in [
         "établissement", "institution", "medico", "ehpad", "esat", "foyer d'hébergement",
     ])
-    _heberge_parents  = any(x in tl for x in ["chez parents", "hébergé parents"])
+    # Détection hébergement parents : mots-clés élargis + défaut enfant (POINT 3)
+    _heberge_parents  = any(x in tl for x in [
+        "chez parents", "hébergé parents", "chez ses parents", "domicile parental",
+        "parents", "mère", "père", "famille",
+    ]) or is_enfant   # ← Par défaut un enfant vit chez ses parents sauf indication contraire
     _heberge_enfants  = any(x in tl for x in ["chez enfants", "hébergé enfants"])
     _heberge_ami      = any(x in tl for x in ["chez ami", "hébergé ami"])
     _heberge_famille  = any(x in tl for x in ["chez famille", "hébergé famille"])
+    # Situation sans domicile / hébergement d'urgence
+    _sans_domicile    = any(x in tl for x in [
+        "sans domicile", "sans abri", "sdf", "hébergement d'urgence", "urgence",
+        "ne peut plus vivre", "expulsion", "foyer urgence",
+    ])
 
     # Avec qui
-    if vie_seule:
+    if vie_seule and not is_enfant:
         cases.append("Case à cocher P5 1")
     elif vie_en_couple or any(x in sf for x in ["marié", "marie", "pacsé", "pacse", "concubinage"]):
         cases.append("Case à cocher P5 2")
-    elif _heberge_parents or any(x in tl for x in ["parents", "mère", "père"]):
-        cases.append("Case à cocher P5 3")
+    elif _heberge_parents:
+        cases.append("Case à cocher P5 3")  # ← enfant → toujours ici par défaut
     elif a_enfants_charge or vie_en_famille:
-        # Vit avec ses enfants (cas : parent avec enfant à charge) → P5 4
-        # Sauf si l'enfant, auquel cas c'est P5 3 (chez parents)
         if not is_enfant:
             cases.append("Case à cocher P5 4")
-    # Pas de défaut : si inconnu → laisser vide
+    # Pas de défaut adulte inconnu
 
     # "Où vivez-vous ?" (P5 6-11)
-    if _en_etablissement:
+    if _sans_domicile:
+        # Pas de case dédiée "sans domicile" dans le CERFA — on laisse vide et on note P5 5 (autre)
+        cases.append("Case à cocher P5 5")
+    elif _en_etablissement:
         cases.append("Case à cocher P5 7")
-    elif _heberge_parents:
+    elif _heberge_parents and is_enfant:
+        cases.append("Case à cocher P5 8")   # Hébergé au domicile des parents
+    elif _heberge_parents and not is_enfant:
         cases.append("Case à cocher P5 8")
     elif _heberge_enfants:
         cases.append("Case à cocher P5 10")
@@ -1190,10 +1238,9 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         cases.append("Case à cocher P5 9")
     elif _heberge_famille:
         cases.append("Case à cocher P5 11")
-    elif statut_occupation or type_logement_detail or logement_adapte is not None:
-        # Logement indépendant (maison, appartement, etc.) — le cas le plus courant
+    elif statut_occupation or (type_logement_detail and not is_enfant) or logement_adapte is not None:
         cases.append("Case à cocher P5 6")
-    # Pas de défaut si aucune info sur le logement
+    # Enfant sans info logement → P5 8 déjà cochée via _heberge_parents=True
 
     # Statut d'occupation → géré via OPTION P5 2 dans la section radios ci-dessous
 
@@ -1336,7 +1383,27 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     # PAGES 9-12 — Scolarité (enfants et jeunes majeurs en formation initiale)
     # Expert Q18 : REMPLISSAGE AUTOMATIQUE pour les checkboxes C2
     # ════════════════════════════════════════════════════════════════════════
-    if age_tranche in ("enfant", "jeune_majeur") and scolarise:
+    # POINT 6 — Cohérence âge / niveau scolaire
+    _age_reel = None
+    if ddn and "/" in ddn:
+        try:
+            _dp = ddn.split("/")
+            if len(_dp) == 3:
+                _age_reel = (date.today() - date(int(_dp[2]), int(_dp[1]), int(_dp[0]))).days // 365
+        except Exception:
+            pass
+    _niveaux_primaires = ["cp", "ce1", "ce2", "cm1", "cm2", "maternelle", "ps", "ms", "gs"]
+    _scol_incoherent = (
+        _age_reel is not None and _age_reel >= 18
+        and any(n in (classe_scolaire or "").lower() or n in (type_etablissement or "").lower()
+                for n in _niveaux_primaires)
+    )
+    if _scol_incoherent:
+        logger.warning(
+            f"[CERFA P9] Incohérence âge/scolarité ignorée | âge={_age_reel} ans "
+            f"| classe={classe_scolaire!r} | établissement={type_etablissement!r}"
+        )
+    if age_tranche in ("enfant", "jeune_majeur") and scolarise and not _scol_incoherent:
         # Type d'établissement scolaire (C1)
         type_etab = type_etablissement
         if any(x in type_etab for x in ["crèche", "halte", "petite enfance"]):
