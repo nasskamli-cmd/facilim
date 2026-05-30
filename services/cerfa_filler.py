@@ -528,14 +528,9 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         nom = _nom_fb.upper() if _nom_fb else nom
     if not prenom:
         prenom = (ds.get("prenom") or "").strip() or prenom
-    # Si nom ET prénom toujours vides → parser cerfa_rep["nom_prenom"]
-    # Priorité : nom_enfant / prenom_enfant du dossier > ds > nom_prenom WhatsApp
-    if not nom:
-        _nom_cr = (cerfa_rep.get("nom_enfant") or "").strip()
-        if _nom_cr:
-            nom = _nom_cr.upper()
-    if not prenom:
-        prenom = (cerfa_rep.get("prenom_enfant") or "").strip() or prenom
+    # BUG 5 CORRIGÉ : cerfa_rep ne contient jamais "nom_enfant" / "prenom_enfant"
+    # (ces clés n'existent pas dans CERFA_FIELD_ORDER → jamais écrites par le bot WhatsApp).
+    # Suppression du code mort. Le fallback unique est cerfa_rep["nom_prenom"] (champ réel).
     if not nom and not prenom:
         _np = (cerfa_rep.get("nom_prenom") or "").strip()
         if _np:
@@ -635,26 +630,39 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     nss        = (ds.get("nss") or cerfa_rep.get("numero_securite_sociale") or "").replace(" ", "").replace(".", "").replace("-", "")
     nss_parent = (ds.get("nss_parent") or "").replace(" ", "").replace(".", "")
 
-    # Type de demande et situation MDPH — ds > cerfa_reponses > vide (pas de défaut "premiere")
+    # BUG 4 CORRIGÉ : la réponse WhatsApp de la famille prime sur l'analyse IA pour type_demande.
+    # Avant : ds.type_demande écrasait cerfa_rep["type_demande"] → si l'IA avait analysé "première
+    # demande" mais la famille dit "renouvellement" sur WhatsApp, c'était la version IA qui gagnait.
+    # Après : cerfa_rep > ds. L'IA reste un fallback si la famille n'a pas répondu.
     _type_demande_rep    = (cerfa_rep.get("type_demande") or "").lower()
     _historique_mdph_rep = (cerfa_rep.get("historique_mdph") or "").lower()
-    type_demande         = (ds.get("type_demande") or _type_demande_rep).lower()
+    type_demande         = (_type_demande_rep or ds.get("type_demande") or "").lower()
     deja_connu_mdph      = bool(ds.get("deja_connu_mdph", False))
+    # BUG 2 CORRIGÉ : toute réponse non-vide à "historique_mdph" signifie que la personne a un dossier.
+    # Avant : on testait uniquement les mots "oui/déjà" → la famille qui donne directement son
+    # numéro de dossier (ex : "12345") n'était pas reconnue comme "connue MDPH".
     if not deja_connu_mdph and _historique_mdph_rep:
-        deja_connu_mdph = any(w in _historique_mdph_rep for w in ["oui", "yes", "déjà", "deja"])
-    # Si le type de demande est explicitement un renouvellement ou réévaluation, la personne est connue
-    if not deja_connu_mdph and type_demande in (
-        "renouvellement", "reevaluation", "réévaluation",
-        "revision", "révision", "situation_changee", "situation_changée", "changement",
-    ):
         deja_connu_mdph = True
-    numero_dossier_mdph  = (ds.get("numero_dossier_mdph") or cerfa_rep.get("numero_dossier_mdph") or "")
-    # Essayer d'extraire le numéro de dossier MDPH depuis la réponse WhatsApp historique_mdph
-    # (ex. "Oui, renouvellement, numéro 2021-12345-13" ou "mon dossier 4567890")
-    if not numero_dossier_mdph and _historique_mdph_rep:
-        _num_mdph_m = re.search(r'\b(\d{4,12})\b', _historique_mdph_rep)
-        if _num_mdph_m:
-            numero_dossier_mdph = _num_mdph_m.group(1)
+    # Si le type de demande signifie renouvellement/réévaluation/changement → personne déjà connue.
+    # BUG 3 (partiel) : on utilise une détection souple (sous-chaîne) au lieu d'un test d'égalité exacte,
+    # cohérente avec la normalisation appliquée plus bas lors du cochage des cases P1.
+    _td_connu_check = type_demande.replace("_", " ")
+    if not deja_connu_mdph and any(w in _td_connu_check for w in (
+        "renouvell", "rééval", "reeval", "revision", "révision",
+        "changement", "situation chang",
+    )):
+        deja_connu_mdph = True
+    # BUG 1 CORRIGÉ : le champ WhatsApp s'appelle "historique_mdph" (pas "numero_dossier_mdph").
+    # On cherche d'abord dans ds, puis dans cerfa_rep["historique_mdph"] (valeur brute WhatsApp).
+    numero_dossier_mdph = (ds.get("numero_dossier_mdph") or cerfa_rep.get("historique_mdph") or "")
+    # Si la valeur brute contient du texte autour du numéro, extraire la séquence la plus longue.
+    # On privilégie les suites >= 5 chiffres (vrais numéros de dossier) pour éviter de capturer une année.
+    if numero_dossier_mdph:
+        _candidats = re.findall(r'\b(\d{5,12})\b', numero_dossier_mdph)
+        if _candidats:
+            numero_dossier_mdph = max(_candidats, key=len)   # prend la suite la plus longue
+        elif not re.search(r'\d', numero_dossier_mdph):
+            numero_dossier_mdph = ""   # aucun chiffre → pas de numéro exploitable
     # urgence_droits et procedure_simplifiee : calculés après la lecture de cerfa_rep ci-dessous
 
     # Identité complémentaire
@@ -912,13 +920,25 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     if not type_demande and deja_connu_mdph:
         type_demande = "reevaluation"
 
-    if type_demande in ("premiere", "première", "1ere", "1ère"):
+    # BUG 3 CORRIGÉ : normalisation de type_demande avant les tests.
+    # Avant : seules les formes courtes ("premiere", "première") étaient reconnues.
+    # Le LLM peut extraire "première demande", "premiere_demande", "renouveler les droits", etc.
+    # → On normalise en remplaçant underscores et en testant la présence de mots-clés.
+    _td_norm = type_demande.replace("_", " ").replace("-", " ")
+    _is_premiere = any(w in _td_norm for w in [
+        "première", "premiere", "1ere", "1ère", "1re", "premier", "jamais", "nouveau",
+    ]) and not any(w in _td_norm for w in ["renouvell", "rééval", "reeval", "revision"])
+    _is_renouvellement = any(w in _td_norm for w in ["renouvell", "renouveler"])
+    _is_reevaluation   = any(w in _td_norm for w in ["rééval", "reeval", "révision", "revision"])
+    _is_changement     = any(w in _td_norm for w in ["changement", "situation_changee", "situation changée", "situation changee"])
+
+    if _is_premiere:
         cases.append("Case à cocher P1 A")
-    elif type_demande in ("situation_changee", "situation_changée", "changement"):
+    elif _is_changement:
         cases.append("Case à cocher P1 B")
-    elif type_demande in ("reevaluation", "réévaluation", "revision", "révision"):
+    elif _is_reevaluation:
         cases.append("Case à cocher P1 C")
-    elif type_demande == "renouvellement":
+    elif _is_renouvellement or type_demande == "renouvellement":
         # Procédure simplifiée (P1 1 = renouvellement à l'identique) :
         # UNIQUEMENT si urgence droits (expire dans <2 mois) ET pas de nouveaux droits
         if procedure_simplifiee or urgence_droits:
@@ -927,10 +947,8 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
             cases.append("Case à cocher P1 C")   # Réévaluation (renouvellement avec révision)
     # Si type_demande inconnu → aucune case cochée (pas de défaut "première demande")
 
-    # Déjà connu de la MDPH
-    if deja_connu_mdph or type_demande in ("renouvellement", "reevaluation", "réévaluation",
-                                            "revision", "révision", "situation_changee",
-                                            "situation_changée", "changement"):
+    # Déjà connu de la MDPH — utilise deja_connu_mdph (déjà normalisé ci-dessus)
+    if deja_connu_mdph:
         cases.append("Case à cocher P1 3")
         if numero_dossier_mdph:
             champs["Champ de texte P 1 2"] = numero_dossier_mdph
