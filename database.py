@@ -13,6 +13,7 @@ au reste du code — seul ce fichier change.
 
 import json
 import logging
+import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,8 +21,10 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Chemin du fichier de base de données — créé automatiquement s'il n'existe pas
-_DB_PATH = Path(__file__).parent / "mdph_dossiers.db"
+# Chemin du fichier de base de données.
+# En production Railway, DATABASE_PATH=/data/mdph_dossiers.db (volume persistant).
+# En local, on utilise le répertoire de ce fichier.
+_DB_PATH = Path(os.environ.get("DATABASE_PATH", Path(__file__).parent / "mdph_dossiers.db"))
 
 
 def _migrate_add_column(column_definition: str) -> None:
@@ -96,6 +99,15 @@ def init_db() -> None:
     _migrate_add_column("photos_json TEXT DEFAULT '[]'")
     _migrate_add_column("cerfa_reponses_json TEXT DEFAULT '{}'")
     _migrate_add_column("deleted_at TEXT")
+    # Colonnes critiques — dialogue CERFA et email médical
+    _migrate_add_column("cerfa_dialogue_demarre INTEGER DEFAULT 0")
+    _migrate_add_column("email_medical_recu INTEGER DEFAULT 0")
+    _migrate_add_column("email_medical_recu_at TEXT")
+    _migrate_add_column("email_medical_contenu TEXT")
+    _migrate_add_column("email_medical_sender TEXT")
+    _migrate_add_column("pdf_genere INTEGER DEFAULT 0")
+    _migrate_add_column("pdf_bytes BLOB")
+    _migrate_add_column("cerfa_bytes BLOB")
 
     logger.info(f"Base de données initialisée | fichier={_DB_PATH}")
 
@@ -114,6 +126,9 @@ def save_dossier(dossier: dict[str, Any]) -> None:
                  nom_enfant, prenom_enfant, ddn_enfant,
                  adresse_enfant, cp_enfant, commune_enfant,
                  questions_en_attente, photos_json, cerfa_reponses_json,
+                 cerfa_dialogue_demarre, email_medical_recu, email_medical_recu_at,
+                 email_medical_contenu, email_medical_sender,
+                 pdf_genere, pdf_bytes, cerfa_bytes,
                  created_at, updated_at)
             VALUES
                 (:dossier_id, :telephone_famille, :departement_code, :educateur_id,
@@ -122,58 +137,84 @@ def save_dossier(dossier: dict[str, Any]) -> None:
                  :nom_enfant, :prenom_enfant, :ddn_enfant,
                  :adresse_enfant, :cp_enfant, :commune_enfant,
                  :questions_en_attente, :photos_json, :cerfa_reponses_json,
+                 :cerfa_dialogue_demarre, :email_medical_recu, :email_medical_recu_at,
+                 :email_medical_contenu, :email_medical_sender,
+                 :pdf_genere, :pdf_bytes, :cerfa_bytes,
                  :created_at, :updated_at)
             ON CONFLICT(dossier_id) DO UPDATE SET
-                statut               = excluded.statut,
-                langue_famille       = excluded.langue_famille,
-                analyse_json         = excluded.analyse_json,
-                questions_json       = excluded.questions_json,
-                reponses_json        = excluded.reponses_json,
-                whatsapp_envoye      = excluded.whatsapp_envoye,
-                email_famille        = excluded.email_famille,
-                nom_enfant           = excluded.nom_enfant,
-                prenom_enfant        = excluded.prenom_enfant,
-                ddn_enfant           = excluded.ddn_enfant,
-                adresse_enfant       = excluded.adresse_enfant,
-                cp_enfant            = excluded.cp_enfant,
-                commune_enfant       = excluded.commune_enfant,
-                questions_en_attente = excluded.questions_en_attente,
-                photos_json          = excluded.photos_json,
-                cerfa_reponses_json  = excluded.cerfa_reponses_json,
-                updated_at           = excluded.updated_at
+                statut                 = excluded.statut,
+                langue_famille         = excluded.langue_famille,
+                analyse_json           = excluded.analyse_json,
+                questions_json         = excluded.questions_json,
+                reponses_json          = excluded.reponses_json,
+                whatsapp_envoye        = excluded.whatsapp_envoye,
+                email_famille          = excluded.email_famille,
+                nom_enfant             = excluded.nom_enfant,
+                prenom_enfant          = excluded.prenom_enfant,
+                ddn_enfant             = excluded.ddn_enfant,
+                adresse_enfant         = excluded.adresse_enfant,
+                cp_enfant              = excluded.cp_enfant,
+                commune_enfant         = excluded.commune_enfant,
+                questions_en_attente   = excluded.questions_en_attente,
+                photos_json            = excluded.photos_json,
+                cerfa_reponses_json    = excluded.cerfa_reponses_json,
+                cerfa_dialogue_demarre = excluded.cerfa_dialogue_demarre,
+                email_medical_recu     = excluded.email_medical_recu,
+                email_medical_recu_at  = excluded.email_medical_recu_at,
+                email_medical_contenu  = excluded.email_medical_contenu,
+                email_medical_sender   = excluded.email_medical_sender,
+                pdf_genere             = excluded.pdf_genere,
+                pdf_bytes              = excluded.pdf_bytes,
+                cerfa_bytes            = excluded.cerfa_bytes,
+                updated_at             = excluded.updated_at
         """, {
-            "dossier_id":           dossier["dossier_id"],
-            "telephone_famille":    dossier["telephone_famille"],
-            "departement_code":     dossier["departement_code"],
-            "educateur_id":         dossier.get("educateur_id"),
-            "statut":               dossier.get("statut", "EN_COURS"),
-            "langue_famille":       dossier.get("langue_famille"),
-            "analyse_json":         json.dumps(dossier.get("analyse") or {}, ensure_ascii=False),
-            "questions_json":       json.dumps(dossier.get("questions_falc_envoyees") or [], ensure_ascii=False),
-            "reponses_json":        json.dumps(dossier.get("historique_reponses") or [], ensure_ascii=False),
-            "whatsapp_envoye":      1 if dossier.get("whatsapp_envoye") else 0,
-            "email_famille":        dossier.get("email_famille"),
-            "nom_enfant":           dossier.get("nom_enfant"),
-            "prenom_enfant":        dossier.get("prenom_enfant"),
-            "ddn_enfant":           dossier.get("ddn_enfant"),
-            "adresse_enfant":       dossier.get("adresse_enfant"),
-            "cp_enfant":            dossier.get("cp_enfant"),
-            "commune_enfant":       dossier.get("commune_enfant"),
-            "questions_en_attente": dossier.get("questions_en_attente", 0),
-            "photos_json":          json.dumps(dossier.get("photos") or [], ensure_ascii=False),
-            "cerfa_reponses_json":  json.dumps(dossier.get("cerfa_reponses") or {}, ensure_ascii=False),
-            "created_at":           dossier["created_at"],
-            "updated_at":           dossier["updated_at"],
+            "dossier_id":              dossier["dossier_id"],
+            "telephone_famille":       dossier["telephone_famille"],
+            "departement_code":        dossier["departement_code"],
+            "educateur_id":            dossier.get("educateur_id"),
+            "statut":                  dossier.get("statut", "EN_COURS"),
+            "langue_famille":          dossier.get("langue_famille"),
+            "analyse_json":            json.dumps(dossier.get("analyse") or {}, ensure_ascii=False),
+            "questions_json":          json.dumps(dossier.get("questions_falc_envoyees") or [], ensure_ascii=False),
+            "reponses_json":           json.dumps(dossier.get("historique_reponses") or [], ensure_ascii=False),
+            "whatsapp_envoye":         1 if dossier.get("whatsapp_envoye") else 0,
+            "email_famille":           dossier.get("email_famille"),
+            "nom_enfant":              dossier.get("nom_enfant"),
+            "prenom_enfant":           dossier.get("prenom_enfant"),
+            "ddn_enfant":              dossier.get("ddn_enfant"),
+            "adresse_enfant":          dossier.get("adresse_enfant"),
+            "cp_enfant":               dossier.get("cp_enfant"),
+            "commune_enfant":          dossier.get("commune_enfant"),
+            "questions_en_attente":    dossier.get("questions_en_attente", 0),
+            "photos_json":             json.dumps(dossier.get("photos") or [], ensure_ascii=False),
+            "cerfa_reponses_json":     json.dumps(dossier.get("cerfa_reponses") or {}, ensure_ascii=False),
+            "cerfa_dialogue_demarre":  dossier.get("cerfa_dialogue_demarre", 0),
+            "email_medical_recu":      dossier.get("email_medical_recu", 0),
+            "email_medical_recu_at":   dossier.get("email_medical_recu_at", ""),
+            "email_medical_contenu":   dossier.get("email_medical_contenu", ""),
+            "email_medical_sender":    dossier.get("email_medical_sender", ""),
+            "pdf_genere":              dossier.get("pdf_genere", 0),
+            "pdf_bytes":               dossier.get("pdf_bytes", None),
+            "cerfa_bytes":             dossier.get("cerfa_bytes", None),
+            "created_at":              dossier["created_at"],
+            "updated_at":              dossier["updated_at"],
         })
         conn.commit()
     logger.debug(f"Dossier sauvegardé | id={dossier['dossier_id']} | statut={dossier.get('statut')}")
 
 
 def get_dossier_by_id(dossier_id: str) -> dict[str, Any] | None:
-    """Récupère un dossier par son identifiant unique."""
+    """Récupère un dossier par son identifiant unique (exact ou préfixe)."""
     with _get_connection() as conn:
+        # Recherche exacte d'abord
         row = conn.execute(
             "SELECT * FROM dossiers WHERE dossier_id = ?", (dossier_id,)
+        ).fetchone()
+        if row:
+            return _row_to_dict(row)
+        # Fallback : recherche par préfixe (utile quand l'ID est tronqué)
+        row = conn.execute(
+            "SELECT * FROM dossiers WHERE dossier_id LIKE ? LIMIT 1", (dossier_id + "%",)
         ).fetchone()
     return _row_to_dict(row) if row else None
 
@@ -186,7 +227,8 @@ def get_active_dossier_by_phone(phone_number: str) -> dict[str, Any] | None:
     with _get_connection() as conn:
         row = conn.execute(
             "SELECT * FROM dossiers WHERE telephone_famille = ? "
-            "AND statut IN ('INCOMPLET', 'EN_COURS') "
+            "AND statut IN ('INCOMPLET', 'EN_COURS', 'DROITS_A_VALIDER', 'PRET_POUR_REVUE') "
+            "AND deleted_at IS NULL "
             "ORDER BY updated_at DESC LIMIT 1",
             (phone_number,)
         ).fetchone()
@@ -300,5 +342,14 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     d["whatsapp_envoye"]         = bool(d["whatsapp_envoye"])
     d["photos"]                  = json.loads(d.pop("photos_json", None) or "[]")
     d["cerfa_reponses"]          = json.loads(d.pop("cerfa_reponses_json", None) or "{}")
+    d["cerfa_dialogue_demarre"]  = bool(d.get("cerfa_dialogue_demarre", 0))
+    d["email_medical_recu"]      = bool(d.get("email_medical_recu", 0))
+    d["pdf_genere"]              = bool(d.get("pdf_genere", 0))
+    # pdf_bytes et cerfa_bytes restent en bytes (BLOB) ou None
     d.setdefault("questions_en_attente", 0)
+    d.setdefault("email_medical_recu_at", None)
+    d.setdefault("email_medical_contenu", None)
+    d.setdefault("email_medical_sender", None)
+    d.setdefault("pdf_bytes", None)
+    d.setdefault("cerfa_bytes", None)
     return d

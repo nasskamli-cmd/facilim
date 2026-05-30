@@ -1313,8 +1313,37 @@
       <div class="modal-footer" style="gap:7px;">
         <button class="btn-relance-sm" id="btn-force-relance-detail" onclick="forceRelanceFromDetail()" style="display:none;">📱 Relancer WA</button>
         <button class="btn-enrich-sm"  id="btn-enrich-from-detail"  onclick="enrichFromDetail()"       style="display:none;">+ Enrichir</button>
+        <button class="btn-relance-sm" id="btn-message-pro-detail"  onclick="openMessageProModal()"    style="display:none;background:#1B3A6B;">✉️ Message au famille</button>
         <button class="btn-cancel" onclick="closeDetailModal()">Fermer</button>
       </div>
+
+  <!-- ══ MODAL — MESSAGE PRO ════════════════════════════════════════════════════ -->
+  <div class="modal-overlay" id="modal-message-pro" onclick="if(event.target===this)closeMessageProModal()">
+    <div class="modal" style="max-width:500px;">
+      <div class="modal-header">
+        <div>
+          <h3 style="margin:0;font-size:16px;">✉️ Message à la famille</h3>
+          <p style="margin:4px 0 0;font-size:13px;color:#718096;">Envoi WhatsApp direct — précisez les éléments manquants</p>
+        </div>
+        <button class="modal-close" onclick="closeMessageProModal()">×</button>
+      </div>
+      <div style="padding:20px;">
+        <label style="font-size:12px;font-weight:600;color:#718096;text-transform:uppercase;letter-spacing:.5px;">Votre message</label>
+        <textarea id="msg-pro-texte" rows="5" style="width:100%;margin-top:8px;padding:10px;border:1px solid #E2E8F0;border-radius:8px;font-size:14px;font-family:inherit;resize:vertical;"
+          placeholder="Ex : Bonjour, il nous manque votre situation familiale et votre organisme d'allocations (CAF ou MSA). Pouvez-vous nous indiquer ces informations ?"></textarea>
+        <p id="msg-pro-heures" style="display:none;margin-top:8px;padding:8px 12px;background:#FFF7ED;border:1px solid #FED7AA;border-radius:6px;font-size:12px;color:#C2410C;">
+          ⏰ Envoi impossible entre 19h et 7h (heures silencieuses).
+        </p>
+      </div>
+      <div class="modal-footer" style="gap:8px;">
+        <button class="btn-cancel" onclick="closeMessageProModal()">Annuler</button>
+        <button id="btn-msg-pro-envoyer" onclick="envoyerMessagePro()"
+          style="padding:10px 20px;background:#1B3A6B;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:500;cursor:pointer;">
+          📱 Envoyer sur WhatsApp
+        </button>
+      </div>
+    </div>
+  </div>
     </div>
   </div>
 
@@ -1807,6 +1836,44 @@
           setTimeout(() => openDetailModal(_currentDetailDossierId), 800);
         } else { alert(data.detail || 'Erreur'); btn.textContent = '📱 Relancer WA'; btn.disabled = false; }
       } catch { btn.textContent = 'Erreur'; btn.disabled = false; }
+    }
+
+    // ── Modal message pro ─────────────────────────────────────────────────────
+    function openMessageProModal() {
+      const heure = new Date().getHours();
+      const horsSilence = heure >= 19 || heure < 7;
+      document.getElementById('msg-pro-heures').style.display = horsSilence ? 'block' : 'none';
+      document.getElementById('btn-msg-pro-envoyer').disabled = horsSilence;
+      document.getElementById('modal-message-pro').classList.add('open');
+    }
+    function closeMessageProModal() {
+      document.getElementById('modal-message-pro').classList.remove('open');
+      document.getElementById('msg-pro-texte').value = '';
+    }
+    async function envoyerMessagePro() {
+      if (!_currentDetailDossierId) return;
+      const msg = document.getElementById('msg-pro-texte').value.trim();
+      if (!msg) { alert('Veuillez saisir un message.'); return; }
+      const btn = document.getElementById('btn-msg-pro-envoyer');
+      btn.disabled = true; btn.textContent = '⏳ Envoi…';
+      try {
+        const res  = await fetch(`/api/v1/dossiers/${_currentDetailDossierId}/message-pro`, {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: msg }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          btn.textContent = '✅ Envoyé !';
+          setTimeout(() => { closeMessageProModal(); loadDossiers(); }, 1500);
+        } else {
+          alert(data.detail || 'Erreur lors de l\'envoi.');
+          btn.disabled = false; btn.textContent = '📱 Envoyer sur WhatsApp';
+        }
+      } catch (e) {
+        alert('Erreur réseau : ' + e.message);
+        btn.disabled = false; btn.textContent = '📱 Envoyer sur WhatsApp';
+      }
     }
 
     // ── Modal création ─────────────────────────────────────────────────────────
@@ -2391,6 +2458,8 @@
         // Boutons footer
         document.getElementById('btn-force-relance-detail').style.display = ['EN_COURS','INCOMPLET'].includes(a.statut) ? '' : 'none';
         document.getElementById('btn-enrich-from-detail').style.display   = a.statut !== 'ERREUR' ? '' : 'none';
+        // Bouton message pro — visible si un téléphone famille est renseigné
+        document.getElementById('btn-message-pro-detail').style.display = a.telephone_famille ? '' : 'none';
 
         document.getElementById('detail-loading').style.display = 'none';
         document.getElementById('detail-body').classList.remove('hidden');

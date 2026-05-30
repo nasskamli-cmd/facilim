@@ -50,6 +50,7 @@ from services.conversation_agent import (
     generer_reponse_agent,
     construire_historique_conversation,
     extract_cerfa_field_from_reply,
+    extract_groupe_cerfa_from_reply,
     get_next_cerfa_field,
     get_next_groupe_cerfa,
     prepopuler_cerfa_depuis_dossier,
@@ -705,9 +706,10 @@ async def _demarrer_dialogue_cerfa(dossier: dict) -> None:
     # ── Utiliser les groupes de questions en priorité ─────────────────────────
     prochain_groupe = get_next_groupe_cerfa(cerfa_reponses)
     if prochain_groupe:
-        # Marquer le groupe comme envoyé
+        # Marquer le groupe comme envoyé + tracker quel groupe attend une réponse
         gid = f"__groupe_{prochain_groupe['id']}__"
         cerfa_reponses[gid] = "sent"
+        cerfa_reponses["__groupe_actif__"] = prochain_groupe["id"]
         dossier["cerfa_reponses"] = cerfa_reponses
         database.save_dossier(dossier)
         message = prochain_groupe["question_falc"]
@@ -824,6 +826,38 @@ async def _process_whatsapp_async(
     la boucle d'événements.
     """
     try:
+        # ── Heures silencieuses : 19h00 – 07h00 heure de Paris ───────────────
+        from zoneinfo import ZoneInfo
+        _heure_paris = datetime.now(ZoneInfo("Europe/Paris")).hour
+        if _heure_paris >= 19 or _heure_paris < 7:
+            logger.info(f"[SILENCIEUX] Message reçu hors horaires ({_heure_paris}h) | {phone_number}")
+            try:
+                await asyncio.to_thread(
+                    send_text_message, phone_number,
+                    "Bonsoir 🌙 Nous avons bien reçu votre message.\n"
+                    "Afin de respecter votre tranquillité, notre assistant ne répond pas entre 19h et 7h.\n"
+                    "Nous reviendrons vers vous dès demain matin. Bonne nuit ! 😊"
+                )
+            except Exception:
+                pass
+            return
+
+        # ── Refus de documents envoyés par WhatsApp (RGPD / légal) ──────────
+        if message_type in ("image", "document", "video"):
+            logger.info(f"[DOC-REFUSE] Document WhatsApp reçu et refusé | type={message_type} | {phone_number}")
+            try:
+                await asyncio.to_thread(
+                    send_text_message, phone_number,
+                    "⚠️ Pour des raisons juridiques, nous ne pouvons pas recevoir de documents via WhatsApp.\n\n"
+                    "Ce message et son contenu ont été supprimés de nos serveurs.\n\n"
+                    "Merci de transmettre vos documents :\n"
+                    "• Par email à votre accompagnateur\n"
+                    "• Ou directement en main propre lors de votre prochain rendez-vous"
+                )
+            except Exception:
+                pass
+            return  # Ne pas stocker, ne pas traiter
+
         dossier = database.get_active_dossier_by_phone(phone_number)
         if not dossier:
             logger.warning(f"Aucun dossier actif pour le numéro {phone_number}")
@@ -835,7 +869,7 @@ async def _process_whatsapp_async(
             logger.info(f"Langue famille mémorisée : {detected_language} | dossier={dossier['dossier_id']}")
 
         # ── Enregistrement de la réponse ──────────────────────────────────────
-        label_type = "photo (OCR)" if message_type == "image" else message_type
+        label_type = message_type
         dossier["historique_reponses"].append({
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "reponse":   user_reply,
@@ -1003,40 +1037,70 @@ async def _process_whatsapp_async(
                 logger.info("[CERFA] Redirection canal sécurisé à envoyer.")
 
             # Cas 2 : champ non-médical — extraire depuis la réponse.
-            # Mode GROUPE : on tente d'extraire tous les champs du dernier groupe envoyé.
-            # Mode CHAMP : on extrait uniquement le champ courant (fallback résiduel).
+            # On identifie le groupe "en attente" via le marker __groupe_actif__,
+            # puis on extrait TOUS ses champs en UN seul appel LLM (JSON).
             elif current_field and current_field not in MEDICAL_FIELDS:
-                # Identifier quel groupe était actif (dernier groupe dont le sentinel est 'sent')
+                # Identifier le groupe actif via le marker explicite (set lors de l'envoi)
+                _groupe_actif_id    = cerfa_reponses.get("__groupe_actif__")
                 _groupe_actif_champs = []
-                for _g in CERFA_GROUPES:
-                    _gid = f"__groupe_{_g['id']}__"
-                    if cerfa_reponses.get(_gid) == "sent":
-                        # Champs du groupe encore vides → à extraire depuis la réponse
-                        _groupe_actif_champs = [
-                            c for c in _g["champs"]
-                            if c not in MEDICAL_FIELDS
-                            and (not cerfa_reponses.get(c) or str(cerfa_reponses[c]) in ("__via_email__", "sent", ""))
-                        ]
-                        # On garde le dernier groupe envoyé (le plus récent)
+
+                if _groupe_actif_id:
+                    # Trouver le groupe correspondant et récupérer ses champs encore vides
+                    for _g in CERFA_GROUPES:
+                        if _g["id"] == _groupe_actif_id:
+                            _groupe_actif_champs = [
+                                c for c in _g["champs"]
+                                if c not in MEDICAL_FIELDS
+                                and (not cerfa_reponses.get(c) or str(cerfa_reponses[c]) in ("__via_email__", "sent", ""))
+                            ]
+                            break
+                else:
+                    # Fallback : dernier groupe "sent" (ancien comportement)
+                    for _g in CERFA_GROUPES:
+                        _gid = f"__groupe_{_g['id']}__"
+                        if cerfa_reponses.get(_gid) == "sent":
+                            _groupe_actif_champs = [
+                                c for c in _g["champs"]
+                                if c not in MEDICAL_FIELDS
+                                and (not cerfa_reponses.get(c) or str(cerfa_reponses[c]) in ("__via_email__", "sent", ""))
+                            ]
 
                 champs_a_extraire = _groupe_actif_champs if _groupe_actif_champs else [current_field]
 
-                for _champ in champs_a_extraire:
-                    if cerfa_reponses.get(_champ) and str(cerfa_reponses[_champ]) not in ("__via_email__", "sent", ""):
-                        continue  # déjà rempli
+                # Extraction batch : un seul appel LLM pour tous les champs du groupe
+                if len(champs_a_extraire) > 1:
+                    valeurs_extraites = await asyncio.to_thread(
+                        extract_groupe_cerfa_from_reply, user_reply, champs_a_extraire, _oai_client
+                    )
+                    for _champ, _val in valeurs_extraites.items():
+                        if not cerfa_reponses.get(_champ) or str(cerfa_reponses[_champ]) in ("__via_email__", "sent", ""):
+                            cerfa_reponses[_champ] = _val
+                            logger.info(f"[CERFA] Champ '{_champ}' extrait (batch) : {_val[:40]}")
+                else:
+                    # Un seul champ → appel individuel
+                    _champ = champs_a_extraire[0]
                     try:
                         valeur = await asyncio.to_thread(
                             extract_cerfa_field_from_reply, user_reply, _champ, _oai_client
                         )
                         if valeur:
                             cerfa_reponses[_champ] = valeur
-                            dossier["cerfa_reponses"] = cerfa_reponses
                             logger.info(f"[CERFA] Champ '{_champ}' extrait : {valeur[:40]}")
                     except Exception as ex_err:
                         logger.warning(f"[CERFA] Extraction échouée pour '{_champ}': {ex_err}")
 
+                # Effacer le marker de groupe actif — la réponse a été traitée
+                cerfa_reponses.pop("__groupe_actif__", None)
+                dossier["cerfa_reponses"] = cerfa_reponses
+                # Sauvegarde immédiate des champs extraits — ne pas attendre
+                # generer_reponse_agent pour éviter toute perte si erreur ultérieure
+                database.save_dossier(dossier)
+
             # Cas 3 : current_field is None → tous les champs CERFA collectés
-            elif current_field is None:
+            # MAIS on vérifie d'abord qu'il ne reste pas de groupes de questions à envoyer.
+            # Sans ce garde-fou, le PDF serait généré avant que les groupes 3/4/5 soient envoyés
+            # car prepopuler_cerfa remplit beaucoup de champs depuis le document existant.
+            elif current_field is None and not get_next_groupe_cerfa(cerfa_reponses):
                 logger.info(f"[TRACE-CERFA] Cas 3 active | dossier={dossier['dossier_id']}")
                 from services.cerfa_service import traiter_dossier_cerfa as _traiter_cerfa
                 # Fusion dossier + cerfa_reponses :
@@ -1073,10 +1137,9 @@ async def _process_whatsapp_async(
                             )
                         except Exception as _mail_err:
                             logger.error(f"[CERFA_SERVICE] Envoi email échoué : {_mail_err}")
-                    await asyncio.to_thread(
-                        send_text_message, phone_number, _construire_message_complet(dossier)
-                    )
-                    dossier["statut"] = "COMPLET"
+                    # NE PAS envoyer le message de fin ici — il sera envoyé
+                    # uniquement quand le pro valide et clique sur "Envoyer à la famille"
+                    dossier["statut"] = "DROITS_A_VALIDER"
                     database.save_dossier(dossier)
                     return  # terminé — generer_reponse_agent n'est pas appelé
 
@@ -1110,6 +1173,15 @@ async def _process_whatsapp_async(
                     )
                     database.save_dossier(dossier)
                     return
+
+            # Log du prochain groupe pour tracer les blocages
+            _prochain_g = get_next_groupe_cerfa(cerfa_reponses)
+            logger.info(
+                f"[CERFA-FLOW] Avant generer_reponse_agent "
+                f"| dossier={dossier['dossier_id']} "
+                f"| prochain_groupe={_prochain_g['id'] if _prochain_g else 'AUCUN'} "
+                f"| cerfa_reponses_keys={[k for k in cerfa_reponses if not k.startswith('__')]}"
+            )
 
             reponse_envoyee = False
             try:
@@ -1317,7 +1389,7 @@ async def valider_droits_dossier(
     analyse["droits_valides_par_educateur"]  = True
     analyse["droits_valides_at"]             = datetime.now(timezone.utc).isoformat()
     dossier["analyse"]   = analyse
-    dossier["statut"]    = "COMPLET"
+    dossier["statut"]    = "PRET_POUR_REVUE"
     dossier["updated_at"] = datetime.now(timezone.utc).isoformat()
     database.save_dossier(dossier)
 
@@ -1325,81 +1397,15 @@ async def valider_droits_dossier(
         f"[VALIDATION] Dossier {dossier_id} — droits validés par éducateur : {droits_valides}"
     )
 
-    # ── Génération PDF + CERFA + envoi email ──────────────────────────────────
-    email_famille = dossier.get("email_famille")
-    if not email_famille:
-        return {
-            "status": "ok",
-            "message": "Droits validés. Aucun email famille renseigné — PDF non envoyé.",
-            "droits_valides": droits_valides,
-        }
-
-    try:
-        # ── Étape 1 : validation CERFA + génération via traiter_dossier_cerfa ───
-        cerfa_reponses  = dossier.get("cerfa_reponses") or {}
-        _donnees_cerfa  = {**dossier, **cerfa_reponses}
-        _resultat_cerfa = await asyncio.to_thread(traiter_dossier_cerfa, _donnees_cerfa)
-
-        if _resultat_cerfa.get("type") == "validation":
-            # Champs CERFA encore manquants → bloquer, informer l'éducateur
-            logger.info(
-                f"[VALIDATION] CERFA incomplet | dossier={dossier_id} "
-                f"| erreurs={_resultat_cerfa.get('erreurs', [])}"
-            )
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "status":            "cerfa_incomplet",
-                    "message":           (
-                        "Le dialogue WhatsApp n'est pas terminé. "
-                        "Le CERFA ne peut pas encore être généré."
-                    ),
-                    "erreurs":           _resultat_cerfa.get("erreurs", []),
-                    "message_a_envoyer": _resultat_cerfa.get("message_a_envoyer", ""),
-                },
-            )
-
-        if _resultat_cerfa.get("type") == "technique":
-            logger.error(
-                f"[VALIDATION] Erreur technique CERFA | dossier={dossier_id} "
-                f"| detail={_resultat_cerfa.get('erreur', '')}"
-            )
-            raise HTTPException(
-                status_code=500,
-                detail=(
-                    f"Erreur lors de la validation du CERFA : "
-                    f"{_resultat_cerfa.get('erreur', '')}"
-                ),
-            )
-
-        # ── Étape 2 : CERFA valide → stocker les PDF pour revue professionnelle ──
-        # L'envoi à la famille est délégué à /envoyer-cerfa après prévisualisation.
-        cerfa_bytes = _resultat_cerfa.get("pdf_bytes")   # CERFA 15692 pré-rempli
-        pdf_bytes   = await asyncio.to_thread(generer_pdf_dossier, dossier)
-
-        dossier["cerfa_bytes"]  = cerfa_bytes
-        dossier["pdf_bytes"]    = pdf_bytes
-        dossier["pdf_genere"]   = True
-        dossier["statut"]       = "PRET_POUR_REVUE"
-        dossier["updated_at"]   = datetime.now(timezone.utc).isoformat()
-        database.save_dossier(dossier)
-
-        logger.info(
-            f"[VALIDATION] CERFA généré et stocké pour revue "
-            f"| dossier={dossier_id} | email_famille={email_famille}"
-        )
-
-        return {
-            "status":         "pret_pour_revue",
-            "message":        "CERFA prêt à être vérifié avant envoi à la famille.",
-            "droits_valides": droits_valides,
-        }
-
-    except HTTPException:
-        raise   # re-propager les 422/500 sans les avaler dans le except ci-dessous
-    except Exception as pdf_err:
-        logger.error(f"[VALIDATION] Erreur génération PDF : {pdf_err}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Erreur lors de la génération du PDF : {pdf_err}")
+    # ── NOUVEAU FLUX : on ne génère PAS le PDF ici. ───────────────────────────
+    # Le PDF sera généré uniquement au moment de /envoyer-cerfa, après que
+    # le professionnel a prévisualisé et confirmé le contenu.
+    # Étape suivante : le pro complète les champs manquants puis prévisualise.
+    return {
+        "status":         "pret_pour_revue",
+        "message":        "Droits enregistrés. Vérifiez les champs CERFA puis prévisualisez avant envoi.",
+        "droits_valides": droits_valides,
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -1425,6 +1431,25 @@ async def relancer_cerfa_whatsapp(dossier_id: str):
         raise HTTPException(status_code=422, detail="Numéro de téléphone manquant dans le dossier.")
 
     cerfa_reponses = dossier.get("cerfa_reponses") or {}
+    prepopuler_cerfa_depuis_dossier(cerfa_reponses, dossier)
+    dossier["cerfa_reponses"] = cerfa_reponses
+
+    # Priorité : envoyer le prochain GROUPE de questions (comme le flux automatique)
+    prochain_groupe = get_next_groupe_cerfa(cerfa_reponses)
+    if prochain_groupe:
+        gid = f"__groupe_{prochain_groupe['id']}__"
+        cerfa_reponses[gid] = "sent"
+        cerfa_reponses["__groupe_actif__"] = prochain_groupe["id"]
+        dossier["cerfa_reponses"] = cerfa_reponses
+        database.save_dossier(dossier)
+        message_wa = prochain_groupe["question_falc"]
+        try:
+            await asyncio.to_thread(send_text_message, phone, message_wa)
+        except Exception as wa_err:
+            raise HTTPException(status_code=502, detail=f"Erreur d'envoi WhatsApp : {wa_err}")
+        return {"status": "question_envoyee", "message": f"Groupe '{prochain_groupe['id']}' envoyé au {phone}."}
+
+    # Fallback : tous les groupes sont couverts → vérifier via cerfa_service
     _donnees_cerfa = {**dossier, **cerfa_reponses}
     _resultat = await asyncio.to_thread(traiter_dossier_cerfa, _donnees_cerfa)
 
@@ -1440,7 +1465,7 @@ async def relancer_cerfa_whatsapp(dossier_id: str):
             detail=_resultat.get("erreur", "Erreur technique lors du calcul de la relance."),
         )
 
-    # type == "validation" — on envoie la prochaine question
+    # type == "validation" — champ résiduel isolé
     message_wa = _resultat.get("message_a_envoyer", "")
     if not message_wa:
         raise HTTPException(
@@ -1473,33 +1498,61 @@ async def relancer_cerfa_whatsapp(dossier_id: str):
 # --------------------------------------------------------------------------- #
 @app.post(
     "/api/v1/dossiers/{dossier_id}/previsualiser-cerfa",
-    summary="Retourner le PDF CERFA stocké pour prévisualisation",
+    summary="Générer et retourner le PDF CERFA pour prévisualisation",
     tags=["Dossiers"],
 )
 async def previsualiser_cerfa(dossier_id: str):
     """
-    Retourne le PDF CERFA 15692 pré-rempli stocké après /valider-droits.
-    Permet au professionnel de vérifier le document avant envoi à la famille.
+    Génère le CERFA 15692 à la volée depuis les données actuelles du dossier
+    et le retourne en PDF pour que le professionnel puisse le vérifier.
+    Peut être appelé à tout moment — ne modifie pas le statut du dossier.
     """
     dossier = database.get_dossier_by_id(dossier_id)
     if not dossier:
         raise HTTPException(status_code=404, detail=f"Dossier '{dossier_id}' introuvable.")
 
-    if not dossier.get("pdf_genere"):
-        raise HTTPException(
-            status_code=404,
-            detail="Aucun CERFA prêt pour ce dossier. Validez d'abord les droits.",
+    cerfa_reponses = dossier.get("cerfa_reponses") or {}
+    prepopuler_cerfa_depuis_dossier(cerfa_reponses, dossier)
+    _donnees_cerfa = {**dossier, **cerfa_reponses}
+
+    try:
+        _resultat = await asyncio.to_thread(traiter_dossier_cerfa, _donnees_cerfa)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la génération du CERFA : {e}")
+
+    if _resultat.get("type") == "technique":
+        raise HTTPException(status_code=500, detail=_resultat.get("erreur", "Erreur technique CERFA."))
+
+    if _resultat.get("type") == "validation":
+        # CERFA incomplet — on génère quand même un aperçu partiel si possible
+        cerfa_bytes = _resultat.get("pdf_bytes")
+        if not cerfa_bytes:
+            # erreurs peut être une list[str] ou list[dict]
+            _erreurs_raw = _resultat.get("erreurs", [])
+            champs_manquants = [
+                e if isinstance(e, str) else e.get("champ", str(e))
+                for e in _erreurs_raw
+            ]
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "status": "cerfa_incomplet",
+                    "message": "Le CERFA ne peut pas encore être généré — des champs obligatoires sont manquants.",
+                    "champs_manquants": champs_manquants,
+                },
+            )
+        logger.info(f"[PREVISUALISATION] CERFA partiel affiché | dossier={dossier_id}")
+        return Response(
+            content=cerfa_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"inline; filename=cerfa_apercu_{dossier_id}.pdf"},
         )
 
-    cerfa_bytes = dossier.get("cerfa_bytes")
+    cerfa_bytes = _resultat.get("pdf_bytes")
     if not cerfa_bytes:
-        raise HTTPException(
-            status_code=404,
-            detail="Aucun CERFA prêt pour ce dossier. Validez d'abord les droits.",
-        )
+        raise HTTPException(status_code=500, detail="Le générateur n'a pas retourné de PDF.")
 
-    logger.info(f"[PREVISUALISATION] CERFA consulté | dossier={dossier_id}")
-
+    logger.info(f"[PREVISUALISATION] CERFA complet affiché | dossier={dossier_id}")
     return Response(
         content=cerfa_bytes,
         media_type="application/pdf",
@@ -1525,18 +1578,10 @@ async def envoyer_cerfa_famille(dossier_id: str):
     if not dossier:
         raise HTTPException(status_code=404, detail=f"Dossier '{dossier_id}' introuvable.")
 
-    if not dossier.get("pdf_genere"):
+    if dossier.get("statut") not in ("PRET_POUR_REVUE", "DROITS_A_VALIDER", "COMPLET", "INCOMPLET"):
         raise HTTPException(
-            status_code=422,
-            detail="Aucun CERFA prêt pour ce dossier. Validez d'abord les droits via /valider-droits.",
-        )
-
-    cerfa_bytes = dossier.get("cerfa_bytes")
-    pdf_bytes   = dossier.get("pdf_bytes")
-    if not cerfa_bytes or not pdf_bytes:
-        raise HTTPException(
-            status_code=422,
-            detail="PDF manquant. Relancez /valider-droits pour régénérer le CERFA.",
+            status_code=409,
+            detail=f"Le dossier est au statut '{dossier.get('statut')}' — envoi non applicable.",
         )
 
     email_famille = dossier.get("email_famille")
@@ -1545,6 +1590,40 @@ async def envoyer_cerfa_famille(dossier_id: str):
             status_code=422,
             detail="Aucun email famille renseigné dans le dossier.",
         )
+
+    # ── Génération du PDF final au moment de l'envoi ─────────────────────────
+    cerfa_reponses = dossier.get("cerfa_reponses") or {}
+    prepopuler_cerfa_depuis_dossier(cerfa_reponses, dossier)
+    _donnees_cerfa = {**dossier, **cerfa_reponses}
+
+    try:
+        _resultat_cerfa = await asyncio.to_thread(traiter_dossier_cerfa, _donnees_cerfa)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la génération du CERFA : {e}")
+
+    if _resultat_cerfa.get("type") == "technique":
+        raise HTTPException(status_code=500, detail=_resultat_cerfa.get("erreur", "Erreur technique CERFA."))
+
+    if _resultat_cerfa.get("type") == "validation":
+        _erreurs_raw2 = _resultat_cerfa.get("erreurs", [])
+        champs_manquants = [
+            e if isinstance(e, str) else e.get("champ", str(e))
+            for e in _erreurs_raw2
+        ]
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "status": "cerfa_incomplet",
+                "message": "Le CERFA est incomplet. Remplissez les champs manquants avant d'envoyer.",
+                "champs_manquants": champs_manquants,
+            },
+        )
+
+    cerfa_bytes = _resultat_cerfa.get("pdf_bytes")
+    pdf_bytes   = await asyncio.to_thread(generer_pdf_dossier, dossier)
+
+    if not cerfa_bytes or not pdf_bytes:
+        raise HTTPException(status_code=500, detail="Erreur lors de la génération des PDF.")
 
     # ── Envoi email avec les deux PDF ─────────────────────────────────────────
     try:
@@ -1674,6 +1753,108 @@ async def reset_cerfa_dossier(dossier_id: str):
     database.save_dossier(dossier)
     logger.info(f"[RESET-CERFA] Réponses CERFA effacées | dossier={dossier_id}")
     return {"status": "ok", "message": "Réponses CERFA réinitialisées. Le dialogue peut redémarrer."}
+
+
+# --------------------------------------------------------------------------- #
+# ENDPOINT 4j — POST /api/v1/dossiers/{dossier_id}/message-pro                #
+# Le pro envoie un message WhatsApp personnalisé à la famille                 #
+# Utile pour relancer manuellement en précisant les éléments manquants        #
+# --------------------------------------------------------------------------- #
+@app.post(
+    "/api/v1/dossiers/{dossier_id}/message-pro",
+    summary="Envoyer un message WhatsApp personnalisé depuis le pro vers la famille",
+    tags=["Dossiers"],
+)
+async def envoyer_message_pro(dossier_id: str, body: dict = Body(embed=False)):
+    """
+    Permet au professionnel d'envoyer un message libre sur WhatsApp à la famille.
+    Utile pour relancer manuellement en précisant exactement ce qui manque.
+    Body JSON attendu : { "message": "Bonjour, il nous manque..." }
+    """
+    dossier = database.get_dossier_by_id(dossier_id)
+    if not dossier:
+        raise HTTPException(status_code=404, detail=f"Dossier '{dossier_id}' introuvable.")
+
+    phone = dossier.get("telephone_famille")
+    if not phone:
+        raise HTTPException(status_code=422, detail="Numéro de téléphone manquant dans le dossier.")
+
+    message = str(body.get("message", "")).strip()
+    if not message:
+        raise HTTPException(status_code=422, detail="Le champ 'message' est requis.")
+    if len(message) > 1000:
+        raise HTTPException(status_code=422, detail="Message trop long (max 1000 caractères).")
+
+    # Vérifier les heures silencieuses
+    from zoneinfo import ZoneInfo
+    _heure_paris = datetime.now(ZoneInfo("Europe/Paris")).hour
+    if _heure_paris >= 19 or _heure_paris < 7:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Heures silencieuses actives ({_heure_paris}h). Messages autorisés de 7h à 19h.",
+        )
+
+    try:
+        await asyncio.to_thread(send_text_message, phone, message)
+    except Exception as wa_err:
+        raise HTTPException(status_code=502, detail=f"Erreur d'envoi WhatsApp : {wa_err}")
+
+    # Tracer dans l'historique
+    dossier["historique_reponses"].append({
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "role":      "pro",
+        "content":   message,
+        "type":      "message_pro",
+    })
+    dossier["updated_at"] = datetime.now(timezone.utc).isoformat()
+    database.save_dossier(dossier)
+
+    logger.info(f"[MESSAGE-PRO] Message envoyé | dossier={dossier_id} | phone={phone}")
+    return {"status": "ok", "message": "Message envoyé à la famille."}
+
+
+# --------------------------------------------------------------------------- #
+# ENDPOINT 4i — POST /api/v1/admin/reset-cerfa-by-phone                       #
+# Reset CERFA par numéro de téléphone (évite de chercher l'UUID complet)      #
+# --------------------------------------------------------------------------- #
+@app.post(
+    "/api/v1/admin/reset-cerfa-by-phone",
+    summary="Réinitialiser le dialogue CERFA par numéro de téléphone",
+    tags=["Admin"],
+)
+async def reset_cerfa_by_phone(body: dict):
+    """
+    Trouve le dossier actif par numéro de téléphone et réinitialise le dialogue CERFA.
+    Body JSON: {"phone": "33642087770"}
+    """
+    phone = body.get("phone", "").strip()
+    if not phone:
+        raise HTTPException(status_code=422, detail="Le champ 'phone' est requis.")
+
+    # Chercher dans tous les dossiers (actifs ou non) par téléphone
+    tous = database.list_dossiers()
+    dossier = next(
+        (d for d in tous if d.get("telephone_famille", "").replace("+", "") == phone.replace("+", "")),
+        None
+    )
+    if not dossier:
+        raise HTTPException(status_code=404, detail=f"Aucun dossier actif pour le numéro {phone}.")
+
+    dossier_id = dossier.get("dossier_id", "")
+    _champs_a_effacer = [
+        "cerfa_reponses", "cerfa_dialogue_demarre", "pdf_genere", "pdf_bytes",
+        "historique_mdph", "__groupe_actif__",
+    ]
+    for champ in _champs_a_effacer:
+        dossier.pop(champ, None)
+    dossier["cerfa_reponses"]        = {}
+    dossier["cerfa_dialogue_demarre"] = False
+    dossier["statut"]                = "DROITS_A_VALIDER"
+    dossier["updated_at"]            = datetime.now(timezone.utc).isoformat()
+    database.save_dossier(dossier)
+    await _demarrer_dialogue_cerfa(dossier)
+    logger.info(f"[RESET-CERFA] Reset par téléphone | dossier={dossier_id} | phone={phone}")
+    return {"status": "ok", "dossier_id": dossier_id, "message": "Dialogue CERFA réinitialisé et relancé."}
 
 
 # --------------------------------------------------------------------------- #
@@ -2246,9 +2427,22 @@ def _extraire_donnees_depuis_texte(dossier: dict, texte_brut: str) -> dict:
 
 def _construire_message_complet(dossier: dict) -> str:
     """
-    Construit le message WhatsApp envoyé quand le dossier est COMPLET.
-    Inclut le scoring prédictif par droit — honnête, avec probabilité et recommandation.
+    Message WhatsApp envoyé à la famille quand le pro valide et envoie le dossier.
+    Simple, rassurant, sans jargon.
     """
+    nom = dossier.get("prenom_enfant") or dossier.get("nom_enfant") or "votre proche"
+    return (
+        f"Bonjour 👋\n\n"
+        f"Votre dossier MDPH pour {nom} est maintenant complété ✅\n\n"
+        f"Il va être consulté et finalisé par la personne qui vous accompagne.\n"
+        f"Vous recevrez le formulaire CERFA complété directement par mail dans les prochains jours.\n\n"
+        f"Merci pour votre confiance et votre coopération 🙏\n"
+        f"L'équipe Facilim"
+    )
+
+
+def _construire_message_complet_old(dossier: dict) -> str:
+    """Ancienne version avec scoring — conservée pour référence."""
     analyse = dossier.get("analyse") or {}
     scoring = analyse.get("scoring_predictif") or {}
     droits  = analyse.get("droits_identifies") or []

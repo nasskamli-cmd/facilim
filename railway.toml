@@ -4,3 +4,4 @@ builder = "dockerfile"
 [deploy]
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
+region = "europe-west4-drams3a"

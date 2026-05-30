@@ -466,7 +466,7 @@ CERFA_GROUPES: list[dict] = [
         "id": "type_demande",
         "champs": ["type_demande", "urgence_droits"],
         "question_falc": (
-            "Bonjour ! Pour démarrer votre dossier MDPH, j'ai besoin de quelques informations.\n\n"
+            "Bonjour 👋 Je suis Mathilde, de l'équipe Facilim. Je vous accompagne pour constituer votre dossier MDPH via WhatsApp. Pour commencer, j'ai quelques questions simples.\n\n"
             "1️⃣ S'agit-il d'une *première demande* à la MDPH, ou d'un *renouvellement* de droits existants ?\n"
             "2️⃣ Si c'est un renouvellement : vos droits actuels expirent-ils dans moins de 2 mois ?"
         ),
@@ -773,6 +773,65 @@ def extract_cerfa_field_from_reply(
         return None
 
 
+def extract_groupe_cerfa_from_reply(
+    message: str,
+    champs: list[str],
+    openai_client: Any,
+) -> dict[str, str]:
+    """
+    Extrait TOUS les champs d'un groupe CERFA en UN SEUL appel LLM (JSON).
+    Bien plus fiable que N appels séparés : le modèle voit tous les champs
+    en même temps et distribue correctement les informations.
+
+    Retourne un dict {champ: valeur} — seuls les champs trouvés sont inclus.
+    """
+    import json as _json
+
+    champs_labels = {c: CERFA_FIELD_LABELS.get(c, c) for c in champs}
+    champs_json   = "\n".join(f'  "{c}": "{label}"' for c, label in champs_labels.items())
+
+    system_prompt = (
+        "Tu es un assistant qui extrait des informations depuis un message WhatsApp "
+        "pour remplir un formulaire MDPH.\n\n"
+        "CHAMPS À EXTRAIRE (clé JSON : description) :\n"
+        "{\n" + champs_json + "\n}\n\n"
+        "Réponds UNIQUEMENT en JSON valide avec les valeurs extraites.\n"
+        "Si un champ n'est pas présent dans le message, mets null.\n"
+        "Exemple : {\"situation_familiale\": \"célibataire\", \"enfants_a_charge\": \"0\", ...}"
+    )
+
+    try:
+        resp = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user",   "content": message},
+            ],
+            max_tokens=300,
+            temperature=0,
+            response_format={"type": "json_object"},
+        )
+        raw = resp.choices[0].message.content.strip()
+        data = _json.loads(raw)
+        # Garder uniquement les valeurs non-null et non-vides
+        result = {
+            k: str(v).strip()
+            for k, v in data.items()
+            if k in champs and v is not None and str(v).strip() not in ("", "null", "None")
+        }
+        logger.info(f"[CONV_AGENT] Extraction groupe ({len(champs)} champs) → {len(result)} extraits : {list(result.keys())}")
+        return result
+    except Exception as e:
+        logger.warning(f"[CONV_AGENT] Extraction groupe échouée : {e}")
+        # Fallback : extraction champ par champ
+        result = {}
+        for champ in champs:
+            val = extract_cerfa_field_from_reply(message, champ, openai_client)
+            if val:
+                result[champ] = val
+        return result
+
+
 # ---------------------------------------------------------------------------
 # Génération de la réponse
 # ---------------------------------------------------------------------------
@@ -813,6 +872,8 @@ def generer_reponse_agent(
         gid = f"__groupe_{prochain_groupe['id']}__"
         # Marquer le groupe comme envoyé pour éviter les doublons
         cerfa_reponses[gid] = "sent"
+        # Tracker quel groupe est en attente de réponse (pour extraction ciblée)
+        cerfa_reponses["__groupe_actif__"] = prochain_groupe["id"]
         logger.info(f"[CONV_AGENT] Groupe '{prochain_groupe['id']}' envoyé.")
 
         # Si c'est la première prise de contact (groupe type_demande) :
@@ -839,7 +900,9 @@ def generer_reponse_agent(
         )
 
         system_groupe = (
-            f"Tu es l'Assistant Facilim, spécialisé MDPH. Tu discutes via WhatsApp {sujet}.\n"
+            f"Tu es Mathilde, assistante de l'équipe Facilim, spécialisée MDPH. Tu discutes via WhatsApp {sujet}.\n"
+            f"Commence TOUJOURS ton message par 'Merci pour vos réponses 😊' ou une formule similaire chaleureuse.\n"
+            f"Rappelle brièvement qui tu es si c'est le premier échange : 'Je suis Mathilde de l'équipe Facilim.'\n"
             f"Langue : français simple, bienveillant, FALC (phrases courtes).\n"
             f"{urgence_note}\n"
             f"NE JAMAIS demander : diagnostic, médicaments, médecin, NIR, taux d'incapacité.\n\n"

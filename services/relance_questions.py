@@ -42,10 +42,18 @@ _MEDICAL_FIELDS: frozenset[str] = frozenset({
 
 # Message de redirection canal sécurisé (cohérent avec conversation_agent.py)
 _MSG_CANAL_SECURISE = (
-    "🔒 Pour les informations médicales (diagnostic, numéro de sécurité sociale, "
-    "médecin traitant, traitements), merci de les transmettre *par email* à votre "
-    "accompagnateur ou via la messagerie sécurisée de votre structure. "
-    "Ces données ne peuvent pas être partagées par WhatsApp."
+    "🔒 Pour protéger vos données de santé, certaines informations ne peuvent "
+    "pas être partagées par WhatsApp.\n\n"
+    "Merci de nous envoyer les éléments suivants *par email* à :\n"
+    "📧 *medical@facilim.fr*\n\n"
+    "• Votre numéro de sécurité sociale\n"
+    "• Votre diagnostic médical et sa date\n"
+    "• Le nom et la ville de votre médecin traitant\n"
+    "• Vos traitements en cours\n"
+    "• Votre taux d'incapacité si vous avez déjà un dossier MDPH\n\n"
+    "Indiquez simplement votre nom en objet de l'email.\n"
+    "Nous intégrerons ces informations directement dans votre dossier. "
+    "Merci pour votre aide !"
 )
 
 # ---------------------------------------------------------------------------
