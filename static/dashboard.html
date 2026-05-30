@@ -1398,7 +1398,7 @@
       <div id="val-cerfa-pret" style="display:none;margin:0 24px 12px;padding:14px 16px;background:#F0FDF4;border:1px solid #86EFAC;border-radius:8px;">
         <div style="font-size:13px;font-weight:700;color:#15803D;margin-bottom:6px;">✅ CERFA prêt à être vérifié</div>
         <div style="font-size:12px;color:#166534;margin-bottom:14px;">
-          Le CERFA a été généré avec succès. Prévisualisez-le avant de l'envoyer à la famille.
+          Les droits ont été enregistrés. Prévisualisez le CERFA pour vérifier le contenu avant de l'envoyer à la famille.
         </div>
         <div style="margin-bottom:12px;">
           <button id="val-previsualiser-btn" onclick="previsualiserCerfa()"
@@ -1423,7 +1423,7 @@
           Annuler
         </button>
         <button id="val-send-btn" onclick="confirmerValidationDroits()" style="padding:8px 20px;background:#1B3A6B;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;">
-          ✓ Confirmer et générer le CERFA
+          ✓ Valider les droits
         </button>
       </div>
     </div>
@@ -2447,7 +2447,7 @@
             btnEl.style.background = '#6B7280';
             btnEl.style.cursor = 'default';
           } else {
-            statutEl.innerHTML = '<span style="color:#92400E;">⏳ En attente de l\'email de la famille</span><div style="font-size:11px;color:#78350F;margin-top:4px;">La famille doit envoyer ses données médicales à <strong>medical@facilim.fr</strong></div>';
+            statutEl.innerHTML = '<span style="color:#92400E;">⏳ En attente de l\'email de la famille</span><div style="font-size:11px;color:#78350F;margin-top:4px;">La famille doit envoyer ses données médicales à <strong>contactfacilim@gmail.com</strong></div>';
             btnEl.disabled = false;
             btnEl.textContent = '✅ J\'ai reçu l\'email médical';
             btnEl.style.background = '#7C3AED';
@@ -2592,7 +2592,7 @@
       }
 
       btn.disabled = true;
-      btn.textContent = '⏳ Génération du CERFA…';
+      btn.textContent = '⏳ Enregistrement…';
 
       try {
         const res = await fetch(`/api/v1/dossiers/${_validationDossierId}/valider-droits`, {
@@ -2603,30 +2603,30 @@
         });
         const data = await res.json();
         if (res.ok && data.status === 'pret_pour_revue') {
-          // CERFA généré — afficher le panneau de prévisualisation/envoi
+          // Droits enregistrés — afficher le panneau de prévisualisation/envoi
           document.getElementById('val-cerfa-pret').style.display = 'block';
           document.getElementById('val-cerfa-incomplet').style.display = 'none';
           btn.disabled = false;
-          btn.textContent = '✓ Confirmer et générer le CERFA';
+          btn.textContent = '✓ Valider les droits';
         } else if (res.status === 422 && data.detail?.status === 'cerfa_incomplet') {
           // Dialogue WhatsApp incomplet — afficher le panneau inline
-          const erreurs = data.detail.erreurs || [];
+          const champs = data.detail.champs_manquants || data.detail.erreurs || [];
           const ul = document.getElementById('val-cerfa-erreurs');
-          ul.innerHTML = erreurs
-            .map(e => `<li>${e.replace('champ requis manquant : ', '')}</li>`)
+          ul.innerHTML = champs
+            .map(e => `<li>${String(e).replace('champ requis manquant : ', '')}</li>`)
             .join('') || '<li>Informations manquantes non précisées</li>';
           document.getElementById('val-cerfa-incomplet').style.display = 'block';
           btn.disabled = false;
-          btn.textContent = '✓ Confirmer et générer le CERFA';
+          btn.textContent = '✓ Valider les droits';
         } else {
           alert(`❌ Erreur : ${data.detail?.message || data.detail || 'Une erreur est survenue.'}`);
           btn.disabled = false;
-          btn.textContent = '✓ Confirmer et générer le CERFA';
+          btn.textContent = '✓ Valider les droits';
         }
       } catch (e) {
         alert(`❌ Erreur réseau : ${e.message}`);
         btn.disabled = false;
-        btn.textContent = '✓ Valider et envoyer le CERFA';
+        btn.textContent = '✓ Valider les droits';
       }
     }
 

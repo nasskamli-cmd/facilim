@@ -45,7 +45,7 @@ _MSG_CANAL_SECURISE = (
     "🔒 Pour protéger vos données de santé, certaines informations ne peuvent "
     "pas être partagées par WhatsApp.\n\n"
     "Merci de nous envoyer les éléments suivants *par email* à :\n"
-    "📧 *medical@facilim.fr*\n\n"
+    "📧 *contactfacilim@gmail.com*\n\n"
     "• Votre numéro de sécurité sociale\n"
     "• Votre diagnostic médical et sa date\n"
     "• Le nom et la ville de votre médecin traitant\n"

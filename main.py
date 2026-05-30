@@ -728,9 +728,23 @@ async def _demarrer_dialogue_cerfa(dossier: dict) -> None:
             logger.info(f"🟠 message_a_envoyer vide | type={resultat.get('type')} | dossier={_did}")
             return
 
+    # ── Construire un message chaleureux avant la question ───────────────────
+    prenom = (dossier.get("prenom_enfant") or dossier.get("nom_enfant") or "").strip()
+    salutation = f"Bonjour {prenom} 👋" if prenom else "Bonjour 👋"
+
+    contexte = (
+        f"{salutation}\n\n"
+        f"Votre dossier MDPH avance bien 😊\n\n"
+        f"Pour le finaliser, j'ai besoin de quelques informations complémentaires. "
+        f"Je vais vous les demander en plusieurs étapes — prenez votre temps pour répondre, "
+        f"il n'y a pas d'urgence.\n\n"
+        f"━━━━━━━━━━━━━━━━\n\n"
+        f"{message}"
+    )
+
     try:
         logger.info(f"📱 Envoi WhatsApp imminent | phone={phone} | message={message[:60]}...")
-        await asyncio.to_thread(send_text_message, phone, message)
+        await asyncio.to_thread(send_text_message, phone, contexte)
         logger.info(f"✅ Premier message CERFA envoyé | dossier={_did}")
     except Exception as e:
         logger.warning(f"❌ Erreur envoi WhatsApp | dossier={_did} | erreur={e}")

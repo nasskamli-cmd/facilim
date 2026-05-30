@@ -522,10 +522,20 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     if not prenom:
         prenom = (ds.get("prenom") or "").strip() or prenom
     # Si nom ET prénom toujours vides → parser cerfa_rep["nom_prenom"]
+    # Priorité : nom_enfant / prenom_enfant du dossier > ds > nom_prenom WhatsApp
+    if not nom:
+        _nom_cr = (cerfa_rep.get("nom_enfant") or "").strip()
+        if _nom_cr:
+            nom = _nom_cr.upper()
+    if not prenom:
+        prenom = (cerfa_rep.get("prenom_enfant") or "").strip() or prenom
     if not nom and not prenom:
         _np = (cerfa_rep.get("nom_prenom") or "").strip()
         if _np:
-            _np_parts = _np.rsplit(" ", 1)
+            # split(" ", 1) = prenom en premier, nom (composé possible) en second
+            # Exemple : "Karim NAIT ALI" → prenom="Karim", nom="NAIT ALI" ✅
+            # rsplit était incorrect : "Karim NAIT ALI" → prenom="Karim NAIT", nom="ALI" ❌
+            _np_parts = _np.split(" ", 1)
             if len(_np_parts) == 2:
                 prenom = _np_parts[0].strip()
                 nom    = _np_parts[1].strip().upper()
@@ -595,6 +605,13 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     situation_familiale    = (ds.get("situation_familiale") or cerfa_rep.get("situation_familiale") or "").lower()
     vie_seule              = ds.get("vie_seule", False)
     a_enfants_charge       = ds.get("a_enfants_charge", False)
+    # Enrichissement depuis la réponse WhatsApp "enfants_a_charge"
+    # (collectée par le bot comme un compte : "0", "2 enfants", "non", "oui")
+    if not a_enfants_charge:
+        _enfants_rep = (cerfa_rep.get("enfants_a_charge") or "").strip().lower()
+        if _enfants_rep:
+            _pas_enfants = any(w in _enfants_rep for w in ["0", "aucun", "non", "pas d", "zéro", "zero", "personne"])
+            a_enfants_charge = not _pas_enfants
     situation_pro          = (ds.get("situation_professionnelle") or cerfa_rep.get("situation_pro_scolaire") or "").lower()
     nom_employeur          = ds.get("nom_employeur") or ""
     poste_occupe           = ds.get("poste_occupe") or ""
