@@ -476,7 +476,14 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     adresse   = dossier.get("adresse_enfant")  or ""
     cp        = dossier.get("cp_enfant")       or ""
     commune   = (dossier.get("commune_enfant") or "").upper()
-    telephone = dossier.get("telephone_famille") or ""
+    # Téléphone : reformater en format français local (0X XX XX XX XX)
+    # Le numéro WhatsApp est stocké en format international (336XXXXXXXX → 06XXXXXXXX)
+    _tel_raw  = (dossier.get("telephone_famille") or "").strip().replace(" ", "").replace("-", "")
+    if _tel_raw.startswith("33") and len(_tel_raw) == 11:
+        _tel_raw = "0" + _tel_raw[2:]   # 33642087770 → 0642087770
+    elif _tel_raw.startswith("+33"):
+        _tel_raw = "0" + _tel_raw[3:]
+    telephone = _tel_raw
     email     = dossier.get("email_famille")   or ""
     dept      = dossier.get("departement_code") or ""
 
@@ -605,13 +612,15 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     situation_familiale    = (ds.get("situation_familiale") or cerfa_rep.get("situation_familiale") or "").lower()
     vie_seule              = ds.get("vie_seule", False)
     a_enfants_charge       = ds.get("a_enfants_charge", False)
-    # Enrichissement depuis la réponse WhatsApp "enfants_a_charge"
-    # (collectée par le bot comme un compte : "0", "2 enfants", "non", "oui")
-    if not a_enfants_charge:
-        _enfants_rep = (cerfa_rep.get("enfants_a_charge") or "").strip().lower()
-        if _enfants_rep:
-            _pas_enfants = any(w in _enfants_rep for w in ["0", "aucun", "non", "pas d", "zéro", "zero", "personne"])
-            a_enfants_charge = not _pas_enfants
+    # La réponse WhatsApp de la famille PRIME sur l'analyse IA pour ce champ.
+    # Si la famille a dit "0" ou "aucun", on écrase même si l'IA a dit True.
+    _enfants_rep = (cerfa_rep.get("enfants_a_charge") or "").strip().lower()
+    if _enfants_rep:
+        _pas_enfants = any(w in _enfants_rep for w in ["0", "aucun", "non", "pas d", "zéro", "zero", "personne"])
+        if _pas_enfants:
+            a_enfants_charge = False    # override : la famille a confirmé 0 enfant
+        else:
+            a_enfants_charge = True     # override : la famille a confirmé des enfants
     situation_pro          = (ds.get("situation_professionnelle") or cerfa_rep.get("situation_pro_scolaire") or "").lower()
     nom_employeur          = ds.get("nom_employeur") or ""
     poste_occupe           = ds.get("poste_occupe") or ""
@@ -861,13 +870,15 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         except Exception:
             pass
 
-    # ── Description P8 (narrative humanisée — structure : situation → retentissements → projets) ──
+    # ── Description P8 (narrative humanisée — structure : situation → retentissements) ──
+    # Le projet professionnel est EXCLU de B8 — il figure UNIQUEMENT en D3 (page 16).
+    # B8 = difficultés fonctionnelles et retentissements dans la vie quotidienne.
     description_situation = _composer_description_p8(
         geva_pro=geva_pro,
         juriste=juriste,
         elements_probants=elements_probants,
         is_enfant=is_enfant,
-        projet_professionnel=projet_professionnel,
+        projet_professionnel="",   # ← intentionnellement vide : projet pro = section D3
         difficultes_quotidiennes=difficultes_quotidiennes,
         besoins_aide=besoins_aide_str,
     )
@@ -1070,6 +1081,13 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
 
     # Consentement partage informations — géré via le radio OPTION P4 1 dans la section radios
     # (valeur /J'accepte ou /Je n'accepte pas — cochée via _cocher_option_nth plus bas)
+
+    # Case de certification sur l'honneur (page 4) — toujours cochée
+    # "En cochant cette case, je certifie sur l'honneur l'exactitude des informations"
+    try:
+        cases.append("Case à cocher P4 certification")
+    except Exception:
+        pass
 
     # Difficultés remplissage dossier médical — UNIQUEMENT si question posée et réponse "oui"
     _difficultes_med_rep = (cerfa_rep.get("difficultes_dossier_medical") or "").lower()
@@ -1488,10 +1506,17 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
                 champs["Champ de texte P 16 2"] = _esrp_label[:200]
 
         # Case à cocher P16 5 = Formation professionnelle en cours ou envisagée
-        if en_formation or (_cible_crp and type_formation_pro):
+        if en_formation or _cible_crp:
             cases.append("Case à cocher P16 5")
-            # Nom de la formation → "Champ de texte P 17 1" (avec espace)
+            # Champ E2 / P17 1 : description de l'orientation souhaitée (CRP, ESRP, formation)
+            # On construit un libellé clair plutôt qu'un code seul (évite "CRP" sans contexte)
             _form_label = type_formation_pro or nom_formation or ""
+            if not _form_label and _cible_crp:
+                _esrp_name = nom_esrp or organisme_formation or ""
+                if _esrp_name:
+                    _form_label = f"CRP / ESRP : {_esrp_name}"
+                else:
+                    _form_label = "Centre de Rééducation Professionnelle (CRP / ESRP)"
             if _form_label:
                 champs["Champ de texte P 17 1"] = _form_label[:300]
 
@@ -1638,7 +1663,11 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
             _cocher_option_nth(writer, "Case à cocher OPTION P13 6", 1)
 
         # Contrat en cours (OPTION P13 2)
-        has_emploi_radio = any(x in sp for x in ["emploi", "travail", "esat", "cdi", "cdd"])
+        # Attention : "emploi" est sous-chaîne de "sans_emploi" → exclure explicitement
+        has_emploi_radio = (
+            "sans_emploi" not in sp
+            and any(x in sp for x in ["en emploi", "esat", "cdi", "cdd", "contrat"])
+        ) or has_emploi
         _cocher_option_nth(writer, "Case à cocher OPTION P13 2", 0 if has_emploi_radio else 1)
 
         # En arrêt (OPTION P13 3)
