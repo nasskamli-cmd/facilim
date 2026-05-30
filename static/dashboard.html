@@ -1546,7 +1546,8 @@
         'ERREUR':           `<span class="badge badge-erreur"><span class="badge-dot"></span>Erreur</span>`,
         'ARCHIVE':          `<span class="badge badge-archive"><span class="badge-dot"></span>Archivé</span>`,
         'BLOQUE':           `<span class="badge badge-bloque"><span class="badge-dot"></span>Bloqué</span>`,
-        'DROITS_A_VALIDER': `<span class="badge badge-valider"><span class="badge-dot"></span>Droits à valider</span>`,
+        'DROITS_A_VALIDER':  `<span class="badge badge-valider"><span class="badge-dot"></span>Droits à valider</span>`,
+        'PRET_POUR_REVUE':  `<span class="badge badge-valider"><span class="badge-dot"></span>Prêt pour revue</span>`,
       };
       return map[statut] || `<span class="badge">${statut}</span>`;
     }
@@ -1707,6 +1708,10 @@
               ${d.statut === 'DROITS_A_VALIDER'
                 ? `<button class="btn-act" style="background:#FFF7ED;color:#C2410C;border:1px solid #FED7AA;font-weight:700;"
                            onclick="openValidationModal('${d.dossier_id}')">🔶 Valider droits</button>`
+                : ''}
+              ${d.statut === 'PRET_POUR_REVUE'
+                ? `<button class="btn-act" style="background:#EFF6FF;color:#1E40AF;border:1px solid #BFDBFE;font-weight:700;"
+                           onclick="openRevueModal('${d.dossier_id}')">📄 Prévisualiser / Envoyer</button>`
                 : ''}
               <button class="btn-act ba-score"  onclick="openScoreModal('${d.dossier_id}')">Score</button>
               <button class="ba-del" onclick="supprimerDossier('${d.dossier_id}')" title="Supprimer">🗑</button>
@@ -2526,6 +2531,32 @@
       document.getElementById('modal-validation').classList.add('open');
     }
 
+    function openRevueModal(dossierId) {
+      // Pour les dossiers PRET_POUR_REVUE : ouvre directement le panneau preview/envoi
+      _validationDossierId = dossierId;
+      const dossier = (_allDossiers || []).find(d => d.dossier_id === dossierId);
+      const nom = [dossier?.prenom_enfant, dossier?.nom_enfant].filter(Boolean).join(' ') || dossierId.slice(0, 8);
+      document.getElementById('val-sub').textContent = `Dossier de ${nom} — prévisualisez le CERFA avant envoi`;
+
+      // Cacher les droits et montrer directement le panneau revue
+      document.getElementById('val-cerfa-pret').style.display = 'block';
+      document.getElementById('val-cerfa-incomplet').style.display = 'none';
+      document.getElementById('val-cerfa-erreurs').innerHTML = '';
+
+      // Réinitialiser le bouton envoyer
+      const envBtn = document.getElementById('val-envoyer-btn');
+      envBtn.disabled = true;
+      envBtn.style.background = '#9CA3AF';
+      envBtn.style.cursor = 'not-allowed';
+      document.getElementById('val-confirm-checkbox').checked = false;
+
+      // Cacher le bouton "Valider les droits" — les droits sont déjà validés
+      const sendBtn = document.getElementById('val-send-btn');
+      if (sendBtn) sendBtn.style.display = 'none';
+
+      document.getElementById('modal-validation').classList.add('open');
+    }
+
     function closeValidationModal() {
       document.getElementById('modal-validation').classList.remove('open');
       document.getElementById('val-cerfa-incomplet').style.display = 'none';
@@ -2542,6 +2573,9 @@
       envBtn.style.background = '#9CA3AF';
       envBtn.style.cursor = 'not-allowed';
       _validationDossierId = null;
+      // Remettre le bouton val-send-btn visible pour la prochaine ouverture
+      const sendBtnReset = document.getElementById('val-send-btn');
+      if (sendBtnReset) sendBtnReset.style.display = '';
     }
 
     function _toggleDroit(droit, checked) {
