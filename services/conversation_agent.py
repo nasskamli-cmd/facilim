@@ -148,6 +148,171 @@ _QUALIFICATION     = "qualification_parcours"
 
 
 # ---------------------------------------------------------------------------
+# PROMPT MAÎTRE — Intelligence métier MDPH (adapté dialogue WhatsApp)
+#
+# Ce bloc est injecté dans TOUS les appels LLM de generer_reponse_agent.
+# Il ne remplace pas la structure des 5 groupes : il pilote le RAISONNEMENT
+# à l'intérieur de chaque groupe (priorisation, transformation, qualité).
+# ---------------------------------------------------------------------------
+
+_PROMPT_MAITRE_WHATSAPP = """
+====== INTELLIGENCE MÉTIER FACILIM — MDPH ======
+
+MISSION
+Tu es l'intelligence métier de Facilim, mandatée pour construire un dossier MDPH
+complet, cohérent et argumenté. Le CERFA n'est pas un dossier médical.
+Tu documentes les RETENTISSEMENTS FONCTIONNELS, pas les diagnostics.
+
+━━━ RÈGLE 0 — VÉRIFICATION 7 SOURCES ━━━
+Avant toute question, vérifier si l'information existe déjà dans :
+  1. Documents uploadés (bilan, comptes rendus, certificats)
+  2. CERFA pré-rempli par l'éducateur
+  3. Données saisies dans l'interface
+  4. Historique conversationnel WhatsApp
+  5. Réponses précédentes de la famille
+  6. Données déduites (haut niveau de confiance)
+  7. Champs déjà présents dans DONNÉES DÉJÀ COLLECTÉES ci-dessous
+
+→ Si l'information est trouvée : NE PAS reposer la question.
+  Formuler : "J'ai noté que…" / "Selon les éléments transmis…"
+→ Si absente de toutes les sources : poser la question.
+→ JAMAIS inventer une information. Case vide > case fausse.
+
+━━━ RÈGLE 1 — CHAÎNE DE TRANSFORMATION ━━━
+Chaque information reçue doit être transformée mentalement selon :
+  Information brute
+  → Retentissement fonctionnel
+  → Conséquence concrète
+  → Besoin identifié
+  → Compensation nécessaire
+  → Droit potentiel (AAH / PCH / RQTH / CMI / AEEH / AESH / ESAT…)
+
+Exemple : "Je ne peux plus conduire"
+→ difficulté de mobilité → dépendance pour les déplacements
+→ besoin d'accompagnement → compensation transport → CMI / PCH transport
+
+━━━ RÈGLE 2 — NIVEAUX DE QUALITÉ DE PREUVE ━━━
+Toujours chercher à atteindre les niveaux 4 et 5 :
+  Niveau 1 : Diagnostic brut ("j'ai une SEP")
+  Niveau 2 : Difficulté déclarée ("je suis fatigué")
+  Niveau 3 : Exemple concret ("je suis fatigué après la douche")
+  Niveau 4 : Conséquence quotidienne ("après la douche je dois m'allonger 1h")
+  Niveau 5 : Besoin de compensation ("quelqu'un m'aide pour les soins chaque matin")
+
+Si la réponse reste au niveau 1 ou 2, poser UNE relance ciblée :
+  "Pouvez-vous me donner un exemple concret dans votre journée ?"
+
+━━━ RÈGLE 3 — DÉTECTION AUTOMATIQUE DU PROFIL ━━━
+Calculer l'âge depuis la date de naissance et appliquer :
+
+PROFIL ENFANT (0-15 ans)
+  → Narrateur : parent ("mon fils", "ma fille", "nous")
+  → Priorité : scolarité, AESH, PPS/PAI, AEEH
+  → Ne jamais poser de questions professionnelles
+
+PROFIL JEUNE / TRANSITION (16-25 ans)
+  → Vérifier : études, CFA, IME, insertion, logement
+  → Si parcours IME : utiliser "parcours scolaire adapté" (jamais "classe ordinaire fictive")
+  → Droits fréquents : AAH, RQTH, orientation ESAT, formation, logement accompagné
+
+PROFIL ADULTE (26+ ans)
+  → Ne jamais poser de questions scolaires non pertinentes
+  → Priorité : emploi, ESAT, inactivité, logement autonome ou accompagné
+
+━━━ RÈGLE 4 — MOTEUR DE JOURNÉE TYPE ━━━
+Pour documenter "difficultes_quotidiennes", raisonner sur :
+  réveil → lever → toilette → habillage → repas → déplacements
+  → école/travail → démarches → courses → activités → relations sociales → coucher
+
+Identifier automatiquement : autonomie, fatigabilité, sécurité, mobilité,
+communication, besoin d'aide humaine, besoin d'aide technique.
+
+━━━ RÈGLE 5 — NON-REDONDANCE ABSOLUE ━━━
+Le système NE POSE JAMAIS deux fois la même question.
+Si une info est déjà connue : la mentionner en accusé de réception, pas en question.
+
+━━━ RÈGLE 6 — GESTION DES IMPASSES ━━━
+Si l'utilisateur ne peut pas répondre après 1 relance :
+  → Répondre "Pas de problème, je note que cette information n'est pas disponible."
+  → Continuer avec la question suivante.
+
+━━━ RÈGLE 7 — PRIORISATION DANS CHAQUE GROUPE ━━━
+Parmi les champs d'un groupe, poser en priorité ceux qui ont le plus fort
+impact sur les droits potentiels. Les champs à fort impact fonctionnel
+(difficultes_quotidiennes, besoins_aide) priment sur les champs administratifs.
+
+━━━ RÈGLE 8 — STYLE RÉDACTIONNEL ━━━
+- Français simple, phrases courtes, langage FALC
+- Ton bienveillant et professionnel
+- Narrateur cohérent selon le profil (ne jamais mélanger "je" et "il/elle")
+- NE JAMAIS demander : diagnostic, médicaments, médecin, NIR, taux d'incapacité
+
+━━━ RÈGLE 9 — DROITS POTENTIELS À SURVEILLER ━━━
+Indices → droits à détecter en permanence :
+  Aide quotidienne → PCH aide humaine
+  Fatigabilité sévère → PCH, AAH
+  Déplacements limités → CMI stationnement
+  Station debout difficile → CMI priorité
+  Enfant / scolarité → AEEH, AESH, orientation SESSAD/IME
+  Travail impossible → AAH, RQTH, ESAT
+  Logement adapté → PCH logement, habitat inclusif
+  Accompagnement quotidien → SAVS, SAMSAH
+
+Ne jamais proposer un droit sans élément justificatif.
+
+======================================================
+"""
+
+
+def _detecter_profil(cerfa_reponses: dict) -> str:
+    """
+    Détecte automatiquement le profil MDPH selon la date de naissance.
+    Retourne : 'enfant' (0-15 ans) | 'jeune' (16-25 ans) | 'adulte' (26+ ans) | 'inconnu'
+    """
+    ddn = cerfa_reponses.get("date_naissance", "")
+    if not ddn or "/" not in ddn:
+        return "inconnu"
+    try:
+        from datetime import date as _dt
+        p = ddn.split("/")
+        if len(p) == 3:
+            age = (_dt.today() - _dt(int(p[2]), int(p[1]), int(p[0]))).days // 365
+            if age <= 15:
+                return "enfant"
+            if age <= 25:
+                return "jeune"
+            return "adulte"
+    except Exception:
+        pass
+    return "inconnu"
+
+
+def _contexte_profil(profil: str) -> str:
+    """Retourne la note de profil à insérer dans les system prompts."""
+    if profil == "enfant":
+        return (
+            "PROFIL DÉTECTÉ : ENFANT (0-15 ans)\n"
+            "→ Narrateur : parent (mon fils / ma fille / nous)\n"
+            "→ Priorité : scolarité, AESH, PPS/PAI, AEEH\n"
+            "→ Ne jamais poser de questions professionnelles\n"
+        )
+    if profil == "jeune":
+        return (
+            "PROFIL DÉTECTÉ : JEUNE / TRANSITION (16-25 ans)\n"
+            "→ Vérifier : études, IME, CFA, insertion, logement\n"
+            "→ Si IME : 'parcours scolaire adapté' (pas 'classe ordinaire')\n"
+            "→ Droits : AAH, RQTH, ESAT, formation, logement accompagné\n"
+        )
+    if profil == "adulte":
+        return (
+            "PROFIL DÉTECTÉ : ADULTE (26+ ans)\n"
+            "→ Ne pas poser de questions scolaires\n"
+            "→ Priorité : emploi, ESAT, inactivité, logement\n"
+        )
+    return "PROFIL : non encore déterminé (date de naissance manquante)\n"
+
+
+# ---------------------------------------------------------------------------
 # Pré-remplissage : évite de reposer des questions déjà connues
 # ---------------------------------------------------------------------------
 
@@ -325,15 +490,38 @@ def prepopuler_cerfa_depuis_dossier(cerfa_reponses: dict, dossier: dict) -> None
         if parts_sit:
             _set("situation_pro_scolaire", " — ".join(parts_sit))
 
-    # Historique MDPH — depuis les données structurées
-    _set("historique_mdph", ds.get("numero_dossier_mdph") or ds.get("historique_mdph"))
+    # Historique MDPH — interface éducateur (priorité absolue) > ds > bilan
+    # CORRECTION 1 : Le numéro MDPH peut être saisi directement dans l'interface
+    # (champs dossier.numero_mdph / dossier.historique_mdph / dossier.numero_dossier_mdph).
+    # C'est la source la plus fiable — ne jamais la redemander via WhatsApp.
+    _num_mdph_interface = (
+        dossier.get("numero_mdph")
+        or dossier.get("historique_mdph")
+        or dossier.get("numero_dossier_mdph")
+        or ""
+    ).strip()
+    _num_mdph_ds = (ds.get("numero_dossier_mdph") or ds.get("historique_mdph") or "").strip()
+    _num_mdph_final = _num_mdph_interface or _num_mdph_ds
+    _set("historique_mdph", _num_mdph_final)
 
     # Type de demande — première vs renouvellement
+    # CORRECTION 1 : Si un numéro de dossier est présent (interface ou ds),
+    # la demande est OBLIGATOIREMENT un renouvellement. Ne pas redemander.
     if not cerfa_reponses.get("type_demande"):
         _type_dem = (ds.get("type_demande") or "").strip()
         if not _type_dem and ds.get("deja_connu_mdph"):
             _type_dem = "renouvellement"
         _set("type_demande", _type_dem)
+    # Forcer renouvellement si numéro présent, quelle que soit la valeur actuelle de type_demande
+    if _num_mdph_final and any(c.isdigit() for c in _num_mdph_final):
+        _mots_premiere = ["premiere", "première", "1ere", "jamais", "nouveau"]
+        _td_actuel = cerfa_reponses.get("type_demande", "").lower()
+        if not _td_actuel or any(w in _td_actuel for w in _mots_premiere):
+            cerfa_reponses["type_demande"] = "renouvellement"
+            logger.info(
+                f"[PREPOPULER C1] Numéro MDPH détecté ({_num_mdph_final!r}) "
+                "→ type_demande forcé à 'renouvellement'."
+            )
 
     # ── Nouveaux champs (P5, P9-12, D1/D2) ──────────────────────────────────
 
@@ -513,14 +701,22 @@ CERFA_GROUPES: list[dict] = [
     },
     {
         "id": "difficultes",
-        "champs": ["difficultes_quotidiennes", "besoins_aide", "ressources_actuelles"],
+        # CORRECTION 7 : aidant_identite ajouté à ce groupe — collecté systématiquement
+        # quand une aide humaine est décrite (profil enfant/jeune ou aide quotidienne).
+        # La question est posée de façon naturelle après besoins_aide.
+        "champs": ["difficultes_quotidiennes", "besoins_aide", "aidant_identite", "ressources_actuelles"],
         "question_falc": (
             "Maintenant, parlez-moi de votre quotidien :\n\n"
             "1️⃣ Quelles sont vos *principales difficultés* dans la vie de tous les jours ?\n"
             "   (ce que vous ne pouvez pas faire seul·e, ce qui est épuisant ou douloureux)\n"
             "2️⃣ De quelles *aides* avez-vous besoin ?\n"
             "   (aide humaine, matériel, aménagements…)\n"
-            "3️⃣ Quelles sont vos *ressources actuelles* ?\n"
+            "3️⃣ *Qui vous accompagne au quotidien ?*\n"
+            "   Si quelqu'un vous aide régulièrement (parent, conjoint, proche), "
+            "indiquez son prénom, nom et son lien avec vous.\n"
+            "   (exemple : Marie Dupont, mère / Jean Martin, conjoint)\n"
+            "   Si personne ne vous aide, répondez simplement 'personne'.\n"
+            "4️⃣ Quelles sont vos *ressources actuelles* ?\n"
             "   (allocations comme AAH, APL, pension d'invalidité, ou aucune)"
         ),
     },
@@ -562,6 +758,12 @@ def get_next_groupe_cerfa(cerfa_reponses: dict) -> dict | None:
     type_d          = cerfa_reponses.get("type_demande", "").lower()
     is_first        = any(w in type_d for w in ["premiere", "première", "jamais", "nouveau"])
     is_renouvellement = "renouvellement" in type_d
+    # CORRECTION 1 — Un numéro de dossier présent dans historique_mdph
+    # signifie que la personne est déjà connue de la MDPH → pas une première demande.
+    _historique_val = cerfa_reponses.get("historique_mdph", "")
+    if _historique_val and any(c.isdigit() for c in _historique_val):
+        is_first          = False
+        is_renouvellement = True
     type_droits_val = cerfa_reponses.get("type_droits", "").lower()
     has_cmi = any(w in type_droits_val for w in ["cmi", "carte mobilite", "carte invalidite"])
     has_orp = any(w in type_droits_val for w in ["orp", "rqth", "emploi", "esat"])
@@ -647,6 +849,11 @@ def get_next_cerfa_field(cerfa_reponses: dict[str, str]) -> str | None:
     is_first = any(
         w in type_d for w in ["premiere", "premier", "première", "jamais", "nouveau", "1ere", "1ère"]
     )
+    # CORRECTION 1 — Un numéro de dossier dans historique_mdph → pas une première demande
+    _hist_val = cerfa_reponses.get("historique_mdph", "")
+    if _hist_val and any(c.isdigit() for c in _hist_val):
+        is_first          = False
+        is_renouvellement = True
     has_cmi = any(w in type_droits_val for w in ["cmi", "carte mobilite", "carte invalidite"])
     has_orp = any(
         w in type_droits_val
@@ -673,7 +880,10 @@ def get_next_cerfa_field(cerfa_reponses: dict[str, str]) -> str | None:
                 continue  # Pas un renouvellement → pas besoin de demander l'urgence
 
         # historique_mdph : inutile pour une première demande
+        # CORRECTION 1 : si déjà renseigné (interface ou ds) → ne pas redemander
         if field == _HISTORIQUE:
+            if cerfa_reponses.get(_HISTORIQUE):
+                continue   # déjà connu — ne pas poser la question
             if is_first:
                 continue
             if type_d and not is_renouvellement:
@@ -917,6 +1127,10 @@ def generer_reponse_agent(
         answered_ctx = "\n".join(answered_lines) if answered_lines else "  (aucun champ encore renseigné)"
         sujet = "de l'enfant" if is_enfant else "de la personne"
 
+        # Détection automatique du profil MDPH
+        profil        = _detecter_profil(cerfa_reponses)
+        profil_note   = _contexte_profil(profil)
+
         _msg_lower = message_entrant.lower()
         _is_urgence = any(p in _msg_lower for p in ["urgent", "en urgence", "rapidement", "vite"])
         urgence_note = (
@@ -925,19 +1139,25 @@ def generer_reponse_agent(
         )
 
         system_groupe = (
-            f"Tu es Mathilde, assistante de l'équipe Facilim, spécialisée MDPH. Tu discutes via WhatsApp {sujet}.\n"
+            f"{_PROMPT_MAITRE_WHATSAPP}\n"
+            f"====== CONTEXTE DE CET ÉCHANGE ======\n"
+            f"Tu es Mathilde, assistante de l'équipe Facilim, spécialisée MDPH. "
+            f"Tu discutes via WhatsApp {sujet}.\n"
             f"Commence TOUJOURS ton message par 'Merci pour vos réponses 😊' ou une formule similaire chaleureuse.\n"
-            f"Rappelle brièvement qui tu es si c'est le premier échange : 'Je suis Mathilde de l'équipe Facilim.'\n"
-            f"Langue : français simple, bienveillant, FALC (phrases courtes).\n"
+            f"Rappelle brièvement qui tu es si c'est le premier échange.\n"
             f"{urgence_note}\n"
-            f"NE JAMAIS demander : diagnostic, médicaments, médecin, NIR, taux d'incapacité.\n\n"
-            f"DONNÉES DÉJÀ COLLECTÉES (ne pas re-demander) :\n{answered_ctx}\n\n"
-            f"RÈGLES :\n"
+            f"{profil_note}\n"
+            f"DONNÉES DÉJÀ COLLECTÉES (7 sources vérifiées — ne pas re-demander) :\n{answered_ctx}\n\n"
+            f"GROUPE EN COURS : {prochain_groupe['id']}\n"
+            f"RÈGLES D'EXÉCUTION :\n"
+            f"- Applique la Règle 0 : vérifie les 7 sources avant chaque question\n"
+            f"- Si une info du groupe est déjà connue, note-la ('J'ai noté que…') sans la re-demander\n"
+            f"- Pour difficultes_quotidiennes et besoins_aide : cherche le niveau 4-5 de preuve (Règle 2)\n"
+            f"- Applique la chaîne de transformation (Règle 1) pour chaque réponse reçue\n"
             f"- Accuse réception en 1 phrase courte et chaleureuse\n"
-            f"- Puis pose EXACTEMENT les questions ci-dessous, mot pour mot, sans en ajouter\n"
-            f"- Ne demande pas d'autres informations\n"
+            f"- Puis pose les questions manquantes ci-dessous (uniquement celles non déjà connues)\n"
             f"- N'invente jamais d'information\n\n"
-            f"QUESTIONS À POSER (copier-coller après l'accusé de réception) :\n"
+            f"QUESTIONS DU GROUPE (poser uniquement celles dont la réponse est absente) :\n"
             f"{prochain_groupe['question_falc']}"
         )
 
@@ -989,6 +1209,10 @@ def generer_reponse_agent(
     answered_ctx = "\n".join(answered_lines) if answered_lines else "  (aucun champ encore renseigné)"
     sujet = "de l'enfant" if is_enfant else "de la personne"
 
+    # Détection automatique du profil MDPH
+    profil      = _detecter_profil(cerfa_reponses)
+    profil_note = _contexte_profil(profil)
+
     _msg_lower = message_entrant.lower()
     _deja_patterns = [
         "déjà répondu", "deja repondu", "j'ai déjà", "j'ai deja",
@@ -1009,16 +1233,21 @@ def generer_reponse_agent(
     )
 
     system = (
-        f"Tu es l'Assistant Facilim, spécialisé MDPH. Tu discutes via WhatsApp {sujet}.\n"
+        f"{_PROMPT_MAITRE_WHATSAPP}\n"
+        f"====== CONTEXTE DE CET ÉCHANGE ======\n"
+        f"Tu es Mathilde, assistante de l'équipe Facilim, spécialisée MDPH. "
+        f"Tu discutes via WhatsApp {sujet}.\n"
         f"Langue : français simple, bienveillant, FALC.\n"
         f"{urgence_note}{deja_note}\n"
-        f"NE JAMAIS demander : diagnostic, médicaments, médecin, NIR, taux d'incapacité.\n\n"
-        f"DONNÉES DÉJÀ COLLECTÉES :\n{answered_ctx}\n\n"
-        f"PROCHAIN CHAMP : {next_label}\n\n"
-        f"RÈGLES :\n"
-        f"- Accuse réception en 1 phrase courte\n"
-        f"- Pose UNIQUEMENT la question sur : {next_label}\n"
-        f"- Ne demande PAS d'autres informations\n"
+        f"{profil_note}\n"
+        f"DONNÉES DÉJÀ COLLECTÉES (7 sources vérifiées — ne pas re-demander) :\n{answered_ctx}\n\n"
+        f"CHAMP À COLLECTER : {next_label}\n\n"
+        f"RÈGLES D'EXÉCUTION :\n"
+        f"- Applique la Règle 0 : vérifie si ce champ est déjà connu dans les données ci-dessus\n"
+        f"- Si l'information existe : la signaler ('J'ai noté que…') sans reposer la question\n"
+        f"- Pour difficultes_quotidiennes / besoins_aide : relancer si niveau ≤ 2 (Règle 2)\n"
+        f"- Applique la chaîne de transformation (Règle 1) pour formuler la question avec pertinence\n"
+        f"- Ne demande PAS d'autres informations que ce champ\n"
         f"- Ne répète jamais une question déjà répondue\n"
         f"- N'invente jamais d'information\n"
         f"- Réponse max : 2 phrases + 1 question"

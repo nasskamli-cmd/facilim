@@ -428,26 +428,33 @@ def _mapper_droits(
         cases.append("Case à cocher P18 1")
 
     # ORP : Orientation Professionnelle
+    # CORRECTION 5 — Cohérence C/D : ESAT et formation/CRP sont MUTUELLEMENT EXCLUSIFS.
+    # Si ESAT est dans les droits → P18 4 uniquement (milieu protégé), jamais P18 3 (CRP).
+    # Si CRP/formation → P18 3 uniquement, jamais P18 4.
+    # Ne jamais cocher les deux pour un même objectif.
     _orp_tokens = ("ORP", "ORIENTATION PROFESSIONNELLE", "ORIENTATION PRO",
                    "RECLASSEMENT PROFESSIONNEL", "INSERTION PROFESSIONNELLE")
+    _is_esat_projet = "ESAT" in droits_str and not is_enfant
+    _is_crp_projet  = any(t in droits_str for t in (
+        "CRP", "CPO", "UEROS", "ESRP", "VISA PRO",
+        "REEDUCATION PROFESSIONNELLE", "READAPTATION PROFESSIONNELLE",
+        "CENTRE DE REEDUCATION", "CENTRE DE READAPTATION",
+    ))
     if any(t in droits_str for t in _orp_tokens):
         cases.append("Case à cocher P18 2")  # Case parente ORP
-        # Sous-type :
-        if any(t in droits_str for t in (
-            "CRP", "CPO", "UEROS",
-            "REEDUCATION PROFESSIONNELLE", "READAPTATION PROFESSIONNELLE",
-            "ESRP",            # Établissement de Réadaptation Professionnelle (ex-CRP)
-            "VISA PRO",        # formation reconnue CRP
-            "CENTRE DE REEDUCATION", "CENTRE DE READAPTATION",
-        )):
-            cases.append("Case à cocher P18 3")   # CRP / CPO / UEROS / ESRP
-        elif "ESAT" in droits_str and not is_enfant:
-            cases.append("Case à cocher P18 4")   # ESAT (milieu protégé)
+        if _is_esat_projet and not _is_crp_projet:
+            # Projet ESAT uniquement → milieu protégé
+            cases.append("Case à cocher P18 4")
+        elif _is_crp_projet and not _is_esat_projet:
+            # Projet formation/CRP uniquement → réadaptation professionnelle
+            cases.append("Case à cocher P18 3")
+        elif _is_esat_projet and _is_crp_projet:
+            # Les deux mentionnés → privilégier ESAT (plus structurant pour profil MIXTE)
+            cases.append("Case à cocher P18 4")
+            logger.warning("[CERFA C5] ESAT + CRP tous deux présents — P18 4 (ESAT) retenu, P18 3 ignoré.")
         else:
             # Marché du travail (milieu ordinaire)
             cases.append("Case à cocher P18 5")
-            # Emploi accompagné (sous-option marché du travail)
-            # Quand la personne a un projet mais du mal à trouver seule
             if emploi_accompagne or "EMPLOI ACCOMPAGNE" in droits_str:
                 cases.append("Case à cocher P18 6")
 
@@ -612,7 +619,10 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     else:
         is_enfant = True  # inconnu : défaut conservateur
     genre                  = (ds.get("genre") or cerfa_rep.get("genre") or "").lower()
-    situation_familiale    = (ds.get("situation_familiale") or cerfa_rep.get("situation_familiale") or "").lower()
+    # CORRECTION 3 — La réponse WhatsApp de la famille prime sur l'analyse IA pour
+    # situation_familiale. La famille connaît sa situation mieux que l'IA qui déduit
+    # depuis un bilan souvent ancien. cerfa_rep > ds.
+    situation_familiale    = (cerfa_rep.get("situation_familiale") or ds.get("situation_familiale") or "").lower()
     vie_seule              = ds.get("vie_seule", False)
     a_enfants_charge       = ds.get("a_enfants_charge", False)
     # La réponse WhatsApp de la famille PRIME sur l'analyse IA pour ce champ.
@@ -634,8 +644,17 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     besoins_amenagement    = ds.get("besoins_amenagement_logement", False)
     type_logement          = (ds.get("type_logement") or "").lower()
     statut_logement        = (ds.get("statut_logement") or "").lower()
-    # NSS : ds > cerfa_reponses (champ WhatsApp numero_securite_sociale)
-    nss        = (ds.get("nss") or cerfa_rep.get("numero_securite_sociale") or "").replace(" ", "").replace(".", "").replace("-", "")
+    # CORRECTION 2 — NSS : chercher dans dossier (interface) > ds (IA) > cerfa_rep (WhatsApp)
+    # L'interface permet à l'éducateur de saisir le NIR directement → source la plus fiable.
+    # Niveau de confiance ÉLEVÉ si trouvé dans dossier ou ds → ne pas redemander.
+    nss = (
+        dossier.get("numero_securite_sociale")
+        or dossier.get("nss")
+        or ds.get("nss")
+        or ds.get("numero_securite_sociale")
+        or cerfa_rep.get("numero_securite_sociale")
+        or ""
+    ).replace(" ", "").replace(".", "").replace("-", "")
     nss_parent = (ds.get("nss_parent") or "").replace(" ", "").replace(".", "")
 
     # BUG 4 CORRIGÉ : la réponse WhatsApp de la famille prime sur l'analyse IA pour type_demande.
@@ -671,6 +690,33 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
             numero_dossier_mdph = max(_candidats, key=len)   # prend la suite la plus longue
         elif not re.search(r'\d', numero_dossier_mdph):
             numero_dossier_mdph = ""   # aucun chiffre → pas de numéro exploitable
+    # CORRECTION 1 — Cohérence numéro de dossier / type de demande (renforcée)
+    # Vérifier AUSSI les champs de l'interface éducateur (dossier.*), qui sont
+    # la source la plus fiable et peuvent contenir le numéro MDPH avant tout dialogue.
+    _num_mdph_interface_filler = (
+        dossier.get("numero_mdph")
+        or dossier.get("historique_mdph")
+        or dossier.get("numero_dossier_mdph")
+        or ""
+    ).strip()
+    if _num_mdph_interface_filler and not numero_dossier_mdph:
+        # Extraire le numéro depuis le champ interface
+        _candidats_if = re.findall(r'\b(\d{5,12})\b', _num_mdph_interface_filler)
+        if _candidats_if:
+            numero_dossier_mdph = max(_candidats_if, key=len)
+            deja_connu_mdph = True
+    _mots_premiere = ["premiere", "première", "1ere", "1ère", "1re", "premier", "jamais", "nouveau"]
+    if numero_dossier_mdph:
+        _est_marquee_premiere = any(w in type_demande for w in _mots_premiere)
+        if _est_marquee_premiere:
+            logger.warning(
+                f"[CERFA C1] Incohérence détectée : numéro dossier présent ({numero_dossier_mdph!r}) "
+                f"mais type_demande={type_demande!r}. Correction forcée → 'renouvellement'."
+            )
+            type_demande = "renouvellement"
+        elif not type_demande:
+            type_demande = "renouvellement"
+
     # urgence_droits et procedure_simplifiee : calculés après la lecture de cerfa_rep ci-dessous
 
     # Identité complémentaire
@@ -873,14 +919,43 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         ])
     )
 
-    # POINT 7 (CORRIGÉ) — Pages 19-20 NON automatiques.
-    # Conditions pour remplir : aidant explicitement nommé (nom_aidant, aidant_identite)
-    # OU éducateur a confirmé que quelqu'un a réduit son temps de travail pour aider.
-    # Ne JAMAIS déduire automatiquement depuis is_enfant ou besoins_aide_humaine seuls.
+    # CORRECTION 6 — E1/E2 obligatoires quand aide humaine confirmée
+    # Règle MDPH : un dossier sans E1/E2 remplis alors qu'une aide humaine est décrite
+    # est systématiquement renvoyé. On force _a_aidant_confirme dans ces cas :
+    #   - Profil enfant → parent = aidant par défaut (E1/E2 obligatoires)
+    #   - Aide humaine décrite dans besoins ou narration P8 → E1 obligatoire
+    #   - MIXTE (jeune vivant chez parents) avec aide → E1/E2 obligatoires
+    _aide_humaine_decrite = (
+        besoins_aide_humaine
+        or a_auxiliaire_vie
+        or bool(nom_aidant)
+        or bool(_aidant_identite_rep)
+        or any(w in _besoins_aide_rep_txt for w in [
+            "quelqu'un", "ma femme", "mon mari", "mon conjoint", "ma mère", "mon père",
+            "mes enfants", "ma fille", "mon fils", "aidé par", "aide de", "avec l'aide",
+        ])
+    )
     _aidant_temps_partiel = ds.get("aidant_reduction_travail", False)
-    if _aidant_temps_partiel and not nom_aidant:
-        # Reduction de travail confirmée mais identité non collectée → déclencher sans nom
+
+    # Profil enfant : E1/E2 toujours nécessaires (parent = aidant naturel)
+    if is_enfant and not _a_aidant_confirme:
         _a_aidant_confirme = True
+
+    # Aide humaine décrite → E1 obligatoire
+    if _aide_humaine_decrite and not _a_aidant_confirme:
+        _a_aidant_confirme = True
+
+    # Réduction de travail aidant confirmée
+    if _aidant_temps_partiel and not nom_aidant:
+        _a_aidant_confirme = True
+
+    # Alerte si E1/E2 vides alors qu'une aide est décrite
+    if _a_aidant_confirme and not nom_aidant:
+        logger.warning(
+            "[CERFA C6] Aide humaine confirmée mais identité aidant (E2) non collectée. "
+            "Pages 19-20 partiellement vides — risque de renvoi MDPH. "
+            "Vérifier que la question 'aidant_identite' a bien été posée via WhatsApp."
+        )
 
     # Tranche d'âge — détermine les sections applicables du formulaire
     age_tranche = "enfant"
@@ -1045,9 +1120,26 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     if numero_allocataire:
         champs["Champ de texte P2 13"] = numero_allocataire
 
-    # NSS bénéficiaire (1 case par chiffre, 15 chiffres)
-    # Adulte : Numero SS 3 → Numero SS 17 | Enfant : N° SS Enfant 1 → N° SS Enfant 15
-    nss_clean = nss.replace(" ", "").replace(".", "").replace("-", "")
+    # CORRECTION 2 — NIR : injection dans le PDF + warning de traçabilité
+    # On re-vérifie toutes les sources au moment du remplissage (pas seulement à la lecture).
+    # Priorité : interface (dossier) > IA (ds) > WhatsApp (cerfa_rep).
+    _nss_interface = (
+        dossier.get("numero_securite_sociale")
+        or dossier.get("nss")
+        or ""
+    ).replace(" ", "").replace(".", "").replace("-", "")
+    nss_clean = (_nss_interface or nss).replace(" ", "").replace(".", "").replace("-", "")
+
+    if _nss_interface and not nss:
+        # NIR trouvé dans l'interface mais absent de ds/cerfa_rep → le noter
+        logger.info(f"[CERFA C2] NIR récupéré depuis l'interface éducateur : {_nss_interface[:4]}***")
+    elif not nss_clean:
+        # NIR absent de toutes les sources → warning pour le professionnel
+        logger.warning(
+            "[CERFA C2] NIR absent de toutes les sources (interface, ds, WhatsApp). "
+            "Les cases N° SS resteront vides. Vérifier la saisie dans l'interface."
+        )
+
     if nss_clean and nss_clean.isdigit():
         if is_enfant:
             for i, digit in enumerate(nss_clean[:15], start=1):
@@ -1055,6 +1147,7 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         else:
             for i, digit in enumerate(nss_clean[:15]):
                 champs[f"Numero SS {i + 3}"] = digit
+        logger.info(f"[CERFA C2] NIR injecté en page 2 ({len(nss_clean)} chiffres, is_enfant={is_enfant})")
 
     # ════════════════════════════════════════════════════════════════════════
     # PAGE 3 — Représentant légal / Protection juridique
@@ -1249,19 +1342,36 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         cases.append("Case à cocher P5 15")   # AT/MP reconnu
         cases.append("Case à cocher P5 20")   # Indemnisation en cours / rente
 
-    # Ressources actuelles (B1) — AAH, chômage, ASS, pension invalidité, etc.
+    # Ressources actuelles (B1) — AAH, chômage, ASS, pension invalidité, AEEH, PCH, etc.
+    # (les prestations sont bien des ressources — elles vont dans le champ "ressources", pas "frais")
     if ressources_actuelles:
         try:
             champs["Champ de texte P5 ressources"] = ressources_actuelles[:300]
         except Exception:
             pass
 
-    # Frais liés au handicap (B1)
+    # CORRECTION 4 — Frais liés au handicap (B1) : JAMAIS de prestations dans ce champ.
+    # Ce champ est réservé aux frais financiers non remboursés par la Sécurité Sociale
+    # (ostéopathie, psychologue privé, matériel non pris en charge, aménagements...).
+    # AEEH, PCH, AAH, ACTP sont des prestations versées, pas des frais engagés.
+    _prestations_interdites = [
+        "aeeh", "pch", "aah", "actp", "acfp", "avpf", "rsa",
+        "allocation", "prestation", "complément", "majoration",
+    ]
     if frais_handicap:
-        try:
-            champs["Champ de texte P5 frais"] = frais_handicap[:300]
-        except Exception:
-            pass
+        _frais_lower = frais_handicap.lower()
+        _contient_prestation = any(p in _frais_lower for p in _prestations_interdites)
+        if _contient_prestation:
+            logger.warning(
+                f"[CERFA C4] frais_handicap contient une prestation — champ vidé. "
+                f"Valeur originale : {frais_handicap!r}"
+            )
+            frais_handicap = ""   # Vider plutôt qu'injecter une erreur dans le CERFA
+        if frais_handicap:
+            try:
+                champs["Champ de texte P5 frais"] = frais_handicap[:300]
+            except Exception:
+                pass
 
     # Besoins d'aide technique
     if besoins_aide_technique:
@@ -1300,10 +1410,32 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         if not has_lib and not has_hosp:
             cases.append("Case à cocher P6 4")
 
-    # Aide humaine
-    if besoins_aide_humaine or a_auxiliaire_vie or a_aide_menagere:
+    # CORRECTION 3 — Aide humaine P6 7 alignée sur la narration P8
+    # Le booléen besoins_aide_humaine (source IA) peut être faux même quand la narration
+    # décrit clairement une dépendance. On étend la détection à description_situation
+    # et difficultes_quotidiennes pour garantir la cohérence B1 ↔ texte.
+    _texte_aide_humaine = " ".join(filter(None, [
+        aides_str,
+        (description_situation or "").lower(),
+        (difficultes_quotidiennes or "").lower(),
+        (besoins_aide_str or "").lower(),
+    ]))
+    _mots_aide_humaine = [
+        "aide humaine", "aide pour", "aidé par", "accompagné par", "quelqu'un l'aide",
+        "auxiliaire de vie", "avs", "aide à domicile", "aide-soignant",
+        "avec l'aide de", "besoin d'aide", "dépend de", "ne peut pas seul",
+        "ne peut pas seule", "aide quotidienne", "accompagnement quotidien",
+        "mère l'aide", "père l'aide", "parents l'aident", "famille l'aide",
+    ]
+    _a_aide_humaine_detectee = (
+        besoins_aide_humaine
+        or a_auxiliaire_vie
+        or a_aide_menagere
+        or any(x in _texte_aide_humaine for x in _mots_aide_humaine)
+    )
+    if _a_aide_humaine_detectee:
         cases.append("Case à cocher P6 7")
-        if a_auxiliaire_vie or any(x in aides_str for x in ["auxiliaire", "avs", "aide humaine"]):
+        if a_auxiliaire_vie or any(x in _texte_aide_humaine for x in ["auxiliaire", "avs", "aide humaine"]):
             cases.append("Case à cocher P6 9")
         cases.append("Case à cocher P6 8")
 
@@ -1313,26 +1445,35 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
             row_start = (i - 1) * 5 + 1
             champs[f"Tableau P6 {row_start}"] = aide[:25]
 
-    # Besoins détaillés — gestes primaires (expert Q24 : manger, dormir, se laver)
-    if besoins_aide_humaine or a_auxiliaire_vie:
-        # Hygiène / se laver
-        if any(x in aides_str for x in ["hygiène", "toilette", "bain", "douche", "lavage", "se laver"]):
-            cases.append("Case à cocher P6 B1")
-        # Habillage
-        if any(x in aides_str for x in ["habillage", "vêtement", "vêtir", "s'habill"]):
-            cases.append("Case à cocher P6 B2")
-        # Repas / manger
-        if any(x in aides_str for x in ["repas", "alimentation", "manger", "nutrition", "préparer", "cuisine"]):
-            cases.append("Case à cocher P6 B3")
-        # Mobilité intérieure
-        if any(x in aides_str for x in ["mobilité", "déplacement", "marche", "fauteuil", "déplacer", "se lever"]):
-            cases.append("Case à cocher P6 B4")
-        # Sorties / extérieur
-        if any(x in aides_str for x in ["extérieur", "sortie", "courses", "promenade"]):
-            cases.append("Case à cocher P6 B5")
-        # Communication
-        if any(x in aides_str for x in ["communication", "langage", "parole", "comprendre"]):
-            cases.append("Case à cocher P6 B6")
+    # CORRECTION 4 — Cases B2/B3 : alignement narration P8 ↔ cases cochées
+    # La détection est étendue à description_situation (P8) + difficultes_quotidiennes
+    # pour garantir que les cases reflètent exactement ce qui est décrit dans la narration.
+    # La condition besoins_aide_humaine est conservée pour P6 B1-B6 mais le texte de
+    # détection est enrichi → un instructeur MDPH ne trouvera plus de contradiction.
+    _detection_b2b3 = " ".join(filter(None, [
+        aides_str,
+        (description_situation or "").lower(),
+        (difficultes_quotidiennes or "").lower(),
+    ]))
+    # Gestes primaires (B2) — cochés si mentionnés dans l'une des 3 sources
+    # Toilette / hygiène
+    if any(x in _detection_b2b3 for x in ["hygiène", "toilette", "bain", "douche", "lavage", "se laver", "aide pour se laver"]):
+        cases.append("Case à cocher P6 B1")
+    # Habillage
+    if any(x in _detection_b2b3 for x in ["habillage", "vêtement", "vêtir", "s'habill", "aide pour s'habill"]):
+        cases.append("Case à cocher P6 B2")
+    # Repas / manger
+    if any(x in _detection_b2b3 for x in ["repas", "alimentation", "manger", "nutrition", "préparer", "cuisine", "aide pour manger"]):
+        cases.append("Case à cocher P6 B3")
+    # Mobilité intérieure (B3)
+    if any(x in _detection_b2b3 for x in ["mobilité", "déplacement", "marche", "fauteuil", "déplacer", "se lever", "se déplace"]):
+        cases.append("Case à cocher P6 B4")
+    # Sorties / extérieur
+    if any(x in _detection_b2b3 for x in ["extérieur", "sortie", "courses", "promenade", "accompagné", "ne sort pas seul"]):
+        cases.append("Case à cocher P6 B5")
+    # Communication
+    if any(x in _detection_b2b3 for x in ["communication", "langage", "parole", "comprendre", "s'exprimer", "verbal"]):
+        cases.append("Case à cocher P6 B6")
 
     if besoins_aide_humaine and aides_actuelles:
         champs["Champ de texte P6 7"] = "; ".join(aides_actuelles)[:200]
@@ -1574,10 +1715,82 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
             champs["Champ de texte P15 5"] = "CV joint au dossier"
 
         # PAGE 16 — Projet professionnel / Orientation CRP-ESRP
-        # OPTION P16 1 (radio Oui/Non) est géré dans la section radio ci-dessous
-        # Champ de texte P16 1 = description du projet / orientation souhaitée
-        if projet_professionnel:
+        # CORRECTION 5 — Rubrique D / D3 : projet de vie avec NOM d'établissement
+        # On ne jamais écrire "établissement" de manière générique.
+        # On cherche le nom réel dans toutes les sources disponibles.
+
+        # ── Recherche du nom d'établissement dans toutes les sources ──────────
+        _nom_etab_cible = ""
+
+        # Source 1 : champs dédiés dans ds
+        _nom_etab_cible = (
+            ds.get("nom_etablissement_cible")
+            or ds.get("nom_etablissement")
+            or ds.get("nom_ime")
+            or ds.get("nom_esat")
+            or ds.get("nom_foyer")
+            or ds.get("nom_esrp")
+            or nom_esrp
+            or organisme_formation
+            or ""
+        ).strip()
+
+        # Source 2 : scolarite_details (WhatsApp) → peut contenir "IME Les Pins"
+        if not _nom_etab_cible:
+            _scol_rep_d5 = (cerfa_rep.get("scolarite_details") or "").strip()
+            # Extraire le nom propre s'il suit "IME", "ESAT", "SESSAD", "foyer", "SAMSAH"
+            import re as _re
+            _etab_match = _re.search(
+                r'\b(IME|ESAT|SESSAD|ITEP|SAVS|SAMSAH|foyer|MAS|FAM|IMPro|IMPRO|CRP|ESRP)\s+([A-ZÀ-ÿa-z][^,\n]{2,50})',
+                _scol_rep_d5, _re.IGNORECASE
+            )
+            if _etab_match:
+                _nom_etab_cible = f"{_etab_match.group(1)} {_etab_match.group(2)}".strip()
+
+        # Source 3 : situation_pro_scolaire → peut contenir "ESAT Les Chênes"
+        if not _nom_etab_cible:
+            _sit_rep_d5 = (cerfa_rep.get("situation_pro_scolaire") or "").strip()
+            _etab_match2 = _re.search(
+                r'\b(IME|ESAT|SESSAD|ITEP|SAVS|SAMSAH|foyer|MAS|FAM|IMPro|IMPRO|CRP|ESRP)\s+([A-ZÀ-ÿa-z][^,\n]{2,50})',
+                _sit_rep_d5, _re.IGNORECASE
+            )
+            if _etab_match2:
+                _nom_etab_cible = f"{_etab_match2.group(1)} {_etab_match2.group(2)}".strip()
+
+        # Source 4 : nom_formation (si contient un type d'établissement)
+        if not _nom_etab_cible and nom_formation:
+            _nf_lower = nom_formation.lower()
+            if any(t in _nf_lower for t in ["ime", "esat", "sessad", "foyer", "crp", "esrp", "savs", "samsah"]):
+                _nom_etab_cible = nom_formation.strip()
+
+        # ── Construction du texte D3 ──────────────────────────────────────────
+        # D3 = "Orientation vers [NOM] pour [RAISON]"
+        # ou projet libre si pas d'établissement identifié
+
+        _raison_d3 = ""
+        # Raison depuis besoins_aide ou difficultes_quotidiennes
+        _besoins_court = (cerfa_rep.get("besoins_aide") or besoins_aide_str or "").strip()
+        if _besoins_court and len(_besoins_court) > 10:
+            _raison_d3 = _besoins_court[:200]
+        elif difficultes_quotidiennes and len(difficultes_quotidiennes) > 10:
+            _raison_d3 = difficultes_quotidiennes[:200]
+
+        if _nom_etab_cible:
+            # Cas 1 : nom d'établissement identifié → formulation précise
+            _d3_text = f"Orientation vers {_nom_etab_cible}"
+            if _raison_d3:
+                _d3_text += f" afin de bénéficier d'un accompagnement adapté aux besoins suivants : {_raison_d3}"
+            _d3_text = _d3_text[:500]
+            champs["Champ de texte P16 1"] = _d3_text
+            logger.info(f"[CERFA D3] Établissement identifié : {_nom_etab_cible!r}")
+        elif projet_professionnel:
+            # Cas 2 : projet pro libre (sans établissement nommé)
             champs["Champ de texte P16 1"] = projet_professionnel[:500]
+        elif _raison_d3:
+            # Cas 3 : aucun établissement, aucun projet explicite → résumé des besoins
+            champs["Champ de texte P16 1"] = (
+                f"Accompagnement et orientation adaptés aux besoins identifiés : {_raison_d3}"
+            )[:500]
 
         # Case à cocher P16 2 = Orientation vers CRP/ESRP (PAS "non en réflexion")
         _cible_crp = a_cible_esrp or any(t in droits_str for t in ("CRP", "ESRP", "CPO", "UEROS"))
@@ -1591,7 +1804,10 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
                 champs["Champ de texte P 16 2"] = _esrp_label[:200]
 
         # Case à cocher P16 5 = Formation professionnelle en cours ou envisagée
-        if en_formation or _cible_crp:
+        # CORRECTION 5 : Ne pas cocher P16 5 si le projet est ESAT (milieu protégé).
+        # ESAT n'est pas une formation — cocher P16 5 serait incohérent pour un instructeur MDPH.
+        _projet_esat_seul = "esat" in droits_str.lower() and not _cible_crp
+        if (en_formation or _cible_crp) and not _projet_esat_seul:
             cases.append("Case à cocher P16 5")
             # Champ E2 / P17 1 : description de l'orientation souhaitée (CRP, ESRP, formation)
             # On construit un libellé clair plutôt qu'un code seul (évite "CRP" sans contexte)

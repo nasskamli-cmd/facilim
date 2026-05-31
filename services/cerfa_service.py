@@ -44,6 +44,7 @@ from typing import Any
 from validators.cerfa_validator import CERFAValidator
 from services.relance_questions import obtenir_questions_depuis_erreurs
 from services.cerfa_filler import remplir_cerfa
+from services.cerfa_expert import analyser_profil_mdph
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,18 @@ def traiter_dossier_cerfa(donnees_collectees: dict[str, Any]) -> dict[str, Any]:
         dans le dict avec "type": "technique".
     """
     donnees_collectees = donnees_collectees or {}
+
+    # ── Étape 0 : analyse experte du profil MDPH ─────────────────────────────
+    # Détermine profil, cohérences, enrichit ds, génère narration P8.
+    try:
+        expertise = analyser_profil_mdph(donnees_collectees)
+        donnees_collectees = expertise["cerfa"]   # dossier enrichi
+        _alertes_expert    = expertise["alertes"]
+        if _alertes_expert:
+            logger.info(f"[CERFA_SERVICE] Alertes expert : {_alertes_expert}")
+    except Exception as exc:
+        logger.warning(f"[CERFA_SERVICE] Analyse experte échouée (non bloquant) : {exc}")
+        expertise = {}
 
     # ── Étape 1 : validation ─────────────────────────────────────────────────
     try:
@@ -120,120 +133,55 @@ def traiter_dossier_cerfa(donnees_collectees: dict[str, Any]) -> dict[str, Any]:
         }
 
     return {
-        "valide":    True,
-        "type":      "succes",
-        "pdf_bytes": pdf_bytes,
-        "warnings":  validation.get("warnings", []),
-        "donnees":   donnees_collectees,
+        "valide":         True,
+        "type":           "succes",
+        "pdf_bytes":      pdf_bytes,
+        "warnings":       validation.get("warnings", []),
+        "donnees":        donnees_collectees,
+        "profil_mdph":    expertise.get("profil"),
+        "alertes_expert": expertise.get("alertes", []),
+        "justifications": expertise.get("justifications", []),
+        "narration_p8":   expertise.get("narration_p8", ""),
+        "coherence":      expertise.get("coherence", {}),
     }
 
 
+
 # ---------------------------------------------------------------------------
-# Bloc de test rapide
+# Bloc de test rapide (si __name__ == "__main__")
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    import sys, os
-    # Ajoute la racine du projet au path pour les imports relatifs au projet
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    import json
+    import sys as _sys, os as _os
+    _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 
-    print("=" * 60)
-    print("TEST 1 — Dossier incomplet (champs manquants)")
-    print("=" * 60)
-
-    dossier_incomplet = {
-        "nom_prenom":    "Karim NAIT ALI",
-        "date_naissance": "05/12/1969",
-        # Manquent : type_demande, genre, adresse_complete,
-        #            situation_familiale, type_droits, difficultes_quotidiennes
-    }
-
-    resultat = traiter_dossier_cerfa(dossier_incomplet)
-    print(f"valide  : {resultat['valide']}")
-    print(f"type    : {resultat['type']}")
-    print(f"erreurs : {resultat.get('erreurs', [])}")
-    print(f"\nmessage_a_envoyer :\n  {resultat.get('message_a_envoyer', '')}")
-    print(f"\nquestions_restantes ({len(resultat.get('questions_restantes', []))}) :")
-    for i, q in enumerate(resultat.get("questions_restantes", [])[:3], 1):
-        print(f"  {i}. {q[:80]}…")
-
-    print()
-    print("=" * 60)
-    print("TEST 2 — Dossier complet (tous les champs obligatoires)")
-    print("=" * 60)
-
-    dossier_complet = {
-        "dossier_id":             "TEST-SVC-001",
-        "nom_enfant":             "NAIT ALI",
-        "prenom_enfant":          "Karim",
-        "ddn_enfant":             "05/12/1969",
-        "adresse_enfant":         "1 rue des Bateliers",
-        "cp_enfant":              "13016",
-        "commune_enfant":         "MARSEILLE",
-        "telephone_famille":      "0642087770",
-        "email_famille":          "test@test.com",
-        "departement_code":       "13",
-        # Données collectées via WhatsApp
-        "type_demande":           "renouvellement",
-        "nom_prenom":             "Karim NAIT ALI",
-        "date_naissance":         "05/12/1969",
-        "genre":                  "homme",
-        "adresse_complete":       "1 rue des Bateliers, 13016 Marseille",
-        "situation_familiale":    "marié",
-        "type_droits":            "RQTH, AAH",
-        "difficultes_quotidiennes": (
-            "Douleurs chroniques suite à un accident du travail en 2019. "
-            "Difficultés à rester debout plus de 20 minutes, station debout douloureuse. "
-            "Fatigabilité importante, nécessite des pauses fréquentes."
-        ),
-        "besoins_aide":           "Aménagement du poste de travail, aide aux déplacements",
-        "organisme_payeur":       "CAF",
-        "protection_juridique":   "aucune",
-        # Analyse LLM (structure attendue par cerfa_filler)
-        "cerfa_reponses":         {},
+    _d = {
+        "dossier_id": "TEST-SVC-001",
+        "nom_enfant": "NAIT ALI", "prenom_enfant": "Karim",
+        "ddn_enfant": "05/12/1969", "departement_code": "13",
+        "cerfa_reponses": {},
+        "type_demande": "renouvellement", "nom_prenom": "Karim NAIT ALI",
+        "date_naissance": "05/12/1969", "genre": "homme",
+        "adresse_complete": "1 rue des Bateliers, 13016 Marseille",
+        "situation_familiale": "marie", "type_droits": "RQTH, AAH",
+        "difficultes_quotidiennes": "Douleurs chroniques AT 2019.",
+        "besoins_aide": "Amenagement poste de travail",
+        "organisme_payeur": "CAF", "protection_juridique": "aucune",
         "analyse": {
-            "droits_identifies":  ["RQTH", "AAH"],
-            "elements_probants":  ["AT 2019"],
-            "synthese_agents":    {
-                "geva_pro":   "Accident du travail 2019, limitations fonctionnelles avérées",
-                "juriste":    "RQTH et AAH justifiés",
-            },
+            "droits_identifies": ["RQTH", "AAH"],
+            "elements_probants": ["AT 2019"],
+            "synthese_agents": {"geva_pro": "AT 2019", "juriste": "RQTH AAH"},
             "donnees_structurees": {
-                "is_enfant":           False,
-                "genre":               "homme",
-                "situation_familiale": "marié",
-                "a_enfants_charge":    True,
-                "type_logement":       "appartement",
-                "statut_occupation":   "locataire",
-                "type_demande":        "renouvellement",
-                "deja_connu_mdph":     True,
-                "accident_travail":    True,
-                "consentement_informations": True,
+                "is_enfant": False, "genre": "homme",
+                "situation_familiale": "marie",
+                "type_demande": "renouvellement", "deja_connu_mdph": True,
+                "accident_travail": True, "consentement_informations": True,
             },
         },
     }
-
-    resultat2 = traiter_dossier_cerfa(dossier_complet)
-    print(f"valide   : {resultat2['valide']}")
-    print(f"type     : {resultat2['type']}")
-    print(f"warnings : {resultat2.get('warnings', [])}")
-    if resultat2["valide"]:
-        taille = len(resultat2.get("pdf_bytes", b""))
-        print(f"pdf_bytes: {taille} octets generés [OK]")
-    else:
-        print(f"erreur   : {resultat2.get('erreur', '')}")
-        print(f"erreurs  : {resultat2.get('erreurs', [])}")
-
-    print()
-    print("=" * 60)
-    print("TEST 3 — NIR invalide (regex corrigée)")
-    print("=" * 60)
-
-    dossier_nir_invalide = {**dossier_complet, "numero_securite_sociale": "123456"}
-    resultat3 = traiter_dossier_cerfa(dossier_nir_invalide)
-    print(f"valide  : {resultat3['valide']}")
-    nir_erreur = [e for e in resultat3.get("erreurs", []) if "securite" in e.lower()]
-    print(f"erreur NIR détectée : {bool(nir_erreur)}")
-    if nir_erreur:
-        print(f"  -> {nir_erreur[0]}")
+    _r = traiter_dossier_cerfa(_d)
+    print("valide   :", _r["valide"])
+    print("type     :", _r["type"])
+    print("profil   :", _r.get("profil_mdph"))
+    if _r["valide"]:
+        print("pdf_bytes:", len(_r.get("pdf_bytes", b"")), "octets")
