@@ -1527,6 +1527,131 @@ def _log_cerfa_audit(
         logger.warning("[AUDIT_CERFA] Journalisation ignorée (%s) — %s", event_type, e)
 
 
+# ── Constantes Point 2 ───────────────────────────────────────────────────────
+
+_TEXTE_VALIDATION_PROFESSIONNEL = (
+    "Je confirme avoir vérifié le dossier, l'avoir remis au bénéficiaire "
+    "ou à son représentant légal pour relecture, et l'avoir informé que "
+    "la validation finale lui appartient."
+)
+
+
+# ── Routes Point 2 ────────────────────────────────────────────────────────────
+
+@app.post("/api/v1/dossiers/{dossier_id}/valider-transmission")
+def valider_transmission(
+    dossier_id: str,
+    user=Depends(_get_current_user),
+    db=Depends(_get_db),
+):
+    """
+    Validation professionnelle avant envoi.
+    Vérifie les alertes bloquantes (B1-B3) du comité d'agents.
+    N'exige PAS encore la validation usager ici — vérifiée à l'envoi.
+    INSERT dans cerfa_validations (type=professionnel).
+    """
+    import hashlib as _hl
+    from app.engines.comite_agents import executer_comite_agents
+
+    dossier_row = db.execute("SELECT * FROM dossiers WHERE id = ?", (dossier_id,)).fetchone()
+    if not dossier_row:
+        raise HTTPException(status_code=404, detail="Dossier non trouvé")
+
+    donnees = json.loads(dossier_row.get("synthese_json", "{}") or "{}")
+
+    # Exécuter le comité en mode pré-validation
+    session_row = db.execute(
+        "SELECT persona_actif FROM sessions_whatsapp WHERE dossier_id = ? LIMIT 1",
+        (dossier_id,)
+    ).fetchone()
+    profil = (session_row["persona_actif"] if session_row else "adulte") or "adulte"
+
+    rapport = executer_comite_agents(
+        donnees=donnees, profil=profil,
+        dossier_id=dossier_id, db=db, mode="pre_validation"
+    )
+
+    # Journaliser le rapport
+    _log_cerfa_audit(
+        db=db, dossier_id=dossier_id,
+        event_type="analyse_agents", canal="dashboard",
+        acteur_id=user.get("sub"), acteur_type="professionnel",
+        details={
+            "score":              rapport.score,
+            "alertes_bloquantes": [a.message for a in rapport.alertes_bloquantes],
+            "alertes_mineures":   [a.message for a in rapport.alertes_mineures],
+            "pieces_manquantes":  rapport.pieces_manquantes,
+            "droits_potentiels":  rapport.droits_potentiels,
+            "agents_actives":     rapport.agents_actives,
+            "bloquant":           rapport.bloquant,
+        },
+    )
+
+    if rapport.bloquant:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "Des alertes bloquantes empêchent la validation.",
+                "alertes_bloquantes": [a.message for a in rapport.alertes_bloquantes],
+                "score": rapport.score,
+            }
+        )
+
+    # INSERT cerfa_validations
+    import uuid as _uuid
+    now = datetime.now(timezone.utc).isoformat()
+    synthese_hash = _hl.sha256(
+        json.dumps(donnees, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+    version = dossier_row.get("version") or 1
+
+    db.execute(
+        """INSERT INTO cerfa_validations
+           (id, dossier_id, validated_by, canal, type_validation, validated_at,
+            synthese_hash, cerfa_pdf_hash, dossier_version, confirmation_texte,
+            reponse_usager, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            str(_uuid.uuid4()), dossier_id, user.get("sub"), "dashboard",
+            "professionnel", now, synthese_hash, None, version,
+            _TEXTE_VALIDATION_PROFESSIONNEL, "OUI", now,
+        )
+    )
+    _log_cerfa_audit(
+        db=db, dossier_id=dossier_id,
+        event_type="validation_professionnel", canal="dashboard",
+        acteur_id=user.get("sub"), acteur_type="professionnel",
+        details={"synthese_hash": synthese_hash, "version": version},
+    )
+    db.commit()
+
+    return {
+        "success": True,
+        "score":              rapport.score,
+        "alertes_mineures":   [a.message for a in rapport.alertes_mineures],
+        "droits_potentiels":  rapport.droits_potentiels,
+        "recommandations":    rapport.recommandations,
+    }
+
+
+@app.get("/api/v1/dossiers/{dossier_id}/rapport-comite")
+def get_rapport_comite(
+    dossier_id: str,
+    user=Depends(_get_current_user),
+    db=Depends(_get_db),
+):
+    """Retourne le dernier rapport comité depuis cerfa_audit_log. Lecture seule."""
+    row = db.execute(
+        """SELECT details_json, event_at FROM cerfa_audit_log
+           WHERE dossier_id = ? AND event_type = 'analyse_agents'
+           ORDER BY event_at DESC LIMIT 1""",
+        (dossier_id,)
+    ).fetchone()
+    if not row:
+        return {"rapport": None, "message": "Aucun rapport disponible pour ce dossier."}
+    return {"rapport": json.loads(row["details_json"] or "{}"), "date": row["event_at"]}
+
+
 def _ajouter_page_couverture(cerfa_bytes: bytes, donnees: dict) -> bytes:
     """
     Génère une page de couverture avec reportlab et la fusionne AVANT le CERFA avec pypdf.
@@ -1897,6 +2022,38 @@ def envoyer_cerfa(
         raise HTTPException(
             status_code=400,
             detail="Aucun email trouvé pour cet usager. Ajoutez l'email dans le dossier avant d'envoyer.",
+        )
+
+    # ── B4 : Validation usager requise avant envoi ────────────────────────────
+    _val_usager = db.execute(
+        """SELECT id FROM cerfa_validations
+           WHERE dossier_id = ? AND type_validation = 'usager' AND reponse_usager = 'OUI'
+           ORDER BY validated_at DESC LIMIT 1""",
+        (dossier_id,)
+    ).fetchone()
+    if not _val_usager:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Validation usager requise avant envoi. "
+                "Le bénéficiaire doit confirmer la relecture du dossier via WhatsApp."
+            ),
+        )
+
+    # ── B5 : Validation professionnelle requise avant envoi ───────────────────
+    _val_pro = db.execute(
+        """SELECT id FROM cerfa_validations
+           WHERE dossier_id = ? AND type_validation = 'professionnel' AND reponse_usager = 'OUI'
+           ORDER BY validated_at DESC LIMIT 1""",
+        (dossier_id,)
+    ).fetchone()
+    if not _val_pro:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Validation professionnelle requise avant envoi. "
+                "Utilisez le bouton 'Valider la remise' dans le dossier."
+            ),
         )
 
     # Générer le PDF

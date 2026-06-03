@@ -587,9 +587,19 @@ class OrchestrationEngine:
             historique = self._appliquer_fenetre_memoire(historique)
             _sauvegarder_nav(self.db, dossier_id, nav, historique, donnees)
 
-            # Analyse si collecte complète
-            if agent.is_complete(donnees):
-                self._trigger_analysis(dossier_id, usager, donnees)
+            # ── Point 2 : collecte complète → demande de validation usager ───────
+            if agent.is_complete(donnees) and service_type != "validation_en_attente":
+                self._demander_validation_usager(
+                    dossier_id, usager, donnees, phone_wa, session["id"]
+                )
+                _sauvegarder_nav(self.db, dossier_id, nav, historique, donnees)
+                return {"success": True, "action": "validation_demandee", "dossier_id": dossier_id}
+
+            # ── Point 2 : traitement réponse validation usager ───────────────────
+            if service_type == "validation_en_attente":
+                return self._traiter_reponse_validation_usager(
+                    text, dossier_id, usager, donnees, phone_wa, session["id"]
+                )
 
             self.wa.send_text(phone_wa, reponse, dossier_id=dossier_id, db_conn=self.db)
             self._handle_structure_search(text, donnees, phone_wa, dossier_id)
@@ -931,6 +941,157 @@ Document :
             return {"success": True, "action": "image_analyzed", "piece_id": piece_id}
 
     # ── Déclenchement de l'analyse ───────────────────────────────────────────
+
+    # ── Point 2 : Validation finale usager ──────────────────────────────────
+
+    _TEXTE_VALIDATION_USAGER = (
+        "📋 Votre dossier MDPH est prêt.\n\n"
+        "Avant de finaliser :\n\n"
+        "✅ Je confirme avoir pris connaissance du contenu du dossier "
+        "préparé en mon nom et l'avoir relu attentivement.\n\n"
+        "✅ Je confirme avoir eu la possibilité de corriger les informations "
+        "si nécessaire.\n\n"
+        "✅ Je comprends que Facilim est un outil d'aide à la préparation "
+        "du dossier.\n\n"
+        "✅ Je comprends que la validation finale des informations et la "
+        "signature du dossier relèvent de ma responsabilité ou de celle "
+        "de mon représentant légal.\n\n"
+        "Répondez OUI pour confirmer\n"
+        "ou NON pour revenir à votre dossier."
+    )
+
+    def _demander_validation_usager(
+        self,
+        dossier_id: str,
+        usager: dict,
+        donnees: dict,
+        phone_wa: str,
+        session_id: str,
+    ) -> None:
+        """
+        Bascule l'état en 'validation_en_attente' et envoie le texte de validation.
+        Appelé quand is_complete() est True.
+        """
+        # Basculer l'état de session
+        self.db.execute(
+            "UPDATE sessions_whatsapp SET persona_actif = 'validation_en_attente' WHERE id = ?",
+            (session_id,)
+        )
+        self.db.commit()
+        # Envoyer le texte de validation
+        self.wa.send_text(phone_wa, self._TEXTE_VALIDATION_USAGER,
+                          dossier_id=dossier_id, db_conn=self.db)
+        logger.info("[VALIDATION] Texte validation envoyé | dossier=%s | usager=%s",
+                    dossier_id[:8], usager["id"][:8])
+
+    def _traiter_reponse_validation_usager(
+        self,
+        text: str,
+        dossier_id: str,
+        usager: dict,
+        donnees: dict,
+        phone_wa: str,
+        session_id: str,
+    ) -> dict:
+        """
+        Traite la réponse OUI/NON de l'usager à la validation finale.
+        OUI → INSERT cerfa_validations + _trigger_analysis
+        NON → INSERT cerfa_validations (refus tracé) + retour collecte
+        Autre → renvoi du texte de validation
+        """
+        import hashlib as _hl, json as _j, uuid as _uuid
+        from datetime import datetime, timezone
+
+        texte_norm = text.strip().lower()
+        _MOTS_OUI = {"oui", "yes", "ok", "d'accord", "dacord", "j'accepte", "accepte"}
+        _MOTS_NON = {"non", "no", "refus", "refuse", "annuler", "retour"}
+
+        if texte_norm not in _MOTS_OUI and texte_norm not in _MOTS_NON:
+            # Réponse non reconnue → rappel du texte
+            self.wa.send_text(phone_wa, self._TEXTE_VALIDATION_USAGER,
+                              dossier_id=dossier_id, db_conn=self.db)
+            return {"success": True, "action": "validation_rappel", "dossier_id": dossier_id}
+
+        reponse = "OUI" if texte_norm in _MOTS_OUI else "NON"
+        now = datetime.now(timezone.utc).isoformat()
+
+        # Hash du contenu au moment de la validation
+        synthese_hash = _hl.sha256(
+            _j.dumps(donnees, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
+
+        # Récupérer le hash du dernier PDF généré depuis cerfa_audit_log
+        _audit_row = self.db.execute(
+            """SELECT details_json FROM cerfa_audit_log
+               WHERE dossier_id = ? AND event_type = 'generation_cerfa'
+               ORDER BY event_at DESC LIMIT 1""",
+            (dossier_id,)
+        ).fetchone()
+        cerfa_pdf_hash = None
+        if _audit_row:
+            try:
+                _d = _j.loads(_audit_row["details_json"] or "{}")
+                cerfa_pdf_hash = _d.get("pdf_hash")
+            except Exception:
+                pass
+
+        # Récupérer la version du dossier
+        _dossier_row = self.db.execute(
+            "SELECT version FROM dossiers WHERE id = ?", (dossier_id,)
+        ).fetchone()
+        version = (_dossier_row["version"] if _dossier_row and _dossier_row["version"] else 1)
+
+        # INSERT cerfa_validations
+        self.db.execute(
+            """INSERT INTO cerfa_validations
+               (id, dossier_id, validated_by, canal, type_validation, validated_at,
+                synthese_hash, cerfa_pdf_hash, dossier_version, confirmation_texte,
+                reponse_usager, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                str(_uuid.uuid4()), dossier_id, usager["id"], "whatsapp", "usager",
+                now, synthese_hash, cerfa_pdf_hash, version,
+                self._TEXTE_VALIDATION_USAGER, reponse, now
+            )
+        )
+
+        # INSERT cerfa_audit_log
+        from app.main import _log_cerfa_audit
+        _log_cerfa_audit(
+            db=self.db, dossier_id=dossier_id,
+            event_type="validation_usager", canal="whatsapp",
+            acteur_id=usager["id"], acteur_type="usager",
+            details={"reponse": reponse, "synthese_hash": synthese_hash,
+                     "pdf_hash": cerfa_pdf_hash, "version": version},
+        )
+        self.db.commit()
+
+        if reponse == "OUI":
+            self.wa.send_text(
+                phone_wa,
+                "✅ Merci ! Votre confirmation a bien été enregistrée.\n\n"
+                "Votre professionnel accompagnant va finaliser l'envoi de votre dossier.\n"
+                "Vous recevrez le formulaire par email pour vérification avant signature.",
+                dossier_id=dossier_id, db_conn=self.db,
+            )
+            logger.info("[VALIDATION] OUI enregistré | dossier=%s", dossier_id[:8])
+            self._trigger_analysis(dossier_id, usager, donnees)
+            return {"success": True, "action": "validation_acceptee", "dossier_id": dossier_id}
+        else:
+            # Remettre l'état en collecte
+            self.db.execute(
+                "UPDATE sessions_whatsapp SET persona_actif = 'adulte' WHERE id = ?",
+                (session_id,)
+            )
+            self.db.commit()
+            self.wa.send_text(
+                phone_wa,
+                "Votre dossier est conservé. Vous pouvez le compléter ou le corriger.\n"
+                "Contactez votre professionnel accompagnant si vous avez des questions.",
+                dossier_id=dossier_id, db_conn=self.db,
+            )
+            logger.info("[VALIDATION] NON enregistré | dossier=%s", dossier_id[:8])
+            return {"success": True, "action": "validation_refusee", "dossier_id": dossier_id}
 
     def _trigger_analysis(
         self,

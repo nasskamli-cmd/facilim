@@ -41,6 +41,10 @@ _REGISTRY: dict[str, "ConversationAgent"] = {
     # Alias legacy
     "intake":         identification_agent,
     "collecte":       identification_agent,
+    # Point 2 — état de validation finale en attente de réponse usager
+    # L'agent identification sert de fallback neutre : il ne pose pas de question
+    # de dossier, il attend uniquement OUI/NON (géré dans orchestration_engine.py).
+    "validation_en_attente": identification_agent,
 }
 
 

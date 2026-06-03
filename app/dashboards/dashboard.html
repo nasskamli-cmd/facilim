@@ -220,12 +220,29 @@
         </label>
       </div>
       <div id="upload-status" class="hidden text-sm px-3 py-2 rounded-lg"></div>
+
+      <!-- Rapport comité agents (Point 2) -->
+      <div id="rapport-comite-zone" class="hidden border border-gray-100 rounded-xl p-3 bg-gray-50 text-sm">
+        <div class="font-semibold text-gray-700 mb-1">📊 Rapport qualité dossier</div>
+        <div id="rapport-score" class="text-lg font-bold mb-1"></div>
+        <div id="rapport-bloquant" class="hidden text-red-600 font-semibold mb-2"></div>
+        <div id="rapport-alertes-bloquantes" class="hidden"></div>
+        <div id="rapport-alertes-mineures" class="hidden text-amber-700 text-xs mt-1"></div>
+        <div id="rapport-recommandations" class="hidden text-blue-700 text-xs mt-1"></div>
+      </div>
     </div>
+
     <div class="px-6 py-4 border-t border-gray-100 flex gap-3 justify-between">
       <button onclick="deleteDossier()" class="text-sm text-red-500 hover:text-red-700 px-3 py-2 border border-red-200 rounded-lg hover:bg-red-50 transition-colors">
         🗑 Supprimer
       </button>
       <div class="flex gap-3">
+        <!-- Bouton validation professionnelle (Point 2) -->
+        <button onclick="validerTransmission()"
+          class="text-sm bg-green-600 hover:bg-green-800 text-white px-4 py-2 rounded-lg transition-colors font-medium"
+          title="Valider la remise du dossier au bénéficiaire">
+          ✅ Valider la remise
+        </button>
         <button onclick="closeModal('modal-dossier')" class="text-sm text-gray-600 px-4 py-2 border border-gray-200 rounded-lg hover:bg-gray-50">Fermer</button>
         <button id="btn-validate-flag" onclick="validateFlag()" class="hidden text-sm bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-colors">
           ✓ Lever le flag
@@ -632,6 +649,68 @@ async function envoyerCerfa() {
       alert(`❌ ${data.detail || 'Erreur lors de l\'envoi.'}`);
     }
   } catch(e) { alert('Erreur réseau lors de l\'envoi.'); }
+}
+
+// ── Point 2 : Validation professionnelle ────────────────────────────────────
+
+async function validerTransmission() {
+  if (!currentDossierId) return;
+  if (!confirm(
+    'Je confirme avoir vérifié le dossier, l\'avoir remis au bénéficiaire ' +
+    'ou à son représentant légal pour relecture, et l\'avoir informé que ' +
+    'la validation finale lui appartient.\n\nConfirmer ?'
+  )) return;
+
+  try {
+    const res = await fetch(`/api/v1/dossiers/${currentDossierId}/valider-transmission`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirmation: true }),
+    });
+    const data = await res.json();
+
+    // Afficher le rapport comité
+    const zone = document.getElementById('rapport-comite-zone');
+    if (zone) {
+      zone.classList.remove('hidden');
+      const score = data.score ?? (res.ok ? '—' : '—');
+      document.getElementById('rapport-score').textContent =
+        `Score qualité : ${score}/100`;
+      document.getElementById('rapport-score').className =
+        `text-lg font-bold mb-1 ${score >= 70 ? 'text-green-600' : score >= 50 ? 'text-amber-600' : 'text-red-600'}`;
+
+      if (!res.ok && data.alertes_bloquantes?.length) {
+        const bl = document.getElementById('rapport-bloquant');
+        const blList = document.getElementById('rapport-alertes-bloquantes');
+        bl.textContent = '⛔ Alertes bloquantes :';
+        bl.classList.remove('hidden');
+        blList.innerHTML = data.alertes_bloquantes.map(m => `<div class="text-red-600 text-xs py-0.5">• ${m}</div>`).join('');
+        blList.classList.remove('hidden');
+      }
+
+      if (res.ok) {
+        const mineures = data.alertes_mineures || [];
+        if (mineures.length) {
+          const el = document.getElementById('rapport-alertes-mineures');
+          el.innerHTML = '⚠️ ' + mineures.map(m => `• ${m}`).join('<br>• ');
+          el.classList.remove('hidden');
+        }
+        const droits = data.droits_potentiels || [];
+        if (droits.length) {
+          const el = document.getElementById('rapport-recommandations');
+          el.innerHTML = '💡 Droits potentiels : ' + droits.join(', ');
+          el.classList.remove('hidden');
+        }
+        showUploadStatus('✅ Validation enregistrée. Le bénéficiaire va recevoir le texte de confirmation sur WhatsApp.', 'green');
+      }
+    }
+
+    if (!res.ok) {
+      showUploadStatus(`❌ ${data.message || data.detail || 'Erreur lors de la validation.'}`, 'red');
+    }
+  } catch(e) {
+    showUploadStatus('❌ Erreur réseau lors de la validation.', 'red');
+  }
 }
 
 async function deleteDossier() {
