@@ -1676,11 +1676,16 @@ def envoyer_cerfa(
         "subject":     f"[Facilim] Votre formulaire MDPH — Dossier {reference}",
         "htmlContent": f"""
             <p>{civilite},</p>
-            <p>Votre dossier MDPH est prêt. Veuillez trouver en pièce jointe le formulaire CERFA 15692*01
-            pré-rempli avec les informations que vous nous avez transmises.</p>
-            <p><strong>À faire :</strong> vérifiez les informations, signez le formulaire et déposez-le
-            à votre MDPH (département {donnees.get('departement', '')}).</p>
-            <p>En cas de question, contactez votre professionnel accompagnant.</p>
+            <p>Vous trouverez ci-joint votre dossier MDPH préparé à partir des informations
+            déclarées et des documents transmis dans le cadre de votre accompagnement.</p>
+            <p>Nous vous invitons à <strong>relire attentivement l'ensemble du dossier</strong>
+            avant toute signature ou transmission à la MDPH afin de vérifier l'exactitude,
+            l'exhaustivité et l'actualité des informations figurant dans le document.</p>
+            <p>Facilim est un outil d'aide à la préparation du dossier.<br/>
+            La validation finale des informations et la signature du CERFA relèvent
+            exclusivement du demandeur ou de son représentant légal.</p>
+            <p>En cas d'erreur, d'information manquante ou de modification à apporter,
+            merci de nous en informer avant toute transmission à la MDPH.</p>
             <p>Cordialement,<br/>L'équipe Facilim</p>
         """,
         "attachment":  [{"content": pdf_b64, "name": f"CERFA_MDPH_{reference}.pdf"}],
