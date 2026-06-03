@@ -1727,6 +1727,10 @@
     async function loadDossiers() {
       try {
         const res = await fetch('/api/v1/dossiers', { credentials: 'include' });
+        if (res.status === 401 || res.status === 403) {
+          window.location.href = '/login';
+          return;
+        }
         if (!res.ok) {
           document.getElementById('dossiers-tbody').innerHTML =
             `<tr><td colspan="6" style="text-align:center;padding:2rem;color:var(--red);">Erreur serveur ${res.status}</td></tr>`;
@@ -2908,9 +2912,19 @@
       btn.disabled = false; btn.textContent = 'Ajouter et relancer l\'analyse';
     }
 
-    // ── Init ───────────────────────────────────────────────────────────────────
-    loadDossiers();
-    setInterval(loadDossiers, 15000);
+    // ── Init : vérification auth avant tout ────────────────────────────────────
+    (async () => {
+      const authCheck = await fetch('/api/v1/dossiers', { credentials: 'include' });
+      if (authCheck.status === 401 || authCheck.status === 403) {
+        window.location.href = '/login';
+        return;
+      }
+      loadDossiers();
+    })();
+    // Rechargement périodique (seulement si on est encore sur la page)
+    setInterval(() => {
+      if (document.visibilityState !== 'hidden') loadDossiers();
+    }, 15000);
 
     // Set user info in sidebar
     fetch('/api/v1/dossiers', { credentials: 'include' })
