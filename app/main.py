@@ -1469,6 +1469,64 @@ def valider_droits(
     return {"success": True, "statut": "COMPLET"}
 
 
+# ── Fonctions utilitaires de traçabilité CERFA — Point 3 ─────────────────────
+
+def _anonymiser_email_audit(email: str) -> dict:
+    """
+    Minimisation RGPD : retourne hash SHA256 + domaine uniquement.
+    L'email complet n'est jamais stocké dans cerfa_audit_log.
+
+    Exemples :
+      "nassim@facilim.fr"  → {"email_hash": "abc...", "email_domaine": "@facilim.fr"}
+      ""                   → {"email_hash": "",         "email_domaine": ""}
+    """
+    import hashlib
+    email = (email or "").strip().lower()
+    if not email:
+        return {"email_hash": "", "email_domaine": ""}
+    h = hashlib.sha256(email.encode("utf-8")).hexdigest()
+    domaine = "@" + email.split("@")[-1] if "@" in email else "@inconnu"
+    return {"email_hash": h, "email_domaine": domaine}
+
+
+def _log_cerfa_audit(
+    db,
+    dossier_id: str,
+    event_type: str,
+    canal: str | None,
+    acteur_id: str | None,
+    acteur_type: str,
+    details: dict,
+) -> None:
+    """
+    Insère une ligne dans cerfa_audit_log.
+    Silencieux en cas d'erreur : le journal ne doit jamais bloquer le flux principal.
+    """
+    import uuid as _uuid
+    import json as _json
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        db.execute(
+            """INSERT INTO cerfa_audit_log
+               (id, dossier_id, event_type, event_at, canal, acteur_id, acteur_type,
+                details_json, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                str(_uuid.uuid4()),
+                dossier_id,
+                event_type,
+                now,
+                canal,
+                acteur_id,
+                acteur_type,
+                _json.dumps(details, ensure_ascii=False) if details else None,
+                now,
+            ),
+        )
+    except Exception as e:
+        logger.warning("[AUDIT_CERFA] Journalisation ignorée (%s) — %s", event_type, e)
+
+
 def _ajouter_page_couverture(cerfa_bytes: bytes, donnees: dict) -> bytes:
     """
     Génère une page de couverture avec reportlab et la fusionne AVANT le CERFA avec pypdf.
@@ -1697,19 +1755,54 @@ def _generer_cerfa_pdf(dossier_id: str, db) -> tuple[str, bytes]:
         from app.engines.pdf.v2_bridge import generer_cerfa_depuis_synthese
         pdf_bytes = generer_cerfa_depuis_synthese(donnees, service_type, num_mdph)
 
+        # ── Calcul des hashes avant page de couverture (Point 3) ─────────────
+        import hashlib as _hl, json as _j_hash
+        _synthese_hash = _hl.sha256(
+            _j_hash.dumps(donnees, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
+        _cerfa_pdf_hash = _hl.sha256(pdf_bytes).hexdigest()
+
         # ── Page de couverture (Point 5) ──────────────────────────────────────
         # Générée séparément avec reportlab, fusionnée AVANT le CERFA avec pypdf.
         # Ne modifie pas le CERFA officiel ni ses champs.
+        _nb_pages = 0
+        try:
+            from pypdf import PdfReader as _PR
+            _nb_pages = len(_PR(io.BytesIO(pdf_bytes)).pages)
+        except Exception:
+            pass
         try:
             pdf_bytes = _ajouter_page_couverture(pdf_bytes, donnees)
             logger.info("[CERFA] Page de couverture ajoutée | dossier=%s", dossier_id[:8])
         except Exception as e_cov:
             logger.warning("[CERFA] Page de couverture ignorée (%s) — PDF CERFA seul transmis", e_cov)
 
+        # ── Journalisation audit (Point 3) ────────────────────────────────────
+        # Hash calculé sur le CERFA officiel (avant couverture) pour cohérence
+        # avec la validation Point 2 qui portera sur le même contenu.
+        _dossier_version = db.execute(
+            "SELECT version FROM dossiers WHERE id = ?", (dossier_id,)
+        ).fetchone()
+        _version_val = (_dossier_version["version"] if _dossier_version and _dossier_version["version"] else 1)
+        _log_cerfa_audit(
+            db=db,
+            dossier_id=dossier_id,
+            event_type="generation_cerfa",
+            canal="dashboard",
+            acteur_id=None,
+            acteur_type="systeme",
+            details={
+                "synthese_hash": _synthese_hash,
+                "pdf_hash":      _cerfa_pdf_hash,
+                "version":       _version_val,
+                "nb_pages":      _nb_pages,
+            },
+        )
+
         with open(output_path, "wb") as f:
             f.write(pdf_bytes)
-        logger.info("[CERFA V2] PDF généré via moteur V2 | dossier=%s | %d bytes",
-                    dossier_id[:8], len(pdf_bytes))
+        logger.info("[CERFA V2] PDF généré via moteur V2 | dossier=%s | %d bytes | hash=%s…",
+                    dossier_id[:8], len(pdf_bytes), _synthese_hash[:8])
         return output_path, pdf_bytes
 
     except Exception as e_v2:
