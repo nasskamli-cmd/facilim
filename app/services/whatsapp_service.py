@@ -144,6 +144,56 @@ class WhatsAppService:
             logger.error(f"[WA] Exception envoi document : {e}")
             return False
 
+    def download_media(self, media_id: str) -> tuple[bytes, str] | None:
+        """
+        Télécharge un média WhatsApp (audio, image, document, vidéo) depuis Meta API.
+
+        Étape 1 : GET /v20.0/{media_id} → récupère l'URL de téléchargement
+        Étape 2 : GET {url} → télécharge le contenu binaire
+
+        Returns:
+            (contenu_bytes, mime_type) ou None si échec
+        """
+        try:
+            # Étape 1 : URL du média
+            meta_resp = requests.get(
+                f"https://graph.facebook.com/v20.0/{media_id}",
+                headers={"Authorization": f"Bearer {self.api_token}"},
+                timeout=10,
+            )
+            if meta_resp.status_code != 200:
+                logger.error("[WA] download_media step1 error %d : %s",
+                             meta_resp.status_code, meta_resp.text[:200])
+                return None
+
+            meta   = meta_resp.json()
+            url    = meta.get("url")
+            mime   = meta.get("mime_type", "application/octet-stream")
+
+            if not url:
+                logger.error("[WA] Pas d'URL dans la réponse media : %s", meta)
+                return None
+
+            # Étape 2 : téléchargement du binaire
+            dl_resp = requests.get(
+                url,
+                headers={"Authorization": f"Bearer {self.api_token}"},
+                timeout=30,
+                stream=True,
+            )
+            if dl_resp.status_code != 200:
+                logger.error("[WA] Téléchargement échoué %d", dl_resp.status_code)
+                return None
+
+            content = dl_resp.content
+            logger.info("[WA] Média téléchargé | id=%s | mime=%s | size=%d",
+                        media_id[:8], mime, len(content))
+            return content, mime
+
+        except Exception as e:
+            logger.error("[WA] Erreur download_media : %s", e)
+            return None
+
     def mark_as_read(self, message_id: str) -> None:
         """Marque un message comme lu (indicateur 'lu' dans WhatsApp)."""
         payload = {

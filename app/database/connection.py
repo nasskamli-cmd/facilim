@@ -20,12 +20,30 @@ _initialized: bool = False
 
 
 def configure(database_url: str) -> None:
-    """Initialise la connexion selon l'URL fournie par Settings."""
+    """
+    Initialise la connexion selon l'URL fournie par Settings.
+
+    Priorité pour le chemin SQLite :
+      1. Variable d'env DATABASE_PATH (absolue) — présente sur Railway avec /data/
+      2. DATABASE_URL résolue normalement
+    """
+    import os
     global _DB_PATH
+
     if database_url.startswith("sqlite"):
         path_str = database_url.replace("sqlite:///", "").replace("sqlite://", "")
-        _DB_PATH = Path(path_str).resolve()
-        logger.info(f"[DB] SQLite | path={_DB_PATH}")
+        resolved = Path(path_str).resolve()
+
+        # Sur Railway : DATABASE_PATH pointe vers le volume persistant /data/
+        # On utilise mdph_dossiers_v3.db pour éviter tout conflit avec l'ancienne V1.
+        env_path = os.environ.get("DATABASE_PATH", "").strip()
+        if env_path and not str(resolved).startswith("/data"):
+            volume_dir = Path(env_path).parent
+            _DB_PATH = volume_dir / "mdph_dossiers_v3.db"
+            logger.info(f"[DB] SQLite | path={_DB_PATH} (volume V3)")
+        else:
+            _DB_PATH = resolved
+            logger.info(f"[DB] SQLite | path={_DB_PATH}")
     else:
         raise NotImplementedError(
             "PostgreSQL non encore connecté — configurez asyncpg dans connection.py "
@@ -64,10 +82,26 @@ def initialize_schema() -> None:
         return
     from app.database.models import CREATE_TABLES_SQL
     from app.database.audit_models import CREATE_AUDIT_TABLES_SQL
+    import sqlite3 as _sqlite3
     with get_connection() as conn:
         for statement in CREATE_TABLES_SQL:
-            conn.execute(statement)
+            try:
+                conn.execute(statement)
+            except _sqlite3.OperationalError as e:
+                msg = str(e).lower()
+                # Tolérer : colonne déjà présente, index sur colonne absente (V1 → V2)
+                if "duplicate column" in msg or "already exists" in msg or "no such column" in msg:
+                    logger.warning("[DB] Schéma init ignoré (base existante) : %s", e)
+                else:
+                    raise
         for statement in CREATE_AUDIT_TABLES_SQL:
-            conn.execute(statement)
+            try:
+                conn.execute(statement)
+            except _sqlite3.OperationalError as e:
+                msg = str(e).lower()
+                if "duplicate column" in msg or "already exists" in msg or "no such column" in msg:
+                    logger.warning("[DB] Audit init ignoré : %s", e)
+                else:
+                    raise
     _initialized = True
     logger.info("[DB] Schéma initialisé.")

@@ -2,6 +2,6 @@
 builder = "dockerfile"
 
 [deploy]
+startCommand = "sh -c 'python -c \"from app.database.migrations import run_all; run_all()\" && python -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}'"
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
-region = "europe-west4-drams3a"

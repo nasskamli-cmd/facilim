@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass, field
 from typing import Any
 
 logger = logging.getLogger("facilim.engines.conversation")
@@ -38,170 +39,474 @@ class ConversationState:
     TERMINE    = "termine"
 
 
-# ── Checklist MDPH obligatoire (16 champs) ────────────────────────────────────
-CHECKLIST_MDPH = [
-    {"id": "nom_prenom",        "label": "Nom et prénom",                    "requis": True},
-    {"id": "date_naissance",    "label": "Date de naissance (JJ/MM/AAAA)",   "requis": True},
-    {"id": "genre",             "label": "Genre (homme/femme)",               "requis": True},
-    {"id": "adresse_complete",  "label": "Adresse complète",                  "requis": True},
-    {"id": "num_secu",          "label": "Numéro de Sécurité Sociale",        "requis": True},
-    {"id": "telephone",         "label": "Numéro de téléphone de contact",    "requis": True},
-    {"id": "departement",       "label": "Département MDPH",                  "requis": True},
-    {"id": "situation_familiale","label": "Situation familiale",               "requis": True},
-    {"id": "enfants_a_charge",  "label": "Nombre d'enfants à charge",         "requis": True},
-    {"id": "types_demande",     "label": "Types de demandes MDPH",            "requis": True},
-    {"id": "diagnostics",       "label": "Diagnostic(s) précis",              "requis": True},
-    {"id": "traitements",       "label": "Traitements médicaux en cours",     "requis": True},
-    {"id": "medecin_traitant",  "label": "Médecin traitant (nom et ville)",   "requis": True},
-    {"id": "impact_quotidien",  "label": "Impact sur la vie quotidienne",     "requis": True},
-    {"id": "situation_scol_pro","label": "Situation scolaire ou professionnelle", "requis": True},
-    {"id": "historique_mdph",   "label": "Historique MDPH",                   "requis": True},
+# ── Checklist MDPH — champs communs à tous les profils ───────────────────────
+CHECKLIST_MDPH_BASE = [
+    {"id": "nom_prenom",       "label": "Nom et prénom",                  "requis": True},
+    {"id": "date_naissance",   "label": "Date de naissance (JJ/MM/AAAA)", "requis": True},
+    {"id": "genre",            "label": "Genre (homme/femme)",             "requis": True},
+    {"id": "adresse_complete", "label": "Adresse complète",                "requis": True},
+    {"id": "num_secu",         "label": "Numéro de Sécurité Sociale",      "requis": True},
+    {"id": "telephone",        "label": "Numéro de téléphone de contact",  "requis": True},
+    {"id": "departement",      "label": "Département MDPH",                "requis": True},
+    {"id": "diagnostics",         "label": "Diagnostic(s) précis",                                  "requis": True},
+    {"id": "traitements",         "label": "Traitements médicaux en cours",                          "requis": True},
+    {"id": "impact_quotidien",    "label": "Impact du handicap sur la vie quotidienne",              "requis": True},
+    {"id": "historique_mdph",     "label": "Historique MDPH (première demande ou renouvellement)",  "requis": True},
+    # Note : médecin traitant non requis par le CERFA MDPH — supprimé de la checklist obligatoire
+    {"id": "statut_occupation",   "label": "Situation de logement (locataire, propriétaire, hébergé…)", "requis": True},
 ]
+
+# ── Champs ADULTE (sections B et identité) ───────────────────────────────────
+_CHAMPS_ADULTE = [
+    {"id": "situation_familiale",   "label": "Situation familiale (célibataire, en couple…)", "requis": True},
+    {"id": "enfants_a_charge",      "label": "Nombre d'enfants à charge",                     "requis": True},
+    {"id": "inscrit_pole_emploi",   "label": "Êtes-vous inscrit(e) à France Travail (Pôle Emploi) ?", "requis": False},
+    {"id": "numero_allocataire",    "label": "Numéro d'allocataire CAF ou MSA (si vous en avez un)", "requis": False},
+]
+
+# ── Champs ENFANT (section C scolaire + représentant légal) ──────────────────
+_CHAMPS_ENFANT = [
+    {"id": "situation_scolaire",      "label": "Situation scolaire de l'enfant",                   "requis": True},
+    {"id": "etablissement_scolaire",  "label": "Nom de l'établissement scolaire",                   "requis": True},
+    {"id": "representant_legal_nom",  "label": "Nom du représentant légal",                         "requis": True},
+    {"id": "representant_legal_lien", "label": "Lien du représentant avec l'enfant",                "requis": True},
+]
+
+# ── Section C — Scolarité/formation (adulte/mixte) ────────────────────────────
+# Question de qualification (toujours posée pour adulte/mixte).
+# Les champs détaillés ne sont requis que si qualification == "oui".
+_CHAMPS_SECTION_C_ADULTE = [
+    {
+        "id":     "qualification_section_c",
+        "label":  "Êtes-vous actuellement en formation ou en insertion professionnelle ?",
+        "requis": True,
+    },
+    {
+        "id":        "formation_actuelle",
+        "label":     "Nom et type de la formation en cours",
+        "requis":    True,
+        "condition": {"champ": "qualification_section_c", "valeur": "oui"},
+    },
+    {
+        "id":        "etablissement_formation",
+        "label":     "Nom de l'établissement de formation",
+        "requis":    False,
+        "condition": {"champ": "qualification_section_c", "valeur": "oui"},
+    },
+]
+
+# ── Section D — Situation professionnelle ─────────────────────────────────────
+# Question de qualification (toujours posée pour adulte/mixte).
+# Les champs détaillés ne sont requis que si qualification == "oui".
+_CHAMPS_SECTION_D = [
+    {
+        "id":     "qualification_section_d",
+        "label":  "Avez-vous un projet professionnel ou souhaitez-vous demander une RQTH ?",
+        "requis": True,
+    },
+    {
+        "id":        "statut_emploi",
+        "label":     "Statut professionnel actuel (emploi, chômage, inactif, ESAT…)",
+        "requis":    True,
+        "condition": {"champ": "qualification_section_d", "valeur": "oui"},
+    },
+    {
+        "id":        "projet_professionnel",
+        "label":     "Description du projet professionnel ou de la demande RQTH",
+        "requis":    False,
+        "condition": {"champ": "qualification_section_d", "valeur": "oui"},
+    },
+]
+
+# ── Section E — Droits et prestations (tous profils, EN FIN de collecte) ──────
+# requis=False : non bloquante — proposée quand les besoins sont clarifiés.
+_CHAMPS_SECTION_E = [
+    {
+        "id":     "droits_demandes",
+        "label":  "Droits et prestations souhaités (AAH, PCH, RQTH, CMI, AEEH…)",
+        "requis": False,
+    },
+    {
+        "id":     "projet_orientation",
+        "label":  "Projet d'orientation ou projet de vie",
+        "requis": False,
+    },
+]
+
+# ── Section F — Aidant familial (conditionnel, sur demande de l'aidant) ───────
+# La qualification elle-même est non-bloquante.
+_CHAMPS_SECTION_F = [
+    {
+        "id":     "qualification_section_f",
+        "label":  "Souhaitez-vous ajouter les besoins de l'aidant familial ?",
+        "requis": False,
+    },
+    {
+        "id":        "aidant_nom",
+        "label":     "Nom et prénom de l'aidant familial",
+        "requis":    False,
+        "condition": {"champ": "qualification_section_f", "valeur": "oui"},
+    },
+    {
+        "id":        "aidant_besoins",
+        "label":     "Besoins et attentes de l'aidant familial",
+        "requis":    False,
+        "condition": {"champ": "qualification_section_f", "valeur": "oui"},
+    },
+]
+
+# ── Checklists complètes par profil ───────────────────────────────────────────
+CHECKLIST_MDPH = (
+    CHECKLIST_MDPH_BASE
+    + _CHAMPS_ADULTE
+    + _CHAMPS_SECTION_C_ADULTE
+    + _CHAMPS_SECTION_D
+    + _CHAMPS_SECTION_E
+    + _CHAMPS_SECTION_F
+)
+
+CHECKLIST_MDPH_ENFANT = (
+    CHECKLIST_MDPH_BASE
+    + _CHAMPS_ENFANT
+    + _CHAMPS_SECTION_E
+    + _CHAMPS_SECTION_F
+)
+
+CHECKLIST_MDPH_MIXTE = (
+    CHECKLIST_MDPH_BASE
+    + _CHAMPS_ADULTE
+    + _CHAMPS_ENFANT
+    + _CHAMPS_SECTION_C_ADULTE
+    + _CHAMPS_SECTION_D
+    + _CHAMPS_SECTION_E
+    + _CHAMPS_SECTION_F
+)
 
 CHECKLIST_IDS = {item["id"] for item in CHECKLIST_MDPH}
 
 
-# ── Système de prompts ────────────────────────────────────────────────────────
-
-def _build_system_prompt(
-    etat: str,
-    donnees_collectees: dict[str, Any],
-    elements_manquants: list[str],
-    is_mineur: bool = False,
-) -> str:
-    """Construit le prompt système adapté à l'état conversationnel."""
-    sujet = "de l'enfant" if is_mineur else "de la personne"
-    interlocuteur = "la famille" if is_mineur else "la personne ou son représentant"
-
-    base = f"""Tu es l'Assistant Facilim, spécialisé dans la constitution de dossiers MDPH en France.
-Tu discutes avec {interlocuteur} via WhatsApp.
-
-RÈGLES ABSOLUES :
-- Réponds toujours en français, de manière chaleureuse et simple (niveau FALC)
-- Tu es UN SEUL interlocuteur : l'Assistant Facilim
-- Pose UNE SEULE question à la fois
-- Accuse réception avant de poser la prochaine question
-- Si adulte : vouvoiement, parle de la personne elle-même, jamais "votre enfant"
-- N'invente JAMAIS d'informations
-- Tous les champs de la checklist sont OBLIGATOIRES sans exception
-- Ne déclare jamais le dossier complet s'il manque un seul élément
-- Maximum 3 phrases par message
-- Signature optionnelle : "L'équipe Facilim"
-
-CONTEXTE : Dossier MDPH {sujet}
-"""
-
-    if etat == ConversationState.CONSENT:
-        base += "\nÉTAT : Tu attends la confirmation de consentement de l'usager (OUI/NON)."
-
-    elif etat == ConversationState.COLLECTE:
-        if donnees_collectees:
-            collecte_str = "\n".join(f"  ✓ {k}: {v}" for k, v in donnees_collectees.items() if v)
-            base += f"\nINFORMATIONS DÉJÀ COLLECTÉES :\n{collecte_str}\n"
-        if elements_manquants:
-            manquants_str = "\n".join(f"  ✗ {m}" for m in elements_manquants[:5])
-            base += f"\nINFORMATIONS ENCORE MANQUANTES (priorité) :\n{manquants_str}\n"
-        else:
-            base += "\nTOUTES LES INFORMATIONS SONT COLLECTÉES. Confirme et annonce la suite.\n"
-
-    elif etat == ConversationState.DOCUMENTS:
-        base += "\nÉTAT : Tu attends les pièces justificatives (certificat médical, etc.). Demande-les poliment."
-
-    elif etat == ConversationState.CLOTURE:
-        base += "\nÉTAT : Le dossier est complet. Félicite l'usager et explique les prochaines étapes."
-
-    return base
-
-
-def generate_response(
-    message_entrant: str,
-    historique: list[dict],
-    etat: str,
-    donnees_collectees: dict[str, Any],
-    elements_manquants: list[str],
-    openai_client: Any,
-    is_mineur: bool = False,
-    model: str = "gpt-4o-mini",
-) -> str:
+def get_checklist(profil_mdph: str) -> list[dict]:
     """
-    Génère la réponse de l'assistant à un message entrant.
-
-    Returns:
-        str: Message à envoyer à l'usager
+    Retourne la checklist adaptée au profil.
+    Délègue aux agents singletons (source unique de vérité).
+    Fallback sur CHECKLIST_MDPH (adulte) si le profil n'est pas reconnu.
     """
     try:
-        system_prompt = _build_system_prompt(
-            etat, donnees_collectees, elements_manquants, is_mineur
-        )
-
-        messages = [{"role": "system", "content": system_prompt}]
-
-        # Historique limité (évite dépassement de contexte)
-        for msg in historique[-12:]:
-            role    = msg.get("role", "user")
-            content = msg.get("content") or msg.get("reponse") or ""
-            if content and role in ("user", "assistant"):
-                messages.append({"role": role, "content": str(content)[:500]})
-
-        messages.append({"role": "user", "content": message_entrant})
-
-        response = openai_client.chat.completions.create(
-            model=model,
-            messages=messages,
-            max_tokens=250,
-            temperature=0.5,
-        )
-
-        reponse = response.choices[0].message.content.strip()
-        logger.info(f"[CONV] Réponse générée | état={etat} | {len(reponse)} chars")
-        return reponse
-
-    except Exception as e:
-        logger.error(f"[CONV] Erreur LLM : {e}")
-        if elements_manquants:
-            return (
-                f"Merci pour votre réponse. "
-                f"Pourriez-vous me préciser : {elements_manquants[0]} ?"
-            )
-        return (
-            "Merci, nous avons bien noté vos informations. "
-            "Votre dossier est en cours de traitement. — L'équipe Facilim"
-        )
+        from app.services.conversation.router import get_agent
+        return get_agent(profil_mdph).CHECKLIST
+    except Exception:
+        return CHECKLIST_MDPH  # fallback conservateur
 
 
-def detect_missing_fields(donnees: dict[str, Any]) -> list[str]:
-    """Retourne les libellés des champs manquants dans la checklist."""
+# ── Structure des onglets — navigation conversationnelle ──────────────────────
+#
+# "conditionnel": True  → l'onglet n'est activé que si la question de qualification
+#                         (stockée dans donnees) reçoit une réponse positive.
+# "condition"           → champ + valeur déclencheurs.
+# "profils"             → liste des profils pour lesquels cet onglet est actif.
+#                         Si absent, actif pour tous.
+
+ONGLETS_MDPH: list[dict] = [
+    {
+        "num": 1,
+        "titre": "Accueil & Identification",
+        "champs": [],
+    },
+    {
+        "num": 2,
+        "titre": "Identité (Section A)",
+        "champs": ["nom_prenom", "date_naissance", "genre", "num_secu",
+                   "adresse_complete", "telephone", "departement"],
+        "resume_validation": "L'identité et les coordonnées",
+    },
+    {
+        "num": 3,
+        "titre": "Représentation & Urgences (A2 / A3 / A4 / A5)",
+        "champs": [],   # géré par l'agent selon le profil (représentant légal, urgence)
+        "resume_validation": "La représentation légale et les situations d'urgence",
+    },
+    {
+        "num": 4,
+        "titre": "Vie quotidienne (Section B1)",
+        "champs": ["impact_quotidien"],
+        "resume_validation": "L'impact du handicap sur la vie quotidienne",
+    },
+    {
+        "num": 5,
+        "titre": "Aides & Compensations (Section B2)",
+        "champs": [],   # renseigné par le professionnel via Dashboard
+        "resume_validation": "Les aides déjà en place",
+    },
+    {
+        "num": 6,
+        "titre": "Frais à charge (Section B3)",
+        "champs": [],   # collecté dans la conversation B2/B3
+        "resume_validation": "Les frais restant à charge",
+    },
+    {
+        "num": 7,
+        "titre": "Scolarité & Formation (Section C)",
+        # Enfant : toujours actif
+        # Adulte/mixte : conditionnel sur qualification_section_c
+        # Mécanisme unifié : "condition_par_profil" liste les profils qui nécessitent
+        # une qualification avant d'ouvrir l'onglet.
+        "champs": ["situation_scolaire", "etablissement_scolaire",
+                   "qualification_section_c", "formation_actuelle"],
+        "resume_validation": "La situation scolaire ou de formation",
+        "condition_par_profil": {
+            "adulte": {"champ": "qualification_section_c", "valeur": "oui"},
+            "mixte":  {"champ": "qualification_section_c", "valeur": "oui"},
+        },
+    },
+    {
+        "num": 8,
+        "titre": "Situation professionnelle (Section D)",
+        # Conditionnel sur qualification_section_d
+        "champs": ["qualification_section_d", "statut_emploi"],
+        "resume_validation": "La situation professionnelle et le projet",
+        "profils": ["adulte", "mixte"],
+        "conditionnel": True,
+        "condition": {"champ": "qualification_section_d", "valeur": "oui"},
+    },
+    {
+        "num": 9,
+        "titre": "Droits & Prestations demandés (Section E)",
+        # Toujours en fin de parcours — non bloquant
+        "champs": ["droits_demandes"],
+        "resume_validation": "Les droits et prestations souhaités",
+    },
+    {
+        "num": 10,
+        "titre": "Aidant familial (Section F)",
+        # Conditionnel sur qualification_section_f
+        "champs": ["qualification_section_f", "aidant_nom", "aidant_besoins"],
+        "resume_validation": "Les besoins de l'aidant familial",
+        "conditionnel": True,
+        "condition": {"champ": "qualification_section_f", "valeur": "oui"},
+    },
+]
+
+# Index rapide : champ_id → numéro d'onglet
+_CHAMP_VERS_ONGLET: dict[str, int] = {}
+for _onglet in ONGLETS_MDPH:
+    for _champ in _onglet["champs"]:
+        _CHAMP_VERS_ONGLET[_champ] = _onglet["num"]
+
+
+@dataclass
+class TabNavigationState:
+    """État de navigation par onglets pour une session conversationnelle."""
+    onglet_courant:      int       = 2      # commence à l'onglet 2 (identité)
+    validation_demandee: bool      = False
+    onglets_valides:     list[int] = field(default_factory=list)
+    # Verrou de profil : une fois déterminé, jamais recalculé.
+    # Évite tout rebasculement entre agents en cours de session.
+    profil_mdph_lock:    str       = ""     # "" = non encore verrouillé
+
+
+def detecter_saut_onglet(
+    donnees_actuelles: dict[str, Any],
+    nouveau_champ: str,
+    onglet_courant: int,
+) -> bool:
+    """
+    Retourne True si le nouveau champ appartient à un onglet PLUS AVANCÉ
+    que l'onglet courant (détection de saut de sujet).
+    """
+    onglet_cible = _CHAMP_VERS_ONGLET.get(nouveau_champ, onglet_courant)
+    return onglet_cible > onglet_courant + 1
+
+
+def _champs_onglet_pour_profil(onglet_champs: list[str], profil: str) -> list[str]:
+    """
+    Filtre la liste des champs d'un onglet pour ne garder que ceux
+    qui figurent dans la checklist du profil courant.
+    Évite d'exiger des champs adultes pour un enfant (et vice-versa).
+    """
+    checklist_ids = {item["id"] for item in get_checklist(profil)}
+    return [c for c in onglet_champs if c in checklist_ids]
+
+
+def onglet_courant_complet(
+    donnees: dict[str, Any],
+    onglet_num: int,
+    profil: str = "adulte",
+) -> bool:
+    """
+    Vérifie si tous les champs requis de l'onglet courant sont renseignés.
+
+    Règles :
+    - Onglet non applicable au profil → True (ignoré)
+    - Onglet conditionnel dont la condition n'est pas remplie → True (ignoré)
+    - Seuls les champs présents dans la checklist du profil sont exigés
+      (empêche de bloquer sur des champs adultes pour un enfant)
+    """
+    onglet = next((o for o in ONGLETS_MDPH if o["num"] == onglet_num), None)
+    if not onglet:
+        return True
+
+    # Profil non concerné par cet onglet
+    profils_autorises = onglet.get("profils")
+    if profils_autorises and profil not in profils_autorises:
+        return True
+
+    # ── Condition générale (onglets 8, 10) ───────────────────────────────────
+    if onglet.get("conditionnel"):
+        cond = onglet.get("condition", {})
+        valeur_actuelle = str(donnees.get(cond.get("champ", ""), "")).lower()
+        if not valeur_actuelle.startswith(cond.get("valeur", "oui").lower()):
+            return True  # condition non remplie → onglet sauté
+
+    # ── Condition par profil (onglet 7 — Section C) ───────────────────────
+    # Mécanisme unifié : remplace l'ancien "conditionnel_adulte"
+    conditions_profil = onglet.get("condition_par_profil", {})
+    if profil in conditions_profil:
+        cond = conditions_profil[profil]
+        qual = str(donnees.get(cond["champ"], "")).lower()
+        valeur_cible = cond["valeur"].lower()
+        if qual.startswith("non"):
+            return True          # explicitement non concerné → onglet ignoré
+        if qual.startswith(valeur_cible):
+            # Condition satisfaite → vérifier les champs spécifiques au profil
+            champs_profil = _champs_onglet_pour_profil(onglet.get("champs", []), profil)
+            return all(donnees.get(c) for c in champs_profil)
+        return False             # qualification pas encore répondue
+
+    # Cas général : filtrer les champs par profil AVANT de vérifier
+    champs_du_profil = _champs_onglet_pour_profil(onglet.get("champs", []), profil)
+
+    # Si aucun champ de l'onglet n'appartient au profil → onglet ignoré
+    if not champs_du_profil and onglet.get("champs"):
+        return True
+
+    return all(donnees.get(c) for c in champs_du_profil)
+
+
+def generer_message_validation_onglet(onglet_num: int) -> str:
+    """
+    Génère le message de demande de validation d'un onglet avant de passer au suivant.
+    Formulé en FALC, chaleureux.
+    """
+    onglet = next((o for o in ONGLETS_MDPH if o["num"] == onglet_num), None)
+    if not onglet:
+        return ""
+    resume = onglet.get("resume_validation", f"la section {onglet['titre']}")
+    return (
+        f"✅ Nous avons bien noté *{resume}*.\n\n"
+        "Est-ce que ces informations sont correctes et complètes ?\n"
+        "Répondez *OUI* pour confirmer, ou dites-moi ce qu'il faut corriger."
+    )
+
+
+def detect_missing_fields(donnees: dict[str, Any], profil_mdph: str = "inconnu") -> list[str]:
+    """
+    Retourne les libellés des champs manquants dans la checklist adaptée au profil.
+
+    Le profil détermine quels champs sont obligatoires :
+      - "enfant"  → checklist sans champs adultes (emploi, situation maritale…)
+      - "mixte"   → checklist complète (scolaire + professionnel)
+      - "adulte"  → checklist adulte standard
+      - "inconnu" → checklist adulte par défaut (conservative)
+    """
+    checklist = get_checklist(profil_mdph)
     missing = []
-    for item in CHECKLIST_MDPH:
+    for item in checklist:
+        # Champs non-requis (section E, F) ne bloquent pas la progression
+        if not item.get("requis", True):
+            continue
+        # Champs conditionnels : évaluer la condition avant d'exiger le champ
+        condition = item.get("condition")
+        if condition:
+            valeur_condition = str(donnees.get(condition["champ"], "")).lower()
+            if not valeur_condition.startswith(condition["valeur"].lower()):
+                continue  # condition non remplie → champ ignoré pour l'instant
         if not donnees.get(item["id"]):
             missing.append(item["label"])
     return missing
+
+
+# ── Champs extractibles par profil ───────────────────────────────────────────
+# Seuls ces champs peuvent être extraits pour chaque profil.
+# Empêche la pollution de synthese_json avec des concepts inadaptés
+# (ex : situation_familiale extraite d'un dossier enfant).
+
+_CHAMPS_EXTRACTIBLES_ENFANT = [
+    "nom_prenom", "date_naissance", "genre", "adresse_complete",
+    "num_secu", "numero_securite_sociale", "telephone", "email", "departement",
+    "diagnostics", "traitements", "medecin_traitant", "impact_quotidien",
+    "historique_mdph", "numero_dossier_mdph",
+    # Spécifique enfant
+    "situation_scolaire", "etablissement_scolaire",
+    "representant_legal_nom", "representant_legal_lien",
+    # Section E
+    "droits_demandes", "projet_orientation",
+    # Section F
+    "qualification_section_f", "aidant_nom", "aidant_besoins",
+]
+
+_CHAMPS_EXTRACTIBLES_ADULTE = [
+    "nom_prenom", "date_naissance", "genre", "adresse_complete",
+    "num_secu", "numero_securite_sociale", "telephone", "email", "departement",
+    "situation_familiale", "enfants_a_charge",
+    "diagnostics", "traitements", "medecin_traitant", "impact_quotidien",
+    "historique_mdph", "numero_dossier_mdph",
+    "protection_juridique", "sous_tutelle",
+    # Section C (qualification + champs)
+    "qualification_section_c", "formation_actuelle", "etablissement_formation",
+    # Section D (qualification + champs)
+    "qualification_section_d", "statut_emploi", "projet_professionnel",
+    # Section E
+    "droits_demandes", "projet_orientation",
+    # Section F
+    "qualification_section_f", "aidant_nom", "aidant_besoins",
+]
+
+_CHAMPS_EXTRACTIBLES_MIXTE = list(
+    {*_CHAMPS_EXTRACTIBLES_ENFANT, *_CHAMPS_EXTRACTIBLES_ADULTE}
+)
+
+
+def _champs_extractibles(profil_mdph: str) -> list[str]:
+    if profil_mdph == "enfant":
+        return _CHAMPS_EXTRACTIBLES_ENFANT
+    if profil_mdph == "mixte":
+        return _CHAMPS_EXTRACTIBLES_MIXTE
+    return _CHAMPS_EXTRACTIBLES_ADULTE
 
 
 def extract_structured_data_from_history(
     historique: list[dict],
     openai_client: Any,
     model: str = "gpt-4o-mini",
+    profil_mdph: str = "inconnu",
 ) -> dict[str, Any]:
     """
     Extrait les données structurées de l'historique conversationnel.
-    Utilisé pour mettre à jour le dossier après chaque échange.
+
+    Le paramètre profil_mdph filtre la liste des champs extractibles :
+    - Un dossier enfant ne peut JAMAIS produire situation_familiale,
+      enfants_a_charge, statut_emploi, etc.
+    - Un dossier adulte ne produit pas situation_scolaire.
+
+    Ce filtrage est la dernière ligne de défense avant la persistance.
     """
     if not historique:
         return {}
 
+    champs = _champs_extractibles(profil_mdph)
+    champs_str = ", ".join(champs)
+
     conversation_text = "\n".join(
         f"{'Usager' if m.get('role') == 'user' else 'Assistant'}: {m.get('content', '')}"
         for m in historique[-20:]
+        if m.get("role") in ("user", "assistant")
     )
 
     prompt = f"""Analyse cette conversation et extrait les informations MDPH collectées.
-Retourne UNIQUEMENT un JSON valide avec les champs trouvés parmi :
-nom_prenom, date_naissance, genre, adresse_complete, num_secu, telephone,
-departement, situation_familiale, enfants_a_charge, types_demande,
-diagnostics, traitements, medecin_traitant, impact_quotidien,
-situation_scol_pro, historique_mdph
+Retourne UNIQUEMENT un JSON valide avec les champs trouvés PARMI CETTE LISTE STRICTE :
+{champs_str}
 
+RÈGLE ABSOLUE : n'inclus AUCUN champ hors de cette liste, même si tu le trouves dans la conversation.
 Si un champ n'est pas trouvé, ne l'inclus pas.
 Exemple : {{"nom_prenom": "Jean Dupont", "date_naissance": "15/03/1980"}}
 
@@ -217,7 +522,17 @@ Conversation :
             response_format={"type": "json_object"},
         )
         raw = response.choices[0].message.content.strip()
-        return json.loads(raw)
+        extracted = json.loads(raw)
+
+        # Filtrage défensif : supprimer tout champ hors whitelist même si le LLM triche
+        champs_autorises = set(champs)
+        filtered = {k: v for k, v in extracted.items() if k in champs_autorises}
+        if len(filtered) != len(extracted):
+            rejetes = set(extracted) - champs_autorises
+            logger.warning("[CONV] Champs rejetés (hors profil %s) : %s", profil_mdph, rejetes)
+
+        return filtered
+
     except Exception as e:
         logger.warning(f"[CONV] Extraction données échouée : {e}")
         return {}

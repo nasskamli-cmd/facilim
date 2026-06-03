@@ -53,6 +53,7 @@ class Settings(BaseSettings):
 
     # ── Chiffrement des données sensibles ──────────────────────────────────
     # Clé Fernet 32 bytes base64 — générer avec : Fernet.generate_key()
+    # Fallback automatique sur AES_SECRET_KEY si ENCRYPTION_KEY absent (legacy Railway)
     encryption_key: str = ""
 
     # ── WhatsApp Business Cloud API ────────────────────────────────────────
@@ -83,10 +84,12 @@ class Settings(BaseSettings):
     s3_secret_key: str = ""
 
     # ── Authentification Dashboard ESSMS ───────────────────────────────────
-    auth_email: str = "admin@facilim.fr"
-    auth_password: str = "changeme"
-    auth_email_2: str = ""
-    auth_password_2: str = ""
+    # Les mots de passe sont stockés en hash bcrypt (rounds=12).
+    # Générer : python -c "import bcrypt; print(bcrypt.hashpw(b'MOT_DE_PASSE', bcrypt.gensalt(12)).decode())"
+    auth_email:          str = "admin@facilim.fr"
+    auth_password_hash:  str = ""   # hash bcrypt — vide = compte désactivé
+    auth_email_2:        str = ""
+    auth_password_hash_2: str = ""  # hash bcrypt — vide = compte désactivé
     jwt_secret_key: str = Field(default="jwt-changeme-in-prod!!")
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 480  # 8 heures
@@ -95,6 +98,11 @@ class Settings(BaseSettings):
     quota_dossiers_actifs: int = 10
     max_upload_size_mb: int = 25
     max_conversation_history: int = 50
+    memory_summary_threshold: int = 20  # résumé déclenché quand l'historique dépasse ce seuil
+    memory_window_size: int = 10        # messages récents conservés mot-à-mot après résumé
+
+    # ── Recherche de structures géolocalisées (Règle Q60) ─────────────────
+    google_places_api_key: str = ""     # laisser vide → fallback FINESS API
 
     # ── Human-in-the-loop ──────────────────────────────────────────────────
     ocr_confidence_threshold: float = 0.90  # < 90% → flag humain

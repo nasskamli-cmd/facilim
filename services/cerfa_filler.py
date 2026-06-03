@@ -211,6 +211,30 @@ def _cocher_case(writer: PdfWriter, field_name: str) -> bool:
     return False
 
 
+def _decocher_case(writer: PdfWriter, field_name: str) -> bool:
+    """
+    Décoche explicitement une case à cocher (force /Off au niveau des octets PDF).
+    Utilisé pour garantir que "première demande" est désactivée quand type=renouvellement.
+    """
+    for page in writer.pages:
+        if "/Annots" not in page:
+            continue
+        for annot_ref in page["/Annots"]:
+            try:
+                annot = annot_ref.get_object()
+                t_val = annot.get("/T")
+                if t_val is not None and str(t_val) == field_name:
+                    annot.update({
+                        NameObject("/V"):  NameObject("/Off"),
+                        NameObject("/AS"): NameObject("/Off"),
+                    })
+                    logger.debug(f"Case décochée : {field_name} → /Off")
+                    return True
+            except Exception:
+                pass
+    return False
+
+
 def _cocher_option(writer: PdfWriter, field_name: str, option_value: str) -> bool:
     """
     Sélectionne une option dans un groupe radio par valeur AP/N (ex. 'Homme', 'Femme').
@@ -473,7 +497,14 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     """
     Pré-remplit le CERFA 15692*01 avec toutes les données disponibles du dossier.
     Compatible enfant ET adulte.
+
+    Si dossier contient la clé "_dossier_cerfa_v2" (DossierCERFA structuré),
+    les sous-classes ProtectionJuridique et SectionAidant sont lues directement
+    pour les sections A4 et P19-P20, sans parsing fragile de chaînes plates.
     """
+    # Lecture du modèle structuré V2 si disponible
+    _dv2 = dossier.get("_dossier_cerfa_v2")   # DossierCERFA | None
+
     if not _CERFA_PATH.exists():
         raise FileNotFoundError(f"Formulaire CERFA introuvable : {_CERFA_PATH}")
 
@@ -628,12 +659,19 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     # La réponse WhatsApp de la famille PRIME sur l'analyse IA pour ce champ.
     # Si la famille a dit "0" ou "aucun", on écrase même si l'IA a dit True.
     _enfants_rep = (cerfa_rep.get("enfants_a_charge") or "").strip().lower()
+    _nb_enfants_reel: int | None = None   # FIX 3b : nombre réel pour champ texte PDF
     if _enfants_rep:
         _pas_enfants = any(w in _enfants_rep for w in ["0", "aucun", "non", "pas d", "zéro", "zero", "personne"])
         if _pas_enfants:
-            a_enfants_charge = False    # override : la famille a confirmé 0 enfant
+            a_enfants_charge = False
+            _nb_enfants_reel = 0
         else:
-            a_enfants_charge = True     # override : la famille a confirmé des enfants
+            a_enfants_charge = True
+            # Extraire le nombre si l'usager l'a donné explicitement (ex: "4 enfants")
+            import re as _re_enf
+            _match_nb = _re_enf.search(r'\b(\d+)\b', _enfants_rep)
+            if _match_nb:
+                _nb_enfants_reel = int(_match_nb.group(1))
     situation_pro          = (ds.get("situation_professionnelle") or cerfa_rep.get("situation_pro_scolaire") or "").lower()
     nom_employeur          = ds.get("nom_employeur") or ""
     poste_occupe           = ds.get("poste_occupe") or ""
@@ -662,14 +700,57 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     # demande" mais la famille dit "renouvellement" sur WhatsApp, c'était la version IA qui gagnait.
     # Après : cerfa_rep > ds. L'IA reste un fallback si la famille n'a pas répondu.
     _type_demande_rep    = (cerfa_rep.get("type_demande") or "").lower()
-    _historique_mdph_rep = (cerfa_rep.get("historique_mdph") or "").lower()
+    # Normalisation accents pour la comparaison métier (ex : "clôturé" → "cloture")
+    import unicodedata as _ud
+    def _sans_accents(s: str) -> str:
+        return "".join(c for c in _ud.normalize("NFD", s) if _ud.category(c) != "Mn")
+    _historique_mdph_rep = _sans_accents((cerfa_rep.get("historique_mdph") or "").lower())
     type_demande         = (_type_demande_rep or ds.get("type_demande") or "").lower()
     deja_connu_mdph      = bool(ds.get("deja_connu_mdph", False))
-    # BUG 2 CORRIGÉ : toute réponse non-vide à "historique_mdph" signifie que la personne a un dossier.
-    # Avant : on testait uniquement les mots "oui/déjà" → la famille qui donne directement son
-    # numéro de dossier (ex : "12345") n'était pas reconnue comme "connue MDPH".
+
+    # ── Règle métier MDPH — Statut administratif "déjà connu MDPH" ──────────
+    # Principe : ne pas déduire de la non-vacuité du champ.
+    # Raisonner uniquement sur le statut administratif réel de la personne.
+    #
+    # OUI  → a déjà eu un dossier, une décision, un droit (même expiré/clôturé)
+    # NON  → première demande explicite
+    # Vide → ambigu ou non renseigné → ne rien cocher
     if not deja_connu_mdph and _historique_mdph_rep:
-        deja_connu_mdph = True
+        _MOTS_CONNU_MDPH = {
+            # Situations explicites de connaissance MDPH
+            "déjà", "deja", "ancien", "ancienne", "antérieur", "anterieur",
+            "précédent", "precedent", "renouvell", "révision", "revision",
+            "réexamen", "reexamen", "recours", "dossier", "numéro", "numero",
+            # Droits ou orientations passés
+            "aah", "rqth", "aeeh", "pch", "cmpp", "esat", "ime", "sessad",
+            "orientation", "notification", "décision", "decision", "accord",
+            "attribué", "attribue", "obtenu", "accordé", "accorde",
+            # Temporalité passée liée à la MDPH
+            "clôturé", "cloture", "expiré", "expire", "périmé", "perime",
+            "suivi", "suivie", "accompagné", "accompagnee",
+            "oui",
+        }
+        _MOTS_PREMIERE_DEMANDE = {
+            "première", "premiere", "1ère", "1ere", "1re",
+            "premier", "jamais", "aucun", "aucune",
+            "pas de dossier", "pas encore", "jamais eu",
+            "jamais déposé", "jamais depose",
+            "aucune demande", "aucun dossier",
+            "jamais sollicité", "jamais sollicite",
+            "non",
+        }
+        # Un numéro de dossier (5+ chiffres) = connue de la MDPH
+        _has_numero = bool(re.search(r'\b\d{5,}\b', _historique_mdph_rep))
+        _has_oui    = any(w in _historique_mdph_rep for w in _MOTS_CONNU_MDPH)
+        _has_non    = any(w in _historique_mdph_rep for w in _MOTS_PREMIERE_DEMANDE)
+
+        if _has_numero:
+            deja_connu_mdph = True       # numéro de dossier = connue MDPH sans ambiguïté
+        elif _has_oui and not _has_non:
+            deja_connu_mdph = True       # signaux positifs sans signal négatif
+        elif _has_non:
+            deja_connu_mdph = False      # première demande explicite
+        # else: ambigu ou non interprétable → ne pas cocher (deja_connu_mdph reste False)
     # Si le type de demande signifie renouvellement/réévaluation/changement → personne déjà connue.
     # BUG 3 (partiel) : on utilise une détection souple (sous-chaîne) au lieu d'un test d'égalité exacte,
     # cohérente avec la normalisation appliquée plus bas lors du cochage des cases P1.
@@ -720,7 +801,8 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     # urgence_droits et procedure_simplifiee : calculés après la lecture de cerfa_rep ci-dessous
 
     # Identité complémentaire
-    nationalite            = (ds.get("nationalite") or "francaise").lower()
+    # Règle 3 — pas de nationalité française par défaut sans source explicite
+    nationalite            = (ds.get("nationalite") or cerfa_rep.get("nationalite") or dossier.get("nationalite") or "").lower()
     commune_naissance      = ds.get("commune_naissance") or ""
     departement_naissance  = ds.get("departement_naissance") or ""
     pays_naissance         = (ds.get("pays_naissance") or "").strip()  # pas de défaut "France"
@@ -728,7 +810,20 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     organisme_payeur       = (ds.get("organisme_payeur") or cerfa_rep.get("organisme_payeur") or "").lower()
     numero_allocataire     = ds.get("numero_allocataire") or ""
     organisme_assurance    = (ds.get("organisme_assurance_maladie") or "cpam").lower()
-    protection_juridique   = (ds.get("protection_juridique") or cerfa_rep.get("protection_juridique") or "aucune").lower()
+    # Protection juridique — V3 : lecture depuis SituationJuridique.type_mesure
+    if _dv2 and _dv2.section_a.situation_juridique.type_mesure != "aucune":
+        _sj = _dv2.section_a.situation_juridique
+        protection_juridique = _sj.type_mesure
+        _rep = _sj.identite_representant
+        if _rep:
+            _nom_rep_v2    = _rep.nom or ""
+            _prenom_rep_v2 = _rep.prenom or ""
+            _qualite_v2    = _rep.qualite or ("Tuteur" if "tutelle" in _sj.type_mesure else "Curateur")
+        else:
+            _nom_rep_v2 = _prenom_rep_v2 = _qualite_v2 = ""
+    else:
+        protection_juridique = (ds.get("protection_juridique") or cerfa_rep.get("protection_juridique") or "aucune").lower()
+        _nom_rep_v2 = _prenom_rep_v2 = _qualite_v2 = ""
 
     # CMI nuances (expert) — cases distinctes dans le CERFA
     # Priorité : ds > WhatsApp réponse textuelle cmi_type
@@ -741,8 +836,19 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     # Creton (jeune adulte >20 maintenu en structure enfants)
     creton            = ds.get("creton", False)
 
-    # Urgence droits
-    urgence_droits    = ds.get("urgence_droits") or _urgence_bool
+    # Urgence droits — V3 : valeur dans Section_Urgence.est_urgent (False par défaut).
+    if _dv2:
+        urgence_droits = _dv2.section_urgence.est_urgent   # bool — False par défaut dans le modèle
+    else:
+        _urgence_rep_raw = (cerfa_rep.get("urgence_droits") or "").lower()
+        _urgence_explicitement_non = any(
+            w in _urgence_rep_raw
+            for w in ["non", "no", "0", "faux", "false", "n/a", "pas d", "aucune", "première"]
+        )
+        if _urgence_explicitement_non:
+            urgence_droits = False
+        else:
+            urgence_droits = ds.get("urgence_droits") or _urgence_bool
     procedure_simplifiee = ds.get("procedure_simplifiee", False)
 
     # Ressources et frais liés au handicap (section B1)
@@ -780,7 +886,12 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
                 protection_juridique = "sauvegarde"
 
     # ── Données accident du travail / ESRP ──────────────────────────────────
-    accident_travail    = ds.get("accident_travail", False)
+    # Règle 7 : accident_travail depuis toutes les sources
+    accident_travail    = bool(
+        ds.get("accident_travail")
+        or cerfa_rep.get("accident_travail")
+        or dossier.get("accident_travail")
+    )
     date_at             = ds.get("date_accident_travail") or ""
     narratif_at         = (
         ds.get("narratif_accident_travail")
@@ -837,11 +948,53 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     type_contrat           = (ds.get("type_contrat") or "").lower()
     duree_hebdo            = ds.get("duree_hebdomadaire") or ""
     en_recherche_emploi    = ds.get("en_recherche_emploi", False)
-    inscrit_pole_emploi    = ds.get("inscrit_pole_emploi", False)
+
+    # Règle 6 — France Travail = Pôle Emploi (toutes sources)
+    _pe_sources = " ".join([
+        str(ds.get("inscrit_pole_emploi", "")),
+        str(cerfa_rep.get("inscrit_pole_emploi", "")),
+        str(dossier.get("inscrit_pole_emploi", "")),
+        str(ds.get("france_travail", "")),
+        str(cerfa_rep.get("france_travail", "")),
+    ]).lower()
+    inscrit_pole_emploi = bool(
+        ds.get("inscrit_pole_emploi") or cerfa_rep.get("inscrit_pole_emploi")
+        or dossier.get("inscrit_pole_emploi")
+        or "france travail" in _pe_sources or "pôle emploi" in _pe_sources
+        or "pole emploi" in _pe_sources or "ft " in _pe_sources
+        or "true" in _pe_sources or "oui" in _pe_sources
+    )
+
     date_inscription_pe    = ds.get("date_inscription_pole_emploi") or ""
-    en_formation           = ds.get("en_formation", False)
-    nom_formation          = ds.get("nom_formation") or ""
-    organisme_formation    = ds.get("organisme_formation") or ""
+
+    # Règle 8 — Formation : toutes sources, nom de l'établissement
+    en_formation           = bool(
+        ds.get("en_formation") or cerfa_rep.get("en_formation")
+        or dossier.get("en_formation")
+        or ds.get("qualification_section_c") == "oui"
+        or "formation" in situation_pro
+    )
+    nom_formation          = (ds.get("nom_formation") or cerfa_rep.get("formation_actuelle")
+                               or dossier.get("type_formation_pro") or "")
+    organisme_formation    = (ds.get("organisme_formation") or cerfa_rep.get("etablissement_formation")
+                               or ds.get("etablissement_formation") or "")
+
+    # Règle 7 — Accident AT → a déjà travaillé
+    # Règle 2 — a_deja_travaille depuis toutes les sources
+    _a_deja_travaille_raw = (
+        ds.get("a_deja_travaille") or cerfa_rep.get("a_deja_travaille")
+        or dossier.get("a_deja_travaille")
+    )
+    # Si booléen explicite False → respecter ; sinon déduire
+    if _a_deja_travaille_raw is False:
+        _a_deja_travaille = False
+    else:
+        _a_deja_travaille = bool(
+            _a_deja_travaille_raw or accident_travail
+            or any(w in situation_pro for w in
+                   ["en emploi", "esat", "cdi", "cdd", "contrat", "licencié", "inaptitude",
+                    "travaillé", "reconversion", "arrêt de travail", "arret de travail"])
+        )
 
     # Enrichissement depuis la réponse WhatsApp "qualification_parcours" (D1/D2)
     _qual_rep = (cerfa_rep.get("qualification_parcours") or "").lower()
@@ -868,7 +1021,8 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     statut_occupation      = (ds.get("statut_occupation") or "").lower()
 
     # Enrichissement depuis la réponse WhatsApp "type_logement_statut"
-    # (collectée par le bot quand ds ne fournit pas les infos logement)
+    # FIX 3c : cerfa_rep PRIME TOUJOURS sur ds pour le statut d'occupation.
+    # La famille sait si elle est propriétaire — l'IA peut se tromper.
     _logement_rep = (cerfa_rep.get("type_logement_statut") or "").lower()
     if _logement_rep:
         if not type_logement_detail:
@@ -876,13 +1030,16 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
                 if _tl_kw in _logement_rep:
                     type_logement_detail = _tl_kw
                     break
-        if not statut_occupation:
-            if any(w in _logement_rep for w in ["propriétaire", "proprietaire"]):
-                statut_occupation = "proprietaire"
-            elif "locataire" in _logement_rep:
-                statut_occupation = "locataire"
-            elif any(w in _logement_rep for w in ["hébergé", "heberge", "hébergée"]):
-                statut_occupation = "heberge"
+        # Override inconditionnelle : cerfa_rep (WhatsApp) écrase ds (IA)
+        if any(w in _logement_rep for w in ["propriétaire", "proprietaire"]):
+            statut_occupation = "proprietaire"
+        elif "locataire" in _logement_rep:
+            statut_occupation = "locataire"
+        elif any(w in _logement_rep for w in ["hébergé", "heberge", "hébergée"]):
+            statut_occupation = "heberge"
+    # V3 : lecture directe depuis section_c.statut_occupation si disponible
+    if _dv2 and _dv2.section_c.statut_occupation:
+        statut_occupation = _dv2.section_c.statut_occupation
 
     # ── Aides humaines (P6) ──────────────────────────────────────────────────
     a_aide_soignante       = ds.get("a_aide_soignante", False)
@@ -894,18 +1051,41 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     prenom_aidant          = ds.get("prenom_aidant") or cerfa_rep.get("prenom_aidant") or ""
     lien_aidant            = ds.get("lien_aidant") or cerfa_rep.get("lien_aidant") or ""
 
-    # Aidant collecté via WhatsApp (champ aidant_identite : "Prénom Nom, lien")
+    # Aidant collecté via WhatsApp — FIX P19-P20 : parsing robuste de aidant_identite.
+    # Formats acceptés : "Prénom NOM, lien" | "NOM Prénom, lien" | "lien seul" | "personne"
     _aidant_identite_rep = (cerfa_rep.get("aidant_identite") or "").strip()
-    if _aidant_identite_rep and not nom_aidant:
+    _mots_absence_aidant = ["personne", "aucun", "non", "pas d", "seul", "seule", "n/a"]
+    if _aidant_identite_rep and not any(m in _aidant_identite_rep.lower() for m in _mots_absence_aidant):
         _parts = _aidant_identite_rep.split(",", 1)
-        _nom_parts = _parts[0].strip().split(" ", 1)
+        _identite_raw = _parts[0].strip()
+        _lien_raw     = _parts[1].strip() if len(_parts) > 1 else ""
+
+        # Détection du lien si absent de la partie après virgule mais dans identite
+        _liens_connus = {
+            "mari": "époux", "époux": "époux", "conjoint": "conjoint",
+            "femme": "épouse", "épouse": "épouse", "compagne": "compagne",
+            "mère": "mère", "mere": "mère", "père": "père", "pere": "père",
+            "fils": "fils", "fille": "fille", "frère": "frère", "soeur": "sœur",
+        }
+        if not _lien_raw:
+            for _mot_lien, _lien_norm in _liens_connus.items():
+                if _mot_lien in _identite_raw.lower():
+                    _lien_raw = _lien_norm
+                    # Retirer le mot lien de l'identité
+                    _identite_raw = re.sub(
+                        rf'\b{_mot_lien}\b', '', _identite_raw, flags=re.IGNORECASE
+                    ).strip(" ,")
+                    break
+
+        # Extraction prénom / nom depuis l'identité nettoyée
+        _nom_parts = _identite_raw.split(" ", 1)
         if len(_nom_parts) >= 2:
-            prenom_aidant = prenom_aidant or _nom_parts[0]
-            nom_aidant    = nom_aidant or _nom_parts[1]
-        elif _nom_parts:
-            nom_aidant = nom_aidant or _nom_parts[0]
-        if len(_parts) > 1:
-            lien_aidant = lien_aidant or _parts[1].strip()
+            prenom_aidant = prenom_aidant or _nom_parts[0].strip()
+            nom_aidant    = nom_aidant    or _nom_parts[1].strip()
+        elif _nom_parts and _nom_parts[0]:
+            nom_aidant = nom_aidant or _nom_parts[0].strip()
+
+        lien_aidant = lien_aidant or _lien_raw
 
     # Détection aidant depuis la réponse WhatsApp "besoins_aide"
     _besoins_aide_rep_txt  = (cerfa_rep.get("besoins_aide") or "").lower()
@@ -1033,8 +1213,9 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     elif _is_reevaluation:
         cases.append("Case à cocher P1 C")
     elif _is_renouvellement or type_demande == "renouvellement":
-        # Procédure simplifiée (P1 1 = renouvellement à l'identique) :
-        # UNIQUEMENT si urgence droits (expire dans <2 mois) ET pas de nouveaux droits
+        # FIX 3d : décochage explicite de P1 A au niveau des octets PDF
+        # (le template peut avoir P1 A coché par défaut → on force /Off)
+        _decocher_case(writer, "Case à cocher P1 A")
         if procedure_simplifiee or urgence_droits:
             cases.append("Case à cocher P1 1")   # Renouvellement à l'identique (simplifié)
         else:
@@ -1047,8 +1228,9 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         if numero_dossier_mdph:
             champs["Champ de texte P 1 2"] = numero_dossier_mdph
 
-    # Aidant familial (P1 2) — cocher si l'aidant souhaite exprimer sa situation
-    if nom_aidant:
+    # Aidant familial (P1 2) — cocher UNIQUEMENT si l'aidant a un NOM ou des besoins documentés.
+    # NE PAS cocher si seulement "aidant_demande=True" sans données — évite les faux positifs.
+    if nom_aidant or (lien_aidant and (ds.get("aidant_besoins") or cerfa_rep.get("aidant_besoins"))):
         cases.append("Case à cocher P1 2")
 
     # POINT 4 — Traitement rapide (urgence)
@@ -1153,10 +1335,34 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     # PAGE 3 — Représentant légal / Protection juridique
     # ════════════════════════════════════════════════════════════════════════
     if is_enfant:
-        # Représentant légal = parent(s) déclarant(s)
-        champs["REPRESENTANT LEGAL 1"]  = nom
-        champs["REPRESENTANT LEGAL 2"]  = prenom
-        champs["REPRESENTANT LEGAL 3"]  = "Père / Mère"
+        # CORRECTION 4 (Sarah) — A2 : représentants légaux obligatoires pour un ENFANT.
+        # Les champs REPRESENTANT LEGAL doivent contenir les PARENTS (pas l'enfant).
+        # On cherche les infos parent dans ds > cerfa_rep > dossier (contact famille).
+        _nom_parent    = (ds.get("nom_parent") or ds.get("nom_aidant") or "").strip()
+        _prenom_parent = (ds.get("prenom_parent") or ds.get("prenom_aidant") or "").strip()
+        _lien_parent   = (ds.get("lien_aidant") or "Père / Mère").strip()
+
+        # Fallback : cerfa_reponses["aidant_identite"] = "Marie Dupont, mère"
+        _aidant_id_rep = (cerfa_rep.get("aidant_identite") or "").strip()
+        if _aidant_id_rep and not _nom_parent:
+            _parts_aid = _aidant_id_rep.split(",", 1)
+            _np_aid = _parts_aid[0].strip().split(" ", 1)
+            if len(_np_aid) == 2:
+                _prenom_parent = _prenom_parent or _np_aid[0]
+                _nom_parent    = _nom_parent or _np_aid[1]
+            elif _np_aid:
+                _nom_parent = _nom_parent or _np_aid[0]
+            if len(_parts_aid) > 1:
+                _lien_parent = _parts_aid[1].strip() or _lien_parent
+
+        # Règle : si le représentant légal n'est pas identifié → laisser vide.
+        # INTERDIT : utiliser le nom ou le prénom de l'enfant comme fallback.
+        _nom_rep_final    = _nom_parent    or ""
+        _prenom_rep_final = _prenom_parent or ""
+
+        champs["REPRESENTANT LEGAL 1"]  = _nom_rep_final
+        champs["REPRESENTANT LEGAL 2"]  = _prenom_rep_final
+        champs["REPRESENTANT LEGAL 3"]  = _lien_parent
         champs["REPRESENTANT LEGAL 6"]  = adresse
         champs["REPRESENTANT LEGAL 7"]  = cp
         champs["REPRESENTANT LEGAL 8"]  = commune
@@ -1164,23 +1370,32 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         champs["REPRESENTANT LEGAL 10"] = email
         cases.append("Case à cocher P3 1")   # Titulaire autorité parentale
 
+        if not _nom_parent:
+            logger.warning(
+                "[CERFA C4] Profil ENFANT : identité parent/représentant légal (A2) non collectée. "
+                "Page 3 remplie avec les coordonnées de contact famille. "
+                "Vérifier que la question 'aidant_identite' a bien été posée."
+            )
+
         # NSS du parent déclarant (si différent du NSS bénéficiaire)
-        # Per expert Q4 : "mettre numéro de sécurité sociale du parent qui remplit le dossier"
         nss_parent_clean = nss_parent.replace("-", "")
         if nss_parent_clean and nss_parent_clean.isdigit():
             try:
-                # Champ P3 NSS parent — les deux parents sauf jugement contraire
                 champs["Champ de texte P3 NSS Parent"] = nss_parent_clean[:15]
             except Exception:
                 pass
 
-        # Protection juridique (tutelle/curatelle de l'enfant si applicable)
-        if "tutelle" in protection_juridique:
-            cases.append("Case à cocher P3 4")
-        elif "curatelle" in protection_juridique:
-            cases.append("Case à cocher P3 5")
-        elif "sauvegarde" in protection_juridique:
-            cases.append("Case à cocher P3 6")
+        # CORRECTION 4 (Sarah) — A4 : NE PAS remplir tutelle/curatelle si protection = aucune.
+        # Pour la grande majorité des enfants → autorité parentale ordinaire, A4 vide.
+        _prot_enfant = protection_juridique.lower().strip()
+        if _prot_enfant and _prot_enfant not in ("aucune", "", "none", "non", "non concerné", "non concerné (enfant)"):
+            if "tutelle" in _prot_enfant:
+                cases.append("Case à cocher P3 4")
+            elif "curatelle" in _prot_enfant:
+                cases.append("Case à cocher P3 5")
+            elif "sauvegarde" in _prot_enfant:
+                cases.append("Case à cocher P3 6")
+        # Si aucune protection juridique → A4 reste vide (comportement correct)
     else:
         # Adulte : agit seul ou sous mesure de protection
         if protection_juridique in ("aucune", "", "none", "non"):
@@ -1194,37 +1409,62 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
                 cases.append("Case à cocher P3 5")
             elif "sauvegarde" in protection_juridique:
                 cases.append("Case à cocher P3 6")
-            # Nom du tuteur/curateur si connu
-            _nom_tuteur = (ds.get("nom_tuteur") or ds.get("nom_representant") or "").strip()
+            # Nom du représentant légal — V2 : lecture directe depuis ProtectionJuridique.
+            # Fallback hiérarchique : V2 > ds > cerfa_rep > aidant_identite.
+            _nom_tuteur    = _nom_rep_v2 or ds.get("nom_tuteur") or ds.get("nom_representant") or ""
+            _prenom_tuteur = _prenom_rep_v2 or ds.get("prenom_tuteur") or ""
+            _qualite_rep   = _qualite_v2 or ("Tuteur" if "tutelle" in protection_juridique else "Curateur")
+            if not _nom_tuteur:
+                _ai_rep = (cerfa_rep.get("aidant_identite") or "").strip()
+                if _ai_rep:
+                    _ai_p = _ai_rep.split(",", 1)
+                    _ai_n = _ai_p[0].strip().split(" ", 1)
+                    _nom_tuteur    = _ai_n[1].strip() if len(_ai_n) == 2 else _ai_n[0].strip()
+                    _prenom_tuteur = _ai_n[0].strip() if len(_ai_n) == 2 else ""
             if _nom_tuteur:
                 champs["REPRESENTANT LEGAL 1"] = _nom_tuteur
-                champs["REPRESENTANT LEGAL 3"] = (
-                    "Tuteur" if "tutelle" in protection_juridique else "Curateur"
-                )
+                if _prenom_tuteur:
+                    champs["REPRESENTANT LEGAL 2"] = _prenom_tuteur
+                champs["REPRESENTANT LEGAL 3"] = _qualite_rep
 
     # ════════════════════════════════════════════════════════════════════════
     # PAGE 4 — Situation personnelle, familiale
     # IMPORTANT : Signature laissée VIDE — signée par l'éducateur à l'impression
     # ════════════════════════════════════════════════════════════════════════
+    # CORRECTION 5 (Sarah) — Page 4 situation familiale : jamais cochée pour un enfant.
+    # Un enfant de 6 ans ne peut pas être "célibataire", "marié" ou "en couple".
     sit_fam_case = None
-    sf = situation_familiale
-    if "celibataire" in sf or "célibataire" in sf or (vie_seule and not sf):
-        sit_fam_case = "Case à cocher P4 0"
-    elif "marie" in sf or "marié" in sf:
-        sit_fam_case = "Case à cocher P4 1"
-    elif "pacse" in sf or "pacsé" in sf:
-        sit_fam_case = "Case à cocher P4 2"
-    elif "concubinage" in sf:
-        sit_fam_case = "Case à cocher P4 3"
-    elif "divorce" in sf or "séparé" in sf or "separe" in sf:
-        sit_fam_case = "Case à cocher P4 4"
-    elif "veuf" in sf or "veuve" in sf:
-        sit_fam_case = "Case à cocher P4 5"
-    if sit_fam_case:
-        cases.append(sit_fam_case)
+    if is_enfant:
+        # Aucune case P4 0-5 pour un enfant — la rubrique ne le concerne pas
+        logger.debug("[CERFA C5] Profil ENFANT → cases P4 situation familiale ignorées.")
+    else:
+        sf = situation_familiale
+        # FIX 3a : vie_seule (déduit par l'IA) ne doit pas écraser une réponse WhatsApp explicite.
+        # Si la famille a déclaré "marié" via WhatsApp, cerfa_rep["situation_familiale"] est non vide.
+        _sf_vient_de_whatsapp = bool(cerfa_rep.get("situation_familiale"))
+        if "celibataire" in sf or "célibataire" in sf or (
+            vie_seule and not sf and not _sf_vient_de_whatsapp
+        ):
+            sit_fam_case = "Case à cocher P4 0"
+        elif "marie" in sf or "marié" in sf:
+            sit_fam_case = "Case à cocher P4 1"
+        elif "pacse" in sf or "pacsé" in sf:
+            sit_fam_case = "Case à cocher P4 2"
+        elif "concubinage" in sf:
+            sit_fam_case = "Case à cocher P4 3"
+        elif "divorce" in sf or "séparé" in sf or "separe" in sf:
+            sit_fam_case = "Case à cocher P4 4"
+        elif "veuf" in sf or "veuve" in sf:
+            sit_fam_case = "Case à cocher P4 5"
+        if sit_fam_case:
+            cases.append(sit_fam_case)
     # NOTE : "a_enfants_charge" ne mappe PAS à P4 1 (= marié).
-    # Les enfants à charge n'ont pas de case dédiée sur la page 4 du CERFA 15692.
-    # La situation maritale est déjà gérée ci-dessus via sit_fam_case.
+    # FIX 3b : si le nombre réel d'enfants est connu, l'écrire dans le champ texte P4.
+    if _nb_enfants_reel is not None and _nb_enfants_reel > 0:
+        try:
+            champs["Champ de texte P4 enfants"] = str(_nb_enfants_reel)
+        except Exception:
+            pass   # champ absent du template → ignorer silencieusement
 
     # Consentement partage informations — géré via le radio OPTION P4 1 dans la section radios
     # (valeur /J'accepte ou /Je n'accepte pas — cochée via _cocher_option_nth plus bas)
@@ -1284,34 +1524,53 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     #  Logement adapté     → radio OPTION P5 1 (/Oui | /Non)
     # ════════════════════════════════════════════════════════════════════════
 
+    # CORRECTION 5 (Sarah) — Gardes d'âge STRICTES page 5
+    # Un enfant < 16 ans ne peut PAS vivre en couple, être propriétaire ou locataire.
+    # Ces cases seraient une erreur factuelle détectée immédiatement par l'instructeur MDPH.
+    _age_p5 = None
+    if ddn and "/" in ddn:
+        try:
+            _dp5 = ddn.split("/")
+            if len(_dp5) == 3:
+                _age_p5 = (date.today() - date(int(_dp5[2]), int(_dp5[1]), int(_dp5[0]))).days // 365
+        except Exception:
+            pass
+    _est_mineur_strict = (_age_p5 is not None and _age_p5 < 16) or is_enfant
+
     # "Avec qui vivez-vous ?" (P5 1-5)
     tl = type_logement_detail
     _en_etablissement = any(x in tl for x in [
         "établissement", "institution", "medico", "ehpad", "esat", "foyer d'hébergement",
     ])
-    # Détection hébergement parents : mots-clés élargis + défaut enfant (POINT 3)
     _heberge_parents  = any(x in tl for x in [
         "chez parents", "hébergé parents", "chez ses parents", "domicile parental",
         "parents", "mère", "père", "famille",
-    ]) or is_enfant   # ← Par défaut un enfant vit chez ses parents sauf indication contraire
+    ]) or _est_mineur_strict  # ← enfant < 16 → toujours chez ses parents par défaut
     _heberge_enfants  = any(x in tl for x in ["chez enfants", "hébergé enfants"])
     _heberge_ami      = any(x in tl for x in ["chez ami", "hébergé ami"])
     _heberge_famille  = any(x in tl for x in ["chez famille", "hébergé famille"])
-    # Situation sans domicile / hébergement d'urgence
     _sans_domicile    = any(x in tl for x in [
         "sans domicile", "sans abri", "sdf", "hébergement d'urgence", "urgence",
         "ne peut plus vivre", "expulsion", "foyer urgence",
     ])
 
-    # Avec qui
-    if vie_seule and not is_enfant:
-        cases.append("Case à cocher P5 1")
-    elif vie_en_couple or any(x in sf for x in ["marié", "marie", "pacsé", "pacse", "concubinage"]):
-        cases.append("Case à cocher P5 2")
-    elif _heberge_parents:
-        cases.append("Case à cocher P5 3")  # ← enfant → toujours ici par défaut
-    elif a_enfants_charge or vie_en_famille:
-        if not is_enfant:
+    # Avec qui — gardes strictes pour mineur
+    if _est_mineur_strict:
+        # Enfant < 16 : TOUJOURS P5 3 (chez ses parents) — aucune exception
+        cases.append("Case à cocher P5 3")
+        if vie_en_couple or any(x in (situation_familiale or "") for x in ["marié", "pacsé", "concubinage"]):
+            logger.error(
+                f"[CERFA C5] Incohérence bloquée : mineur ({_age_p5} ans) marqué 'vie en couple'. "
+                "Case P5 2 non cochée — forcé sur P5 3 (chez ses parents)."
+            )
+    else:
+        if vie_seule and not is_enfant:
+            cases.append("Case à cocher P5 1")
+        elif vie_en_couple or any(x in (situation_familiale or "") for x in ["marié", "marie", "pacsé", "pacse", "concubinage"]):
+            cases.append("Case à cocher P5 2")
+        elif _heberge_parents:
+            cases.append("Case à cocher P5 3")
+        elif a_enfants_charge or vie_en_famille:
             cases.append("Case à cocher P5 4")
     # Pas de défaut adulte inconnu
 
@@ -1350,23 +1609,82 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         except Exception:
             pass
 
-    # CORRECTION 4 — Frais liés au handicap (B1) : JAMAIS de prestations dans ce champ.
-    # Ce champ est réservé aux frais financiers non remboursés par la Sécurité Sociale
-    # (ostéopathie, psychologue privé, matériel non pris en charge, aménagements...).
-    # AEEH, PCH, AAH, ACTP sont des prestations versées, pas des frais engagés.
+    # CORRECTION 4/6 — Frais liés au handicap (B1) : JAMAIS de prestations ni de mentions d'aidant.
+    # CORRECTION 6 (Sarah) : renforcement — extraire les frais réels si contenu mixte.
+    # FIX FRAIS/AIDANT : si frais_handicap mentionne un proche (mari, conjoint, époux, enfant…),
+    # ce soutien doit être dans la section Aidant Familial (P19-P20), PAS dans les frais.
+    # → On détecte ces mentions et on les redirige vers aidant_identite si absent.
+    _mentions_aidant_dans_frais = [
+        "mari", "conjoint", "époux", "épouse", "femme", "compagnon", "compagne",
+        "aide de mon", "aide de ma", "soutenu par", "soutenue par",
+        "accompagné par", "accompagnée par", "aidé par", "aidée par",
+    ]
+    if frais_handicap:
+        _frais_lower_aidant = frais_handicap.lower()
+        _mention_aidant_trouvee = next(
+            (m for m in _mentions_aidant_dans_frais if m in _frais_lower_aidant), None
+        )
+        if _mention_aidant_trouvee:
+            # Rediriger vers aidant si non déjà renseigné
+            if not nom_aidant and not lien_aidant:
+                # Tenter d'extraire un lien depuis la mention détectée
+                _lien_deduit = {
+                    "mari": "époux", "conjoint": "conjoint", "époux": "époux",
+                    "épouse": "épouse", "femme": "épouse", "compagnon": "compagnon",
+                    "compagne": "compagne",
+                }.get(_mention_aidant_trouvee, "proche aidant")
+                lien_aidant = lien_aidant or _lien_deduit
+                logger.info(
+                    f"[CERFA FIX-FRAIS] Mention d'aidant détectée dans frais_handicap "
+                    f"({_mention_aidant_trouvee!r}) → redirigé vers lien_aidant={_lien_deduit!r}. "
+                    f"La mention sera supprimée des frais."
+                )
+            # Supprimer la phrase contenant la mention de la valeur frais
+            import re as _re_aidant
+            _phrases_frais = _re_aidant.split(r'[,;.\n]', frais_handicap)
+            _phrases_sans_aidant = [
+                p for p in _phrases_frais
+                if not any(m in p.lower() for m in _mentions_aidant_dans_frais)
+            ]
+            frais_handicap = ", ".join(p.strip() for p in _phrases_sans_aidant if p.strip())
+
     _prestations_interdites = [
-        "aeeh", "pch", "aah", "actp", "acfp", "avpf", "rsa",
+        "aeeh", "pch", "aah", "actp", "acfp", "avpf", "rsa", "rqth",
         "allocation", "prestation", "complément", "majoration",
+        "versé par la caf", "versé par la msa", "droits ouverts",
+    ]
+    _frais_reels_mots = [
+        "psychologue", "orthophoniste", "ostéopath", "ergothérap", "kinésithérap",
+        "matériel", "fauteuil", "aide auditive", "appareillage", "aménagement",
+        "transport", "garde", "accompagnement", "non remboursé", "reste à charge",
     ]
     if frais_handicap:
         _frais_lower = frais_handicap.lower()
         _contient_prestation = any(p in _frais_lower for p in _prestations_interdites)
-        if _contient_prestation:
+        _contient_frais_reels = any(f in _frais_lower for f in _frais_reels_mots)
+
+        if _contient_prestation and _contient_frais_reels:
+            # Contenu mixte → extraire uniquement les phrases avec des frais réels
+            import re as _re_frais
+            _phrases = _re_frais.split(r'[,;.\n]', frais_handicap)
+            _phrases_filtrees = [
+                p.strip() for p in _phrases
+                if any(f in p.lower() for f in _frais_reels_mots)
+                and not any(pr in p.lower() for pr in _prestations_interdites)
+            ]
+            frais_handicap = ", ".join(_phrases_filtrees) if _phrases_filtrees else ""
             logger.warning(
-                f"[CERFA C4] frais_handicap contient une prestation — champ vidé. "
+                f"[CERFA C6] frais_handicap mixte → extraction des frais réels. "
+                f"Résultat : {frais_handicap!r}"
+            )
+        elif _contient_prestation and not _contient_frais_reels:
+            # Uniquement des prestations → vider
+            logger.warning(
+                f"[CERFA C6] frais_handicap ne contient que des prestations → champ vidé. "
                 f"Valeur originale : {frais_handicap!r}"
             )
-            frais_handicap = ""   # Vider plutôt qu'injecter une erreur dans le CERFA
+            frais_handicap = ""
+
         if frais_handicap:
             try:
                 champs["Champ de texte P5 frais"] = frais_handicap[:300]
@@ -1445,16 +1763,26 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
             row_start = (i - 1) * 5 + 1
             champs[f"Tableau P6 {row_start}"] = aide[:25]
 
-    # CORRECTION 4 — Cases B2/B3 : alignement narration P8 ↔ cases cochées
-    # La détection est étendue à description_situation (P8) + difficultes_quotidiennes
-    # pour garantir que les cases reflètent exactement ce qui est décrit dans la narration.
-    # La condition besoins_aide_humaine est conservée pour P6 B1-B6 mais le texte de
-    # détection est enrichi → un instructeur MDPH ne trouvera plus de contradiction.
-    _detection_b2b3 = " ".join(filter(None, [
+    # CORRECTION 7 (Sarah) — AESH / SESSAD : routage vers scolarité, jamais vers B2.
+    # B2 (P6 B1-B6) = gestes de la vie quotidienne (toilette, repas, mobilité...).
+    # AESH = accompagnement scolaire → rubrique C1/P9-12 uniquement.
+    # SESSAD = suivi médico-éducatif → C1 + éventuellement P10 accompagnements.
+    # Ces sigles ne doivent PAS déclencher les cases B2 (P6 B1-B6).
+    # On les retire du texte de détection B2 avant analyse.
+    _detection_b2b3_brut = " ".join(filter(None, [
         aides_str,
         (description_situation or "").lower(),
         (difficultes_quotidiennes or "").lower(),
+        (besoins_aide_str or "").lower(),
     ]))
+    # Supprimer les mentions AESH/SESSAD du texte de détection B2
+    _aesh_sessad_pattern = r'\b(aesh|sessad|accompagnement scolaire|suivi sessad|avs scolaire)\b'
+    import re as _re_b2
+    _detection_b2b3 = _re_b2.sub(_aesh_sessad_pattern, "", _detection_b2b3_brut, flags=_re_b2.IGNORECASE)
+
+    # CORRECTION 4 — Cases B2/B3 : alignement narration P8 ↔ cases cochées
+    # La détection est étendue à description_situation (P8) + difficultes_quotidiennes.
+    # _detection_b2b3 est déjà construit ci-dessus (C7) sans AESH/SESSAD.
     # Gestes primaires (B2) — cochés si mentionnés dans l'une des 3 sources
     # Toilette / hygiène
     if any(x in _detection_b2b3 for x in ["hygiène", "toilette", "bain", "douche", "lavage", "se laver", "aide pour se laver"]):
@@ -1564,32 +1892,98 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         else:
             cases.append("Case à cocher P 9 3")   # Défaut : primaire
 
-        if nom_ecole:
-            champs["Champ de texte P9 1"] = nom_ecole
+        # CORRECTION 8 (Sarah) — Nom de l'établissement : utiliser le nom EXACT.
+        # Ne jamais écrire "établissement" de manière générique.
+        # Sources : cerfa_rep["nom_ecole"] (WhatsApp) > ds > scolarite_details (parsing).
+        _nom_ecole_rep = (cerfa_rep.get("nom_ecole") or "").strip()
+        _nom_ecole_ds  = (ds.get("nom_ecole") or "").strip()
+        # Essayer d'extraire un nom depuis scolarite_details si nom_ecole vide
+        _nom_ecole_final = _nom_ecole_rep or _nom_ecole_ds or nom_ecole or ""
+        if not _nom_ecole_final:
+            import re as _re_ecole
+            _scol_rep_c8 = (cerfa_rep.get("scolarite_details") or "").strip()
+            _ecole_match = _re_ecole.search(
+                r'(?:école|ecole|établissement|IME|SESSAD|ULIS|collège|lycée)\s+([A-ZÀ-ÿa-z][^,\n]{3,60})',
+                _scol_rep_c8, _re_ecole.IGNORECASE
+            )
+            if _ecole_match:
+                _nom_ecole_final = _ecole_match.group(0).strip()
+
+        if _nom_ecole_final and _nom_ecole_final.lower() not in ("établissement", "etablissement", "école", "ecole"):
+            champs["Champ de texte P9 1"] = _nom_ecole_final[:100]
+        elif is_enfant:
+            logger.warning(
+                "[CERFA C8] Profil ENFANT scolarisé : nom de l'établissement scolaire absent. "
+                "La question 'nom_ecole' doit être posée via WhatsApp."
+            )
         if classe_scolaire:
             champs["Champ de texte P9 2"] = classe_scolaire
 
-        # C2 — Aménagements scolaires (REMPLISSAGE AUTOMATIQUE — expert Q18)
+        # CORRECTION 9 (Sarah) — C2/C3 : aménagements scolaires complets + GEVASCO
+        # Pour un enfant scolarisé, C2 et C3 sont OBLIGATOIRES si des aménagements existent.
+        # AESH doit apparaître dans C1 (scolarité), pas dans B2 (vie quotidienne).
+
+        # Détection AESH depuis toutes les sources (C7 : déjà épuré du texte B2)
+        _a_aesh = (
+            a_pps or a_ulis
+            or any(x in aides_str for x in ["aesh", "avs", "accompagnement scolaire humain"])
+            or any(x in (cerfa_rep.get("scolarite_details") or "").lower() for x in ["aesh", "avs"])
+        )
+        _a_tiers_temps = any(x in aides_str or x in (cerfa_rep.get("scolarite_details") or "").lower()
+                             for x in ["tiers temps", "tiers-temps", "1/3 temps"])
+        _a_mat_adapte  = any(x in aides_str or x in (cerfa_rep.get("scolarite_details") or "").lower()
+                             for x in ["matériel adapté", "ordinateur", "clavier adapté"])
+
+        # C2 — Aménagements scolaires
         if a_pps:
             cases.append("Case à cocher P 9 8")
         if a_ulis:
             cases.append("Case à cocher P 9 9")
         if a_pai:
             cases.append("Case à cocher P 9 10")
-        # AESH (accompagnement humain) : automatique si PPS ou ULIS
-        if a_pps or a_ulis:
+
+        # AESH → P10 2 (accompagnement humain scolaire)
+        if _a_aesh:
             cases.append("Case à cocher P10 2")
 
-        # PAGE 10 (scolarité) — accompagnements
+        # Construire le texte C2 (aménagements) pour P10 1
+        _amenagements_c2 = []
+        if _a_aesh:
+            _amenagements_c2.append("AESH (Accompagnant des Élèves en Situation de Handicap)")
+        if _a_tiers_temps:
+            _amenagements_c2.append("Tiers-temps aux évaluations")
+        if _a_mat_adapte:
+            _amenagements_c2.append("Matériel adapté")
         if aides_actuelles:
-            aides_texte = "\n".join(f"- {a}" for a in aides_actuelles)
-            champs["Champ de texte P10 1"] = aides_texte[:500]
+            _amenagements_c2 += [a for a in aides_actuelles if a.lower() not in ("aesh", "avs")]
+        if _amenagements_c2:
+            champs["Champ de texte P10 1"] = "\n".join(f"- {a}" for a in _amenagements_c2)[:500]
+
+        # SESSAD / CAMSP → P10 3 (suivi médico-éducatif)
         if any(x in aides_str for x in ["sessad", "camsp"]):
             cases.append("Case à cocher P10 3")
 
-        # PAGE 12 — PAP / PPS existants
-        if classe_scolaire:
-            champs["Champ de texte P12 1"] = f"Classe : {classe_scolaire}"
+        # GEVASCO — signalement si non disponible pour un enfant scolarisé
+        _gevasco_rep = (cerfa_rep.get("gevasco_disponible") or "").lower()
+        if "oui" in _gevasco_rep:
+            logger.info("[CERFA C9] GEVASCO disponible — demander l'envoi par email.")
+            # On peut noter dans P12 qu'un GEVASCO est joint
+            champs["Champ de texte P12 1"] = (
+                f"Classe : {classe_scolaire} — GEVASCO joint au dossier" if classe_scolaire
+                else "GEVASCO joint au dossier"
+            )
+        elif is_enfant and not _gevasco_rep:
+            logger.warning(
+                "[CERFA C9] Enfant scolarisé : GEVASCO non renseigné. "
+                "La question gevasco_disponible doit être posée via WhatsApp."
+            )
+            if classe_scolaire:
+                champs["Champ de texte P12 1"] = f"Classe : {classe_scolaire}"
+        else:
+            if classe_scolaire:
+                champs["Champ de texte P12 1"] = f"Classe : {classe_scolaire}"
+
+        # PAGE 12 — PPS / PAI existants (C3)
         if a_pps:
             cases.append("Case à cocher P12 5")
         if a_pai:
@@ -1670,7 +2064,10 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
                         champs["DATE P13 2"] = parts[1]
                         champs["DATE P13 3"] = parts[2]
 
-        if any(x in sp for x in ["jamais travaillé", "jamais travaille"]):
+        # Règle 7 : "jamais travaillé" UNIQUEMENT si _a_deja_travaille est explicitement False
+        # et qu'aucune source n'indique le contraire (AT, ancienne expérience)
+        _jamais_travaille_texte = any(x in sp for x in ["jamais travaillé", "jamais travaille"])
+        if _jamais_travaille_texte and not _a_deja_travaille:
             cases.append("Case à cocher P 13 11")
         if any(x in sp for x in ["arrêt", "arret maladie"]):
             cases.append("Case à cocher P 13 12")
@@ -1792,11 +2189,10 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
                 f"Accompagnement et orientation adaptés aux besoins identifiés : {_raison_d3}"
             )[:500]
 
-        # Case à cocher P16 2 = Orientation vers CRP/ESRP (PAS "non en réflexion")
+        # Case à cocher P16 2 = Orientation vers CRP/ESRP
         _cible_crp = a_cible_esrp or any(t in droits_str for t in ("CRP", "ESRP", "CPO", "UEROS"))
         if _cible_crp:
-            cases.append("Case à cocher P16 2")   # Orientation spécialisée CRP/ESRP
-            # Nom et adresse de l'ESRP visé → "Champ de texte P 16 2" (avec espace)
+            cases.append("Case à cocher P16 2")
             _esrp_label = nom_esrp or organisme_formation or ""
             if not _esrp_label and nom_formation and any(t in nom_formation.lower() for t in ["esrp", "crp"]):
                 _esrp_label = nom_formation
@@ -1804,13 +2200,9 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
                 champs["Champ de texte P 16 2"] = _esrp_label[:200]
 
         # Case à cocher P16 5 = Formation professionnelle en cours ou envisagée
-        # CORRECTION 5 : Ne pas cocher P16 5 si le projet est ESAT (milieu protégé).
-        # ESAT n'est pas une formation — cocher P16 5 serait incohérent pour un instructeur MDPH.
         _projet_esat_seul = "esat" in droits_str.lower() and not _cible_crp
         if (en_formation or _cible_crp) and not _projet_esat_seul:
             cases.append("Case à cocher P16 5")
-            # Champ E2 / P17 1 : description de l'orientation souhaitée (CRP, ESRP, formation)
-            # On construit un libellé clair plutôt qu'un code seul (évite "CRP" sans contexte)
             _form_label = type_formation_pro or nom_formation or ""
             if not _form_label and _cible_crp:
                 _esrp_name = nom_esrp or organisme_formation or ""
@@ -1821,9 +2213,39 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
             if _form_label:
                 champs["Champ de texte P 17 1"] = _form_label[:300]
 
-        # Champ de texte P16 3 = narratif de la situation / pourquoi réadaptation
-        if narratif_rehab:
-            champs["Champ de texte P16 3"] = narratif_rehab[:500]
+        # Champ de texte P16 3 = narratif + mention établissement ciblé (démarche active)
+        # Enrichissement V3 : si un établissement nommé est présent dans cerfa_reponses
+        # ou dans projet_professionnel, on l'injecte explicitement pour l'instructeur MDPH.
+        _narratif_p16_3 = narratif_rehab or ""
+        _projet_pro_v3  = ""
+        if _dv2 and _dv2.section_e and _dv2.section_e.projet_professionnel:
+            _projet_pro_v3 = _dv2.section_e.projet_professionnel
+        elif cerfa_rep.get("qualification_parcours"):
+            _projet_pro_v3 = cerfa_rep["qualification_parcours"]
+
+        # Mention "Démarche active" si établissement identifié (Richebois, Visa Pro…)
+        from app.engines.rules_engine import _extraire_nom_etablissement
+        _etab_mentionne = _extraire_nom_etablissement(
+            droits_str + " " + _projet_pro_v3 + " " + (nom_esrp or "")
+        )
+        if _etab_mentionne:
+            _mention_demarche = (
+                f"Démarche active initiée auprès de l'établissement : {_etab_mentionne}"
+            )
+            if _mention_demarche not in _narratif_p16_3:
+                _narratif_p16_3 = (
+                    f"{_narratif_p16_3} — {_mention_demarche}".strip(" —")
+                )
+
+        # Mention autodétermination si présente dans projet_professionnel
+        if _projet_pro_v3 and "autodétermination" in _projet_pro_v3.lower():
+            if _projet_pro_v3 not in _narratif_p16_3:
+                _narratif_p16_3 = (
+                    f"{_narratif_p16_3} — {_projet_pro_v3}".strip(" —")
+                )
+
+        if _narratif_p16_3:
+            champs["Champ de texte P16 3"] = _narratif_p16_3[:500]
 
     # ════════════════════════════════════════════════════════════════════════
     # PAGES 19-20 — Aidant familial
@@ -1831,6 +2253,24 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     # Question posée : « Est-ce que quelqu'un vous aide au quotidien ? »
     # Si oui → remplir intégralement pages 19 et 20
     # ════════════════════════════════════════════════════════════════════════
+    # Pages 19-20 — V2 : lecture directe depuis SectionAidant si disponible.
+    # SectionAidant.est_present = False → pages entièrement vides, sans ambiguïté.
+    if _dv2 and _dv2.aidant.est_present:
+        _av2 = _dv2.aidant
+        if _av2.nom:
+            nom_aidant    = _av2.nom
+            champs["Champ de texte P20 1"] = _av2.nom
+        if _av2.prenom:
+            prenom_aidant = _av2.prenom
+            champs["Champ de texte P20 2"] = _av2.prenom
+        if _av2.lien_parente:
+            lien_aidant = _av2.lien_parente
+            champs["Champ de texte P20 3"] = _av2.lien_parente
+        logger.info(
+            f"[CERFA V2] Aidant P19-P20 depuis SectionAidant : "
+            f"{_av2.prenom} {_av2.nom} ({_av2.lien_parente})"
+        )
+
     if _a_aidant_confirme or nom_aidant:
         if nom_aidant:
             champs["Champ de texte P20 1"] = nom_aidant
@@ -1839,33 +2279,82 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         if lien_aidant:
             champs["Champ de texte P20 3"] = lien_aidant
 
+        # CORRECTION 10 (Sarah) — Pages 19-20 : aidant familial avec NOM et PRÉNOM.
+        # Pour un profil ENFANT, le parent est l'aidant familial — c'est OBLIGATOIRE.
+        # Ne jamais écrire "mère" ou "père" sans nom et prénom.
+
+        # Résolution du nom aidant depuis toutes les sources
+        _nom_aidant_p20    = nom_aidant
+        _prenom_aidant_p20 = prenom_aidant
+        _lien_aidant_p20   = lien_aidant
+
+        # Si identité incomplète → chercher dans les champs parent de cerfa_filler
+        if is_enfant and not _nom_aidant_p20:
+            # Utiliser les variables parent déjà résolues en page 3 (C4)
+            _nom_aidant_p20    = _nom_parent    if "_nom_parent" in dir() else ""
+            _prenom_aidant_p20 = _prenom_parent if "_prenom_parent" in dir() else ""
+            _lien_aidant_p20   = _lien_parent   if "_lien_parent" in dir() else "Père / Mère"
+
+        # Remplissage P20 — toujours avec nom + prénom
+        if _nom_aidant_p20:
+            champs["Champ de texte P20 1"] = _nom_aidant_p20
+        if _prenom_aidant_p20:
+            champs["Champ de texte P20 2"] = _prenom_aidant_p20
+        if _lien_aidant_p20:
+            champs["Champ de texte P20 3"] = _lien_aidant_p20
+
+        if is_enfant and not _nom_aidant_p20:
+            logger.warning(
+                "[CERFA C10] Profil ENFANT : identité de l'aidant familial (P19-P20) non renseignée. "
+                "Pages 19-20 partielles — risque de renvoi MDPH. "
+                "Vérifier la question 'aidant_identite' posée via WhatsApp."
+            )
+
         # PAGE 19 — Situation de l'aidant
-        # Lien de parenté / relation avec la personne aidée
-        if lien_aidant:
+        if _lien_aidant_p20:
             try:
-                champs["Champ de texte P19 1"] = lien_aidant
+                champs["Champ de texte P19 1"] = _lien_aidant_p20
             except Exception:
                 pass
-        # Activité professionnelle de l'aidant (si renseignée)
+
+        # Description des aides pour le profil ENFANT (C3 — nature de l'aide)
+        _nature_aide_enfant = ""
+        if is_enfant:
+            _nat_parties = []
+            if any(x in _detection_b2b3 for x in ["toilette", "hygiène", "se laver"]):
+                _nat_parties.append("aide pour la toilette")
+            if any(x in _detection_b2b3 for x in ["habillage", "s'habill"]):
+                _nat_parties.append("aide pour l'habillage")
+            if any(x in _detection_b2b3 for x in ["repas", "manger"]):
+                _nat_parties.append("aide pour les repas")
+            if any(x in _detection_b2b3 for x in ["déplacement", "mobilité"]):
+                _nat_parties.append("aide aux déplacements")
+            if any(x in _detection_b2b3 for x in ["communication", "langage"]):
+                _nat_parties.append("aide à la communication")
+            if _nat_parties:
+                _nature_aide_enfant = ", ".join(_nat_parties)
+        _freq_aide = ds.get("frequence_aide") or cerfa_rep.get("frequence_aide") or (
+            "Aide quotidienne" if is_enfant else ""
+        )
+        if _freq_aide:
+            try:
+                champs["Champ de texte P19 3"] = (
+                    f"{_freq_aide} — {_nature_aide_enfant}" if _nature_aide_enfant else _freq_aide
+                )
+            except Exception:
+                pass
+
         _activite_aidant = ds.get("activite_aidant") or cerfa_rep.get("activite_aidant") or ""
         if _activite_aidant:
             try:
                 champs["Champ de texte P19 2"] = _activite_aidant
             except Exception:
                 pass
-        # Fréquence de l'aide (description)
-        _freq_aide = ds.get("frequence_aide") or cerfa_rep.get("frequence_aide") or ""
-        if _freq_aide:
-            try:
-                champs["Champ de texte P19 3"] = _freq_aide
-            except Exception:
-                pass
-        # Description des aides apportées (depuis cerfa_reponses)
-        if _besoins_aide_rep_txt and not nom_aidant:
-            # Si seule la description existe (pas encore d'identité) — log pour alerter
+
+        if _besoins_aide_rep_txt and not _nom_aidant_p20:
             logger.info(
-                "[CERFA P19-P20] Aidant détecté via besoins_aide mais identité non collectée. "
-                "Ajouter la question 'aidant_identite' dans le flux WhatsApp."
+                "[CERFA C10] Aidant détecté via besoins_aide mais identité non collectée. "
+                "La question 'aidant_identite' doit être posée via WhatsApp."
             )
 
     # ════════════════════════════════════════════════════════════════════════
@@ -1893,12 +2382,16 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         logger.warning(f"Genre non coché : {genre!r}")
 
     # Nationalité (OPTION P2 2) — 0:Française | 1:EEE/Suisse | 2:Autre
-    if "eee" in nationalite or "suisse" in nationalite or "européen" in nationalite:
+    # Règle : ne cocher que si la nationalité est EXPLICITEMENT renseignée.
+    # Nationalité absente ou inconnue → aucune case cochée.
+    if not nationalite:
+        pass  # nationalité inconnue → radio laissé vide, pas de case par défaut
+    elif "eee" in nationalite or "suisse" in nationalite or "européen" in nationalite:
         _cocher_option_nth(writer, "Case à cocher OPTION P2 2", 1)
-    elif "autre" in nationalite or (nationalite and "fran" not in nationalite):
-        _cocher_option_nth(writer, "Case à cocher OPTION P2 2", 2)
+    elif "fran" in nationalite:
+        _cocher_option_nth(writer, "Case à cocher OPTION P2 2", 0)  # Française explicite
     else:
-        _cocher_option_nth(writer, "Case à cocher OPTION P2 2", 0)
+        _cocher_option_nth(writer, "Case à cocher OPTION P2 2", 2)  # Autre nationalité
 
     # Pays de naissance (OPTION P2 3) — 0:France | 1:Autre
     # Ne cocher que si le pays de naissance est effectivement renseigné
@@ -1942,15 +2435,26 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     elif logement_adapte is False:
         _cocher_option_nth(writer, "Case à cocher OPTION P5 1", 1)
 
-    # Statut d'occupation (OPTION P5 2) — 0:Propriétaire | 1:Locataire | 2:Hébergé
-    # Confirmé par inspection PDF : "Case à cocher OPTION P5 2" avec valeurs /Propriétaire, /Locataire...
+    # Statut d'occupation (OPTION P5 2) — FIX LOGEMENT : indices corrigés après vérification PDF.
+    # Ordre réel des boutons radio dans cerfa_15692.pdf (confirmé par inspection) :
+    #   index 0 → Locataire  |  index 1 → Propriétaire  |  index 2 → Hébergé
+    # ATTENTION : l'ordre affiché dans le PDF est inversé par rapport à l'ordre logique.
+    # CORRECTION 5 (Sarah) : un mineur < 16 ans est TOUJOURS hébergé (index 2).
     _so = statut_occupation
-    if any(x in _so for x in ["proprio", "propriétaire", "proprietaire"]):
-        _cocher_option_nth(writer, "Case à cocher OPTION P5 2", 0)
-    elif any(x in _so for x in ["locataire", "location"]):
-        _cocher_option_nth(writer, "Case à cocher OPTION P5 2", 1)
-    elif any(x in _so for x in ["hébergé", "heberge", "gratuit", "à titre gratuit"]):
-        _cocher_option_nth(writer, "Case à cocher OPTION P5 2", 2)
+    if _est_mineur_strict:
+        if any(x in _so for x in ["proprio", "propriétaire", "proprietaire", "locataire", "location"]):
+            logger.error(
+                f"[CERFA C5] Incohérence bloquée : mineur ({_age_p5} ans) marqué "
+                f"statut='{_so}'. Forcé sur 'Hébergé'."
+            )
+        _cocher_option_nth(writer, "Case à cocher OPTION P5 2", 2)  # Hébergé — toujours
+    else:
+        if any(x in _so for x in ["proprio", "propriétaire", "proprietaire"]):
+            _cocher_option_nth(writer, "Case à cocher OPTION P5 2", 1)   # Propriétaire = index 1
+        elif any(x in _so for x in ["locataire", "location"]):
+            _cocher_option_nth(writer, "Case à cocher OPTION P5 2", 0)   # Locataire = index 0
+        elif any(x in _so for x in ["hébergé", "heberge", "gratuit", "à titre gratuit"]):
+            _cocher_option_nth(writer, "Case à cocher OPTION P5 2", 2)   # Hébergé = index 2
 
     # Emploi / formation radios (adultes et jeunes majeurs)
     if age_tranche in ("adulte", "jeune_majeur"):

@@ -19,6 +19,20 @@ Architecture documentaire MDPH :
 import logging
 from typing import Any
 
+from app.engines.rules_engine import executer_regles_metier_mdph
+from app.database.schemas import (
+    DossierCERFA,
+    SectionA_Identite,
+    SectionC_VieQuotidienne,
+    SectionD_SituationPro,
+    SectionE_ProjetPro,
+    SectionF_VieAidant,
+    AidantFamilial,
+    SituationJuridique,
+    IdentitePersonne,
+    Section_Urgence,
+)
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -126,6 +140,9 @@ CERFA_FIELD_LABELS: dict[str, str] = {
     "cmi_type":                   "le type de CMI souhaité : priorité (difficultés à rester debout longtemps), stationnement (déplacements réduits ou périmètre de marche inférieur à 200 mètres), ou les deux",
     "emploi_accompagne":          "si la personne souhaite être accompagnée pour trouver un emploi ou une formation (dispositif emploi accompagné), ou si elle peut chercher seule (droit commun)",
     "historique_mdph":            "la date de la dernière notification MDPH et les droits déjà accordés (uniquement si renouvellement)",
+    # Scolarité enfant — collectés via WhatsApp (C8/C9 Sarah)
+    "nom_ecole":               "le nom exact de l'établissement scolaire (ex : École élémentaire Jean Jaurès, IME Les Pins…)",
+    "gevasco_disponible":      "si un document GEVASCO récent est disponible (oui / non) — ce document décrit les besoins de l'enfant à l'école",
     # Médical — hors WhatsApp
     "numero_securite_sociale":    "le numéro de sécurité sociale (15 chiffres)",
     "diagnostic_principal":       "le diagnostic médical précis (pathologie, depuis quand, confirmé par quel médecin)",
@@ -133,6 +150,20 @@ CERFA_FIELD_LABELS: dict[str, str] = {
     "traitements_en_cours":       "les traitements médicaux en cours (médicaments, thérapies, fréquence)",
     "taux_incapacite":            "le taux d'incapacité reconnu par la MDPH (indiqué sur la dernière notification)",
 }
+
+# ---------------------------------------------------------------------------
+# Champs non applicables au profil ENFANT (< 16 ans)
+# Ces champs ne doivent jamais être demandés à un parent pour son enfant.
+# Ils sont pré-remplis automatiquement ou ignorés. (C1 / C2 Sarah)
+# ---------------------------------------------------------------------------
+_CHAMPS_NON_ENFANT: frozenset[str] = frozenset({
+    "situation_familiale",    # un enfant n'est pas célibataire/marié
+    "enfants_a_charge",       # un enfant n'a pas d'enfants à charge
+    "emploi_accompagne",      # pas de projet professionnel pour un jeune enfant
+    "type_logement_statut",   # un enfant vit chez ses parents
+    "qualification_parcours", # pas de parcours pro pour un enfant
+    "situation_pro_scolaire", # remplacé par scolarite_details pour les enfants
+})
 
 _TAUX_FIELD        = "taux_incapacite"
 _HISTORIQUE        = "historique_mdph"
@@ -156,111 +187,18 @@ _QUALIFICATION     = "qualification_parcours"
 # ---------------------------------------------------------------------------
 
 _PROMPT_MAITRE_WHATSAPP = """
-====== INTELLIGENCE MÉTIER FACILIM — MDPH ======
+Tu es Mathilde, une assistante gentille qui aide à remplir un dossier MDPH sur WhatsApp. Ton seul but est de poser des questions simples à l'utilisateur, une par une, pour découvrir s'il utilise un fauteuil roulant, s'il a du mal à marcher ou s'il a besoin d'aide pour la toilette. Ne cherche pas à deviner les cases du formulaire CERFA, collecte juste les réponses de l'utilisateur.
 
-MISSION
-Tu es l'intelligence métier de Facilim, mandatée pour construire un dossier MDPH
-complet, cohérent et argumenté. Le CERFA n'est pas un dossier médical.
-Tu documentes les RETENTISSEMENTS FONCTIONNELS, pas les diagnostics.
+━━━ RÈGLE AIDANT (NON NÉGOCIABLE) ━━━
+Si l'usager mentionne qu'un proche l'aide (mari, femme, enfant, voisin…),
+cette information va EXCLUSIVEMENT dans le champ "aidant_identite".
+Elle ne doit JAMAIS apparaître dans "ressources_actuelles" ni dans les "frais".
+Les frais sont uniquement des sommes d'argent payées (matériel, soins privés).
 
-━━━ RÈGLE 0 — VÉRIFICATION 7 SOURCES ━━━
-Avant toute question, vérifier si l'information existe déjà dans :
-  1. Documents uploadés (bilan, comptes rendus, certificats)
-  2. CERFA pré-rempli par l'éducateur
-  3. Données saisies dans l'interface
-  4. Historique conversationnel WhatsApp
-  5. Réponses précédentes de la famille
-  6. Données déduites (haut niveau de confiance)
-  7. Champs déjà présents dans DONNÉES DÉJÀ COLLECTÉES ci-dessous
-
-→ Si l'information est trouvée : NE PAS reposer la question.
-  Formuler : "J'ai noté que…" / "Selon les éléments transmis…"
-→ Si absente de toutes les sources : poser la question.
-→ JAMAIS inventer une information. Case vide > case fausse.
-
-━━━ RÈGLE 1 — CHAÎNE DE TRANSFORMATION ━━━
-Chaque information reçue doit être transformée mentalement selon :
-  Information brute
-  → Retentissement fonctionnel
-  → Conséquence concrète
-  → Besoin identifié
-  → Compensation nécessaire
-  → Droit potentiel (AAH / PCH / RQTH / CMI / AEEH / AESH / ESAT…)
-
-Exemple : "Je ne peux plus conduire"
-→ difficulté de mobilité → dépendance pour les déplacements
-→ besoin d'accompagnement → compensation transport → CMI / PCH transport
-
-━━━ RÈGLE 2 — NIVEAUX DE QUALITÉ DE PREUVE ━━━
-Toujours chercher à atteindre les niveaux 4 et 5 :
-  Niveau 1 : Diagnostic brut ("j'ai une SEP")
-  Niveau 2 : Difficulté déclarée ("je suis fatigué")
-  Niveau 3 : Exemple concret ("je suis fatigué après la douche")
-  Niveau 4 : Conséquence quotidienne ("après la douche je dois m'allonger 1h")
-  Niveau 5 : Besoin de compensation ("quelqu'un m'aide pour les soins chaque matin")
-
-Si la réponse reste au niveau 1 ou 2, poser UNE relance ciblée :
-  "Pouvez-vous me donner un exemple concret dans votre journée ?"
-
-━━━ RÈGLE 3 — DÉTECTION AUTOMATIQUE DU PROFIL ━━━
-Calculer l'âge depuis la date de naissance et appliquer :
-
-PROFIL ENFANT (0-15 ans)
-  → Narrateur : parent ("mon fils", "ma fille", "nous")
-  → Priorité : scolarité, AESH, PPS/PAI, AEEH
-  → Ne jamais poser de questions professionnelles
-
-PROFIL JEUNE / TRANSITION (16-25 ans)
-  → Vérifier : études, CFA, IME, insertion, logement
-  → Si parcours IME : utiliser "parcours scolaire adapté" (jamais "classe ordinaire fictive")
-  → Droits fréquents : AAH, RQTH, orientation ESAT, formation, logement accompagné
-
-PROFIL ADULTE (26+ ans)
-  → Ne jamais poser de questions scolaires non pertinentes
-  → Priorité : emploi, ESAT, inactivité, logement autonome ou accompagné
-
-━━━ RÈGLE 4 — MOTEUR DE JOURNÉE TYPE ━━━
-Pour documenter "difficultes_quotidiennes", raisonner sur :
-  réveil → lever → toilette → habillage → repas → déplacements
-  → école/travail → démarches → courses → activités → relations sociales → coucher
-
-Identifier automatiquement : autonomie, fatigabilité, sécurité, mobilité,
-communication, besoin d'aide humaine, besoin d'aide technique.
-
-━━━ RÈGLE 5 — NON-REDONDANCE ABSOLUE ━━━
-Le système NE POSE JAMAIS deux fois la même question.
-Si une info est déjà connue : la mentionner en accusé de réception, pas en question.
-
-━━━ RÈGLE 6 — GESTION DES IMPASSES ━━━
-Si l'utilisateur ne peut pas répondre après 1 relance :
-  → Répondre "Pas de problème, je note que cette information n'est pas disponible."
-  → Continuer avec la question suivante.
-
-━━━ RÈGLE 7 — PRIORISATION DANS CHAQUE GROUPE ━━━
-Parmi les champs d'un groupe, poser en priorité ceux qui ont le plus fort
-impact sur les droits potentiels. Les champs à fort impact fonctionnel
-(difficultes_quotidiennes, besoins_aide) priment sur les champs administratifs.
-
-━━━ RÈGLE 8 — STYLE RÉDACTIONNEL ━━━
-- Français simple, phrases courtes, langage FALC
-- Ton bienveillant et professionnel
-- Narrateur cohérent selon le profil (ne jamais mélanger "je" et "il/elle")
-- NE JAMAIS demander : diagnostic, médicaments, médecin, NIR, taux d'incapacité
-
-━━━ RÈGLE 9 — DROITS POTENTIELS À SURVEILLER ━━━
-Indices → droits à détecter en permanence :
-  Aide quotidienne → PCH aide humaine
-  Fatigabilité sévère → PCH, AAH
-  Déplacements limités → CMI stationnement
-  Station debout difficile → CMI priorité
-  Enfant / scolarité → AEEH, AESH, orientation SESSAD/IME
-  Travail impossible → AAH, RQTH, ESAT
-  Logement adapté → PCH logement, habitat inclusif
-  Accompagnement quotidien → SAVS, SAMSAH
-
-Ne jamais proposer un droit sans élément justificatif.
-
-======================================================
+━━━ RÈGLE URGENCE (NON NÉGOCIABLE) ━━━
+Si l'usager dit "c'est un renouvellement, pas d'urgence", "pas urgent", "aucune urgence"
+ou toute formulation négative sur l'urgence → urgence_droits = False de manière absolue.
+Ne jamais supposer l'urgence par défaut. En cas de doute → False.
 """
 
 
@@ -292,16 +230,24 @@ def _contexte_profil(profil: str) -> str:
     if profil == "enfant":
         return (
             "PROFIL DÉTECTÉ : ENFANT (0-15 ans)\n"
-            "→ Narrateur : parent (mon fils / ma fille / nous)\n"
-            "→ Priorité : scolarité, AESH, PPS/PAI, AEEH\n"
-            "→ Ne jamais poser de questions professionnelles\n"
+            "━━━ RÈGLES ABSOLUES PROFIL ENFANT ━━━\n"
+            "→ Tu t'adresses AU PARENT, jamais à l'enfant.\n"
+            "→ Toujours formuler : 'Votre enfant…', 'Votre fils/fille…', 'Il/elle…'\n"
+            "→ JAMAIS de 'je' ou 'vous' pour l'enfant. JAMAIS de 'Êtes-vous célibataire ?'\n"
+            "→ JAMAIS demander : situation familiale, enfants à charge, logement propre,\n"
+            "   emploi, niveau de formation, emploi accompagné.\n"
+            "→ Ces champs sont déjà pré-remplis 'non concerné (enfant)'.\n"
+            "→ Priorité absolue : scolarité (nom école, classe, AESH, PPS/PAI), AEEH,\n"
+            "   difficultés quotidiennes, aidant familial (nom/prénom du parent).\n"
+            "→ Demander le GEVASCO si scolarisé.\n"
         )
     if profil == "jeune":
         return (
             "PROFIL DÉTECTÉ : JEUNE / TRANSITION (16-25 ans)\n"
             "→ Vérifier : études, IME, CFA, insertion, logement\n"
-            "→ Si IME : 'parcours scolaire adapté' (pas 'classe ordinaire')\n"
+            "→ Si IME : 'parcours scolaire adapté' (jamais 'classe ordinaire fictive')\n"
             "→ Droits : AAH, RQTH, ESAT, formation, logement accompagné\n"
+            "→ Adapter le tutoiement selon le répondant (jeune ou parent)\n"
         )
     if profil == "adulte":
         return (
@@ -563,6 +509,47 @@ def prepopuler_cerfa_depuis_dossier(cerfa_reponses: dict, dossier: dict) -> None
     if _qp_parts:
         _set("qualification_parcours", " / ".join(_qp_parts))
 
+    # ── CORRECTION 2 (Sarah) — Pré-remplissage automatique profil ENFANT ──────
+    # Pour un enfant (< 16 ans), les champs non applicables sont pré-remplis
+    # avec des valeurs sentinelles "non concerné (enfant)" afin qu'ils n'apparaissent
+    # jamais comme "manquants" dans l'interface et ne soient pas demandés via WhatsApp.
+    _ddn_enfant = (dossier.get("ddn_enfant") or cerfa_reponses.get("date_naissance") or "").strip()
+    _est_enfant_prepop = False
+    if _ddn_enfant and "/" in _ddn_enfant:
+        try:
+            from datetime import date as _dte
+            _dp = _ddn_enfant.split("/")
+            if len(_dp) == 3:
+                _age_prepop = (_dte.today() - _dte(int(_dp[2]), int(_dp[1]), int(_dp[0]))).days // 365
+                _est_enfant_prepop = _age_prepop < 16
+        except Exception:
+            pass
+
+    if _est_enfant_prepop:
+        # Champs non applicables → sentinelle "non concerné (enfant)"
+        # N'écrasent jamais une valeur déjà saisie par la famille
+        _set("situation_familiale",    "non concerné (enfant)")
+        _set("enfants_a_charge",       "0")
+        _set("situation_pro_scolaire", "non concerné (enfant)")
+        _set("emploi_accompagne",      "non concerné (enfant)")
+        _set("type_logement_statut",   "vit chez ses parents")
+        _set("qualification_parcours", "non concerné (enfant)")
+        logger.info(
+            f"[PREPOPULER C2] Profil ENFANT détecté (âge={_age_prepop} ans) "
+            "→ champs non applicables pré-remplis automatiquement."
+        )
+
+    # CORRECTION 3 (Sarah) — NIR depuis l'interface éducateur au moment du pré-remplissage
+    # La correction précédente C2 le fait dans cerfa_filler ; on le fait aussi ici
+    # pour que le bot WhatsApp ne redemande pas le NIR si déjà dans l'interface.
+    _nir_interface = (
+        dossier.get("numero_securite_sociale")
+        or dossier.get("nss")
+        or ""
+    ).replace(" ", "").replace(".", "").replace("-", "")
+    if _nir_interface and _nir_interface.isdigit():
+        _set("numero_securite_sociale", _nir_interface)
+
 
 # ---------------------------------------------------------------------------
 # Extraction complète CERFA depuis le texte du bilan (appel LLM dédié)
@@ -655,6 +642,58 @@ RÈGLES ABSOLUES :
 
 
 # ---------------------------------------------------------------------------
+# Règles de nettoyage automatique — cohérence interface graphique
+# ---------------------------------------------------------------------------
+
+def appliquer_regles_nettoyage(cerfa_reponses: dict) -> None:
+    """
+    Marque automatiquement les champs non-applicables avec une valeur sentinelle
+    pour qu'ils n'apparaissent plus en rouge dans l'interface comme 'manquants'.
+
+    Règle 1 : Adulte (≥ 18 ans) → scolarite_details, nom_ecole, gevasco non applicables.
+    Règle 2 : historique_mdph contient un chiffre → forcer type_demande = 'renouvellement'.
+    Règle 4 : type_demande = 'premiere' → urgence_droits non applicable.
+
+    À appeler juste après prepopuler_cerfa_depuis_dossier à chaque message entrant.
+    Ne remplace jamais une valeur déjà saisie par l'usager.
+    """
+    from datetime import date as _dt
+
+    # ── Règle 1 : Adulte → champs scolarité non applicables ──────────────────
+    _ddn = cerfa_reponses.get("date_naissance", "")
+    if _ddn and "/" in _ddn:
+        try:
+            _p = _ddn.split("/")
+            if len(_p) == 3:
+                _age = (_dt.today() - _dt(int(_p[2]), int(_p[1]), int(_p[0]))).days // 365
+                if _age >= 18:
+                    cerfa_reponses.setdefault("scolarite_details", "N/A (adulte)")
+                    cerfa_reponses.setdefault("nom_ecole",          "N/A (adulte)")
+                    cerfa_reponses.setdefault("gevasco_disponible", "N/A (adulte)")
+                    logger.debug(f"[NETTOYAGE R1] Adulte ({_age} ans) → scolarité marquée N/A")
+        except Exception:
+            pass
+
+    # ── Règle 2 : historique_mdph renseigné → forcer renouvellement ──────────
+    _hist = cerfa_reponses.get("historique_mdph", "")
+    if _hist and any(c.isdigit() for c in _hist):
+        _td_actuel = cerfa_reponses.get("type_demande", "").lower()
+        _mots_premiere = ["premiere", "première", "nouveau", "jamais", "1ere"]
+        if not _td_actuel or any(w in _td_actuel for w in _mots_premiere):
+            cerfa_reponses["type_demande"] = "renouvellement"
+            logger.info(
+                f"[NETTOYAGE R2] historique_mdph={_hist!r} → type_demande forcé 'renouvellement'"
+            )
+
+    # ── Règle 4 : première demande → urgence_droits non applicable ────────────
+    _td = cerfa_reponses.get("type_demande", "").lower()
+    _mots_premiere = ["premiere", "première", "nouveau", "jamais", "1ere"]
+    if any(w in _td for w in _mots_premiere):
+        cerfa_reponses.setdefault("urgence_droits", "N/A (première demande)")
+        logger.debug("[NETTOYAGE R4] Première demande → urgence_droits marqué N/A")
+
+
+# ---------------------------------------------------------------------------
 # Groupes de questions CERFA — max 5 messages au lieu de 22
 # Chaque groupe est envoyé en un seul message WhatsApp.
 # L'extraction multi-champs se fait sur chaque champ du groupe après réponse.
@@ -686,6 +725,10 @@ CERFA_GROUPES: list[dict] = [
     },
     {
         "id": "situation_vie",
+        # C1 Sarah : les champs non_enfant (situation_familiale, enfants_a_charge,
+        # type_logement_statut) sont filtrés par get_next_groupe_cerfa pour le profil ENFANT.
+        # La question_falc adulte reste la référence ; le LLM reçoit les instructions de
+        # profil dans system_groupe et adapte le texte au contexte parent/enfant.
         "champs": [
             "situation_familiale", "enfants_a_charge",
             "type_logement_statut", "organisme_payeur", "protection_juridique",
@@ -696,7 +739,10 @@ CERFA_GROUPES: list[dict] = [
             "2️⃣ Avez-vous des *enfants à charge* ? (oui/non, et combien)\n"
             "3️⃣ Quel est votre *type de logement* ? (appartement, maison…) et êtes-vous propriétaire ou locataire ?\n"
             "4️⃣ Votre organisme d'allocations : *CAF* ou *MSA* ?\n"
-            "5️⃣ Êtes-vous sous *tutelle ou curatelle* ? (oui/non)"
+            "5️⃣ Êtes-vous sous *tutelle ou curatelle* ? (oui/non)\n\n"
+            "[VERSION PARENT/ENFANT — utilisée par le LLM si profil ENFANT :\n"
+            "1️⃣ Votre organisme d'allocations familiales : *CAF* ou *MSA* ?\n"
+            "2️⃣ Votre enfant est-il sous mesure de *tutelle ou curatelle* ? (oui/non — dans la grande majorité des cas la réponse est non)]"
         ),
     },
     {
@@ -722,13 +768,28 @@ CERFA_GROUPES: list[dict] = [
     },
     {
         "id": "parcours",
-        "champs": ["situation_pro_scolaire", "qualification_parcours", "scolarite_details"],
+        # C8 Sarah : nom_ecole ajouté — obligatoire profil ENFANT.
+        # C9 Sarah : gevasco_disponible ajouté — GEVASCO demandé si scolarisé.
+        # Pour un adulte, ces deux champs sont skippés par get_next_groupe_cerfa
+        # (via la règle scolarite_details + profil).
+        "champs": [
+            "situation_pro_scolaire", "qualification_parcours", "scolarite_details",
+            "nom_ecole", "gevasco_disponible",
+        ],
         "question_falc": (
             "Quelques questions sur votre parcours :\n\n"
             "1️⃣ Quelle est votre *situation actuelle* ?\n"
             "   (en emploi, en recherche d'emploi, en formation, sans activité, scolarisé·e…)\n"
             "2️⃣ Quel est votre *niveau de formation* et votre dernier emploi ou métier ?\n"
-            "   (exemple : CAP plombier, dernier emploi caissière en 2020)"
+            "   (exemple : CAP plombier, dernier emploi caissière en 2020)\n\n"
+            "[VERSION PARENT/ENFANT — utilisée par le LLM si profil ENFANT :\n"
+            "1️⃣ Dans quel établissement scolaire est scolarisé votre enfant ?\n"
+            "   *Indiquez le nom exact* (ex : École élémentaire Jean Jaurès, IME Les Pins…)\n"
+            "2️⃣ Quelle classe fréquente-t-il/elle ? (CP, CE1, CE2…)\n"
+            "3️⃣ Des aménagements sont-ils en place à l'école ?\n"
+            "   (AESH, tiers-temps, matériel adapté, ULIS, PPS, PAI…)\n"
+            "4️⃣ Avez-vous un document *GEVASCO* récent ? (oui / non)\n"
+            "   Si oui, vous pourrez nous l'envoyer par email à contactfacilim@gmail.com]"
         ),
     },
     {
@@ -768,6 +829,10 @@ def get_next_groupe_cerfa(cerfa_reponses: dict) -> dict | None:
     has_cmi = any(w in type_droits_val for w in ["cmi", "carte mobilite", "carte invalidite"])
     has_orp = any(w in type_droits_val for w in ["orp", "rqth", "emploi", "esat"])
 
+    # C1 Sarah : détection du profil pour filtrer les champs inadaptés
+    _profil_groupe   = _detecter_profil(cerfa_reponses)
+    _est_enfant_grp  = _profil_groupe == "enfant"
+
     for groupe in CERFA_GROUPES:
         gid = f"__groupe_{groupe['id']}__"
 
@@ -783,17 +848,23 @@ def get_next_groupe_cerfa(cerfa_reponses: dict) -> dict | None:
             if cerfa_reponses.get(c) and str(cerfa_reponses[c]) not in ("__via_email__", "sent", ""):
                 continue  # déjà rempli
 
+            # C1 Sarah : champs inadaptés au profil ENFANT → skip silencieux
+            if _est_enfant_grp and c in _CHAMPS_NON_ENFANT:
+                continue
+
             # Règles conditionnelles identiques à get_next_cerfa_field
             if c == "urgence_droits":
                 if is_first or (type_d and not is_renouvellement):
                     continue
             if c == "historique_mdph" and is_first:
                 continue
+            if c == "historique_mdph" and cerfa_reponses.get("historique_mdph"):
+                continue
             if c == "cmi_type" and not has_cmi:
                 continue
             if c == "emploi_accompagne" and not has_orp:
                 continue
-            if c == "scolarite_details":
+            if c in ("scolarite_details", "nom_ecole", "gevasco_disponible"):
                 ddn = cerfa_reponses.get("date_naissance", "")
                 if ddn:
                     try:
@@ -806,7 +877,10 @@ def get_next_groupe_cerfa(cerfa_reponses: dict) -> dict | None:
                     except Exception:
                         pass
                 else:
-                    continue  # âge inconnu → reporter scolarité
+                    if c in ("nom_ecole", "gevasco_disponible"):
+                        continue  # âge inconnu → ne pas poser les questions scolarité
+                    else:
+                        continue  # scolarite_details : âge inconnu → reporter
             if c == "qualification_parcours":
                 if not any(w in type_droits_val for w in ["rqth", "orp", "aah", "emploi"]):
                     continue
@@ -860,6 +934,10 @@ def get_next_cerfa_field(cerfa_reponses: dict[str, str]) -> str | None:
         for w in ["orp", "orientation pro", "rqth", "emploi", "esat", "travail"]
     )
 
+    # C1 Sarah : détection du profil pour filtrer les champs inadaptés
+    _profil_field  = _detecter_profil(cerfa_reponses)
+    _est_enfant_f  = _profil_field == "enfant"
+
     for field in CERFA_FIELD_ORDER:
         # Champ déjà renseigné → suivant
         if field in cerfa_reponses and cerfa_reponses[field]:
@@ -868,6 +946,10 @@ def get_next_cerfa_field(cerfa_reponses: dict[str, str]) -> str | None:
         # Champ médical → jamais collecté via WhatsApp
         if field in MEDICAL_FIELDS:
             medical_pending = True
+            continue
+
+        # C1 Sarah : champs inadaptés au profil ENFANT → toujours sautés
+        if _est_enfant_f and field in _CHAMPS_NON_ENFANT:
             continue
 
         # ── Champs conditionnels ─────────────────────────────────────────────
@@ -1068,6 +1150,280 @@ def extract_groupe_cerfa_from_reply(
 
 
 # ---------------------------------------------------------------------------
+# Mapping dict plat → DossierCERFA structuré
+# ---------------------------------------------------------------------------
+
+def cerfa_reponses_vers_dossier_cerfa(cerfa_reponses: dict) -> DossierCERFA:
+    """
+    Construit un DossierCERFA structuré depuis le dictionnaire plat cerfa_reponses.
+
+    Extraction chirurgicale :
+    - ProtectionJuridique : parse "tutelle de mon mari Jean Dupont" → sous-classe dédiée
+    - SectionAidant       : toute aide humaine d'un proche → pages 19-20, JAMAIS dans frais
+    - FraisEngages        : uniquement frais financiers prouvés
+    - urgence_droits      : False par défaut — True uniquement si confirmation explicite
+    """
+    from datetime import date as _dt
+    import re as _re
+
+    # ── Détection du profil depuis la date de naissance ──────────────────────
+    _ddn_raw = (cerfa_reponses.get("date_naissance") or "").strip()
+    profil = "inconnu"
+    _age   = None
+    if _ddn_raw and "/" in _ddn_raw:
+        try:
+            _p = _ddn_raw.split("/")
+            if len(_p) == 3:
+                _age = (_dt.today() - _dt(int(_p[2]), int(_p[1]), int(_p[0]))).days // 365
+                if _age < 16:
+                    profil = "enfant"
+                else:
+                    _sit = (cerfa_reponses.get("situation_pro_scolaire") or "").lower()
+                    _mots_actif = ["emploi", "travail", "cdi", "cdd", "formation", "apprenti", "stage"]
+                    profil = "adulte"
+        except Exception:
+            pass
+
+    # ── Section A — Identité ─────────────────────────────────────────────────
+    _np = (cerfa_reponses.get("nom_prenom") or "").strip()
+    _nom, _prenom = "", ""
+    if _np:
+        _parts = _np.split(" ", 1)
+        _prenom = _parts[0].strip()
+        _nom    = _parts[1].strip() if len(_parts) == 2 else ""
+
+    _nir_raw = (cerfa_reponses.get("numero_securite_sociale") or "").strip()
+    _nir_valid = None
+    if _nir_raw:
+        _cleaned = _re.sub(r"[\s.\-]", "", _nir_raw)
+        _nir_valid = _cleaned if _re.fullmatch(r"\d{15}", _cleaned) else None
+
+    # ── Protection juridique — extraction chirurgicale ────────────────────────
+    _prot_raw = (cerfa_reponses.get("protection_juridique") or "").lower()
+    _prot_mesure: str = "aucune"
+    _prot_nom:    str | None = None
+    _prot_prenom: str | None = None
+    _prot_qualite: str | None = None
+
+    if "tutelle" in _prot_raw:
+        _prot_mesure  = "tutelle"
+        _prot_qualite = "Tuteur"
+    elif "curatelle" in _prot_raw:
+        _prot_mesure  = "curatelle"
+        _prot_qualite = "Curateur"
+    elif "sauvegarde" in _prot_raw:
+        _prot_mesure  = "sauvegarde"
+        _prot_qualite = "Sauvegarde de justice"
+
+    # Tenter d'extraire le nom du représentant depuis la phrase brute
+    # ex : "tutelle de mon mari Jean Dupont" → prenom=Jean, nom=Dupont
+    if _prot_mesure != "aucune":
+        # Chercher un pattern "de [préposition?] Prénom NOM" dans le texte brut
+        _match_rep = _re.search(
+            r'\b(?:de (?:mon |ma |mes )?(?:mari|femme|époux|épouse|fils|fille|mère|père|conjoint)?\s*)?'
+            r'([A-ZÀÂÉÈÊÎÔÙÛÆŒ][a-zàâéèêîïôùûüæœ]+)\s+([A-ZÀÂÉÈÊÎÔÙÛÆŒ]{2,})',
+            cerfa_reponses.get("protection_juridique") or "",
+        )
+        if _match_rep:
+            _prot_prenom = _match_rep.group(1)
+            _prot_nom    = _match_rep.group(2)
+        else:
+            # Fallback : chercher dans aidant_identite si tutelle détectée
+            _ai_raw = (cerfa_reponses.get("aidant_identite") or "").strip()
+            if _ai_raw:
+                _ai_parts = _ai_raw.split(",", 1)
+                _ai_name  = _ai_parts[0].strip().split(" ", 1)
+                if len(_ai_name) == 2:
+                    _prot_prenom = _ai_name[0]
+                    _prot_nom    = _ai_name[1]
+                elif _ai_name:
+                    _prot_nom = _ai_name[0]
+
+    # ── Protection juridique → SituationJuridique V3 ────────────────────────
+    _rep_identite = None
+    if _prot_nom or _prot_prenom:
+        _rep_identite = IdentitePersonne(
+            nom     = _prot_nom,
+            prenom  = _prot_prenom,
+            qualite = _prot_qualite,
+        )
+    situation_juridique = SituationJuridique(
+        sous_protection       = (_prot_mesure != "aucune"),
+        type_mesure           = _prot_mesure,
+        identite_representant = _rep_identite,
+    )
+
+    section_a = SectionA_Identite(
+        nom                     = _nom or None,
+        prenom                  = _prenom or None,
+        date_naissance          = _ddn_raw or None,
+        genre                   = cerfa_reponses.get("genre"),
+        adresse_complete        = cerfa_reponses.get("adresse_complete"),
+        situation_familiale     = cerfa_reponses.get("situation_familiale"),
+        enfants_a_charge        = int(cerfa_reponses["enfants_a_charge"])
+                                  if str(cerfa_reponses.get("enfants_a_charge", "")).isdigit() else None,
+        organisme_payeur        = cerfa_reponses.get("organisme_payeur"),
+        situation_juridique     = situation_juridique,
+        historique_mdph         = cerfa_reponses.get("historique_mdph"),
+        type_demande            = cerfa_reponses.get("type_demande"),
+        numero_securite_sociale = _nir_valid,
+    )
+
+    # ── Aidant familial → AidantFamilial dans SectionF_VieAidant V3 ─────────
+    _aidant_raw = (cerfa_reponses.get("aidant_identite") or "").strip()
+    _mots_absence = ["personne", "aucun", "non", "pas d", "seul", "seule", "n/a"]
+    _aidant_absent = not _aidant_raw or any(m in _aidant_raw.lower() for m in _mots_absence)
+
+    _aidant_obj = AidantFamilial(a_un_aidant=False)
+    if not _aidant_absent:
+        _ai_parts    = _aidant_raw.split(",", 1)
+        _ai_identite = _ai_parts[0].strip()
+        _ai_lien     = _ai_parts[1].strip() if len(_ai_parts) > 1 else ""
+
+        _liens_map = {
+            "mari": "époux", "époux": "époux", "conjoint": "conjoint",
+            "femme": "épouse", "épouse": "épouse", "compagne": "compagne",
+            "compagnon": "compagnon", "mère": "mère", "mere": "mère",
+            "père": "père", "pere": "père", "fils": "fils", "fille": "fille",
+            "frère": "frère", "soeur": "sœur", "sœur": "sœur",
+        }
+        if not _ai_lien:
+            for _mot, _lien_norm in _liens_map.items():
+                if _mot in _ai_identite.lower():
+                    _ai_lien = _lien_norm
+                    _ai_identite = _re.sub(
+                        rf'\b{_mot}\b', '', _ai_identite, flags=_re.IGNORECASE
+                    ).strip(" ,")
+                    break
+
+        _ai_nom_parts = _ai_identite.split(" ", 1)
+        _ai_prenom = _ai_nom_parts[0].strip() if _ai_nom_parts else ""
+        _ai_nom    = _ai_nom_parts[1].strip() if len(_ai_nom_parts) > 1 else ""
+
+        _aidant_obj = AidantFamilial(
+            a_un_aidant   = True,
+            nom           = _ai_nom or None,
+            prenom        = _ai_prenom or None,
+            lien_parental = _ai_lien or None,
+        )
+
+    section_f = SectionF_VieAidant(aidant=_aidant_obj)
+
+    # ── Section C — Vie quotidienne ──────────────────────────────────────────
+    _texte_diff    = (cerfa_reponses.get("difficultes_quotidiennes") or "").lower()
+    _texte_besoins = (cerfa_reponses.get("besoins_aide") or "").lower()
+    _texte_c       = _texte_diff + " " + _texte_besoins
+
+    _type_log, _stat_log = "", ""
+    _tls = (cerfa_reponses.get("type_logement_statut") or "")
+    if "/" in _tls:
+        _tls_parts = _tls.split("/", 1)
+        _type_log  = _tls_parts[0].strip()
+        _stat_log  = _tls_parts[1].strip()
+    else:
+        _type_log = _tls.strip()
+
+    # urgence_droits : False par défaut — True uniquement si OUI explicite
+    _urgence_raw = (cerfa_reponses.get("urgence_droits") or "").lower()
+    _urgence_bool: bool = False
+    if any(w in _urgence_raw for w in ["oui", "yes", "1", "vrai", "true", "urgent"]):
+        _urgence_bool = True
+
+    # Frais réels — uniquement financiers (str simple, conforme V3 SectionC)
+    _frais_str = None
+    _ressources_raw = (cerfa_reponses.get("ressources_actuelles") or "").lower()
+    _frais_mots = [
+        "psychologue", "orthophoniste", "ostéopath", "ergothérap",
+        "matériel", "fauteuil", "appareillage", "aménagement",
+        "transport", "reste à charge", "non remboursé",
+    ]
+    if any(w in _ressources_raw for w in _frais_mots):
+        _frais_str = cerfa_reponses.get("ressources_actuelles")
+
+    # Statut d'occupation — V3 Literal strict
+    _statut_occ_raw = _stat_log.lower() if _stat_log else ""
+    _statut_occ = None
+    if any(w in _statut_occ_raw for w in ["proprio", "propriétaire"]):
+        _statut_occ = "proprietaire"
+    elif "locataire" in _statut_occ_raw:
+        _statut_occ = "locataire"
+    elif any(w in _statut_occ_raw for w in ["hébergé", "heberge"]):
+        _statut_occ = "heberge"
+
+    section_c = SectionC_VieQuotidienne(
+        difficultes_quotidiennes    = cerfa_reponses.get("difficultes_quotidiennes"),
+        besoins_aide_humaine        = any(w in _texte_besoins for w in
+                                          ["aide humaine", "auxiliaire", "avs", "aide à domicile"]),
+        besoins_aide_technique      = any(w in _texte_besoins for w in
+                                          ["fauteuil", "déambulateur", "prothèse", "orthèse", "matériel"]),
+        besoins_amenagement_logement = any(w in _texte_besoins for w in
+                                           ["aménagement", "logement adapté", "rampe", "monte-escalier"]),
+        type_logement               = _type_log or None,
+        statut_occupation           = _statut_occ,
+        ressources_actuelles        = cerfa_reponses.get("ressources_actuelles"),
+        frais_reels                 = _frais_str,
+        utilise_fauteuil_roulant    = "fauteuil" in _texte_c,
+        difficulte_marcher          = "march" in _texte_c or "déplac" in _texte_c,
+        besoin_aide_toilette        = "toilette" in _texte_c or "douche" in _texte_c,
+    )
+
+    # Urgence → Section_Urgence V3 (plus dans section_c)
+    section_urgence = Section_Urgence(est_urgent=_urgence_bool)
+
+    # ── Sections D et E — adulte_actif et mixte ──────────────────────────────
+    section_d: SectionD_SituationPro | None = None
+    section_e: SectionE_ProjetPro    | None = None
+
+    if profil in ("adulte", "mixte"):
+        _qual_raw = cerfa_reponses.get("qualification_parcours") or ""
+        _poste, _niveau = "", ""
+        if " — " in _qual_raw or " / " in _qual_raw:
+            _sep    = " — " if " — " in _qual_raw else " / "
+            _qp     = _qual_raw.split(_sep, 1)
+            _niveau = _qp[0].strip()
+            _poste  = _qp[1].strip()
+        else:
+            _niveau = _qual_raw.strip()
+
+        section_d = SectionD_SituationPro(
+            poste_occupe         = _poste or None,
+            niveau_qualification = _niveau or None,
+        )
+
+        _droits_raw   = (cerfa_reponses.get("type_droits") or "").upper()
+        _projet_raw   = (cerfa_reponses.get("qualification_parcours") or "").upper()
+        _texte_e      = _droits_raw + " " + _projet_raw
+        _TOKENS_ESRP  = ("CRP", "CPO", "UEROS", "ESRP", "VISA PRO", "RICHEBOIS",
+                         "REEDUCATION", "READAPTATION")
+        _TOKENS_ESAT  = ("ESAT", "MILIEU PROTEGE", "MILIEU PROTÉGÉ")
+        _ea_raw  = (cerfa_reponses.get("emploi_accompagne") or "").lower()
+        _ea_bool = any(w in _ea_raw for w in ["oui", "accompagné", "accompagne", "yes"])
+
+        _droits_list = []
+        if cerfa_reponses.get("type_droits"):
+            _droits_list = [d.strip() for d in cerfa_reponses["type_droits"].split(",") if d.strip()]
+
+        section_e = SectionE_ProjetPro(
+            type_droits          = _droits_list,
+            emploi_accompagne    = _ea_bool,
+            projet_professionnel = cerfa_reponses.get("qualification_parcours"),
+            orientation_esrp     = any(t in _texte_e for t in _TOKENS_ESRP),
+            orientation_esat     = any(t in _texte_e for t in _TOKENS_ESAT),
+            orientation_rqth     = "RQTH" in _texte_e,
+        )
+
+    return DossierCERFA(
+        profil          = profil,
+        section_a       = section_a,
+        section_c       = section_c,
+        section_d       = section_d,
+        section_e       = section_e,
+        section_f       = section_f,
+        section_urgence = section_urgence,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Génération de la réponse
 # ---------------------------------------------------------------------------
 
@@ -1093,6 +1449,12 @@ def generer_reponse_agent(
                                  est un champ médical non collecté via WhatsApp.
     """
     cerfa_reponses = cerfa_reponses or {}
+
+    # Passage automatique par le moteur de règles à chaque mise à jour des données.
+    # On construit un DossierCERFA structuré depuis le dict plat, puis le moteur
+    # de règles calcule les cases CERFA et les réinjecte dans cerfa_reponses.
+    _dossier_cerfa = cerfa_reponses_vers_dossier_cerfa(cerfa_reponses)
+    cerfa_reponses["cases_cerfa"] = executer_regles_metier_mdph(_dossier_cerfa)
 
     # ── Cas 0 : Redirection canal sécurisé (champs médicaux) ─────────────────
     if force_medical_redirect:

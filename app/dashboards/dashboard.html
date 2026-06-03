@@ -181,14 +181,68 @@
     <div id="modal-content" class="flex-1 overflow-y-auto px-6 py-4 space-y-5">
       <!-- Contenu dynamique injecté par JS -->
     </div>
-    <div class="px-6 py-4 border-t border-gray-100 flex gap-3 justify-end">
-      <button onclick="closeModal('modal-dossier')" class="text-sm text-gray-600 px-4 py-2 border border-gray-200 rounded-lg hover:bg-gray-50">Fermer</button>
-      <button id="btn-validate-flag" onclick="validateFlag()" class="hidden text-sm bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-colors">
-        Valider — Lever le flag
+
+    <!-- Zone pro : notes + upload document -->
+    <div class="px-6 py-4 border-t border-gray-100 bg-gray-50 space-y-3">
+      <div class="text-xs font-semibold text-gray-600 uppercase tracking-wide">
+        ✏️ Zone professionnelle — ajout d'éléments
+      </div>
+      <!-- Champs structurés rapides -->
+      <div class="grid grid-cols-2 gap-2">
+        <div class="flex gap-1">
+          <input id="pro-nir-input" type="text" maxlength="15" placeholder="N° sécurité sociale (15 chiffres)"
+            class="flex-1 text-sm border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-facilim-500"/>
+          <button onclick="saveChampPro('numero_securite_sociale','pro-nir-input','🔒 NIR enregistré')"
+            class="text-xs bg-blue-600 hover:bg-blue-800 text-white px-2 py-1.5 rounded-lg whitespace-nowrap">💾</button>
+        </div>
+        <div class="flex gap-1">
+          <input id="pro-ddn-input" type="text" placeholder="Date de naissance (JJ/MM/AAAA)"
+            class="flex-1 text-sm border border-gray-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-facilim-500"/>
+          <button onclick="saveChampPro('date_naissance','pro-ddn-input','📅 Date enregistrée')"
+            class="text-xs bg-blue-600 hover:bg-blue-800 text-white px-2 py-1.5 rounded-lg whitespace-nowrap">💾</button>
+        </div>
+      </div>
+      <div class="flex gap-2">
+        <textarea id="pro-notes-input" rows="2" placeholder="Ajoutez des notes, observations, informations complémentaires (copier-coller possible)…"
+          class="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-facilim-500 resize-none"></textarea>
+        <button onclick="saveProfessionalNotes()" class="text-sm bg-gray-700 hover:bg-gray-900 text-white px-3 py-2 rounded-lg transition-colors whitespace-nowrap">
+          💾 Enregistrer
+        </button>
+      </div>
+      <div class="flex items-center gap-3">
+        <label class="flex-1 cursor-pointer border-2 border-dashed border-gray-300 rounded-lg px-4 py-3 text-center hover:border-facilim-500 transition-colors">
+          <input type="file" id="doc-upload-input" class="hidden" accept=".pdf,.jpg,.jpeg,.png,.docx"
+            onchange="uploadDocument(this)"/>
+          <div class="text-sm text-gray-500">
+            📎 <span class="font-medium text-facilim-700">Cliquez pour importer</span> un document
+            <div class="text-xs text-gray-400 mt-0.5">PDF, image, Word — l'IA extraira les informations automatiquement</div>
+          </div>
+        </label>
+      </div>
+      <div id="upload-status" class="hidden text-sm px-3 py-2 rounded-lg"></div>
+    </div>
+    <div class="px-6 py-4 border-t border-gray-100 flex gap-3 justify-between">
+      <button onclick="deleteDossier()" class="text-sm text-red-500 hover:text-red-700 px-3 py-2 border border-red-200 rounded-lg hover:bg-red-50 transition-colors">
+        🗑 Supprimer
       </button>
-      <button id="btn-send-relance" onclick="sendRelance()" class="text-sm bg-facilim-700 hover:bg-facilim-900 text-white px-4 py-2 rounded-lg transition-colors">
-        Envoyer une relance
-      </button>
+      <div class="flex gap-3">
+        <button onclick="closeModal('modal-dossier')" class="text-sm text-gray-600 px-4 py-2 border border-gray-200 rounded-lg hover:bg-gray-50">Fermer</button>
+        <button id="btn-validate-flag" onclick="validateFlag()" class="hidden text-sm bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-colors">
+          ✓ Lever le flag
+        </button>
+        <button onclick="lancerConversation()" class="text-sm bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg transition-colors font-medium">
+          🚀 Lancer la conversation WhatsApp
+        </button>
+        <button onclick="previsualiserCerfa()" class="text-sm bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg transition-colors">
+          👁 Prévisualiser CERFA
+        </button>
+        <button onclick="envoyerCerfa()" class="text-sm bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-colors">
+          📧 Envoyer à l'usager
+        </button>
+        <button id="btn-send-relance" onclick="sendRelance()" class="text-sm bg-facilim-700 hover:bg-facilim-900 text-white px-4 py-2 rounded-lg transition-colors">
+          📱 Relance WhatsApp
+        </button>
+      </div>
     </div>
   </div>
 </div>
@@ -432,6 +486,171 @@ function renderModalContent(d) {
   `;
 }
 
+async function saveChampPro(champ, inputId, msgOk) {
+  if (!currentDossierId) return;
+  const valeur = document.getElementById(inputId).value.trim();
+  if (!valeur) return;
+  try {
+    const res = await fetch(`/api/v1/dossiers/${currentDossierId}/cerfa-champ`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ champ, valeur }),
+    });
+    if (res.ok) {
+      document.getElementById(inputId).value = '';
+      showUploadStatus(`✅ ${msgOk}`, 'green');
+    } else {
+      showUploadStatus('❌ Erreur lors de l\'enregistrement.', 'red');
+    }
+  } catch(e) { showUploadStatus('❌ Erreur réseau.', 'red'); }
+}
+
+async function saveProfessionalNotes() {
+  if (!currentDossierId) return;
+  const notes = document.getElementById('pro-notes-input').value.trim();
+  if (!notes) return;
+  try {
+    const res = await fetch(`/api/v1/dossiers/${currentDossierId}/cerfa-champ`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ champ: 'notes_pro', valeur: notes }),
+    });
+    if (res.ok) {
+      document.getElementById('pro-notes-input').value = '';
+      showUploadStatus('✅ Notes enregistrées avec succès.', 'green');
+      await openDossier(currentDossierId);  // refresh modal
+    }
+  } catch(e) { showUploadStatus('❌ Erreur lors de l\'enregistrement.', 'red'); }
+}
+
+async function uploadDocument(input) {
+  if (!currentDossierId || !input.files[0]) return;
+  const file    = input.files[0];
+  const formData = new FormData();
+  formData.append('file', file);
+  const notes = document.getElementById('pro-notes-input').value.trim();
+  if (notes) formData.append('notes', notes);
+
+  showUploadStatus('⏳ Analyse du document en cours…', 'blue');
+
+  try {
+    const res = await fetch(`/api/v1/dossiers/${currentDossierId}/upload-document`, {
+      method: 'POST', credentials: 'include', body: formData,
+    });
+    const data = await res.json();
+    if (res.ok) {
+      showUploadStatus(
+        `✅ Document analysé — ${data.message || data.champs_extraits?.length + ' champ(s) pré-rempli(s)'}`,
+        'green'
+      );
+      input.value = '';
+      document.getElementById('pro-notes-input').value = '';
+      await openDossier(currentDossierId);  // refresh modal content
+    } else {
+      showUploadStatus(`❌ ${data.detail || 'Erreur upload'}`, 'red');
+    }
+  } catch(e) { showUploadStatus('❌ Erreur réseau.', 'red'); }
+}
+
+function showUploadStatus(msg, color) {
+  const el = document.getElementById('upload-status');
+  el.classList.remove('hidden', 'bg-green-50', 'bg-blue-50', 'bg-red-50',
+                       'text-green-700', 'text-blue-700', 'text-red-700', 'border-green-200',
+                       'border-blue-200', 'border-red-200');
+  el.classList.add(`bg-${color}-50`, `text-${color}-700`, `border`, `border-${color}-200`);
+  el.textContent = msg;
+  el.classList.remove('hidden');
+  if (color === 'green') setTimeout(() => el.classList.add('hidden'), 4000);
+}
+
+async function lancerConversation() {
+  if (!currentDossierId) return;
+  if (!confirm('Envoyer le premier message WhatsApp à l\'usager pour démarrer la collecte ?')) return;
+  try {
+    const res = await fetch(`/api/v1/dossiers/${currentDossierId}/lancer-conversation`, {
+      method: 'POST', credentials: 'include',
+    });
+    // Lire la réponse comme texte d'abord pour éviter les erreurs JSON
+    const text = await res.text();
+    let data = {};
+    try { data = JSON.parse(text); } catch(e) { data = { detail: text.substring(0, 200) }; }
+
+    if (res.ok) {
+      alert(`✅ Conversation lancée !\nMessage envoyé au numéro ...${data.phone}.\n${data.nb_infos_connues} information(s) déjà connues.`);
+      closeModal('modal-dossier');
+    } else if (res.status === 400 && data.detail && data.detail.includes('numéro WhatsApp')) {
+      // Pas de téléphone — proposer de l'ajouter
+      const tel = prompt('⚠️ Ce dossier n\'a pas de numéro WhatsApp.\n\nEntrez le numéro WhatsApp de l\'usager (format : +33612345678) :');
+      if (tel && tel.trim()) {
+        await ajouterTelephoneEtLancer(tel.trim());
+      }
+    } else {
+      alert(`❌ ${data.detail || 'Erreur : ' + res.status}`);
+    }
+  } catch(e) {
+    alert(`❌ Erreur réseau : ${e.message}\nVérifiez votre connexion et réessayez.`);
+  }
+}
+
+async function ajouterTelephoneEtLancer(telephone) {
+  try {
+    // Mettre à jour le téléphone du dossier puis relancer
+    const res = await fetch(`/api/v1/dossiers/${currentDossierId}/ajouter-telephone`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ telephone }),
+    });
+    if (res.ok) {
+      // Réessayer le lancement
+      await lancerConversation();
+    } else {
+      const d = await res.json();
+      alert(`❌ ${d.detail || 'Impossible d\'ajouter le téléphone.'}`);
+    }
+  } catch(e) { alert('Erreur réseau.'); }
+}
+
+function previsualiserCerfa() {
+  if (!currentDossierId) return;
+  // Ouvre le PDF CERFA dans un nouvel onglet
+  window.open(`/api/v1/dossiers/${currentDossierId}/cerfa.pdf`, '_blank');
+}
+
+async function envoyerCerfa() {
+  if (!currentDossierId) return;
+  if (!confirm('Envoyer le CERFA par email à l\'usager ? Cette action marque le dossier comme "Soumis".')) return;
+  try {
+    const res = await fetch(`/api/v1/dossiers/${currentDossierId}/envoyer-cerfa`, {
+      method: 'POST', credentials: 'include',
+    });
+    const data = await res.json();
+    if (res.ok) {
+      alert(`✅ CERFA envoyé avec succès à ${data.email_dest}`);
+      closeModal('modal-dossier');
+      await refreshData();
+    } else {
+      alert(`❌ ${data.detail || 'Erreur lors de l\'envoi.'}`);
+    }
+  } catch(e) { alert('Erreur réseau lors de l\'envoi.'); }
+}
+
+async function deleteDossier() {
+  if (!currentDossierId) return;
+  if (!confirm('Supprimer définitivement ce dossier ? Cette action est irréversible.')) return;
+  try {
+    const res = await fetch(`/api/v1/dossiers/${currentDossierId}`, {
+      method: 'DELETE', credentials: 'include',
+    });
+    if (res.ok) {
+      closeModal('modal-dossier');
+      await refreshData();
+    } else {
+      const d = await res.json();
+      alert(d.detail || 'Erreur lors de la suppression.');
+    }
+  } catch(e) { alert('Erreur réseau.'); }
+}
+
 async function validateFlag() {
   if (!currentDossierId) return;
   if (!confirm('Confirmer la validation humaine de ce dossier ?')) return;
@@ -450,19 +669,32 @@ async function validateFlag() {
 
 async function sendRelance() {
   if (!currentDossierId) return;
+  const btn = document.getElementById('btn-send-relance');
+  const origText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Envoi…';
   try {
     const res = await fetch(`/api/v1/dashboard/dossiers/${currentDossierId}/relance`, {
       method: 'POST', credentials: 'include',
     });
+    const data = await res.json();
     if (res.ok) {
-      alert('Relance envoyée avec succès.');
-      closeModal('modal-dossier');
+      btn.textContent = '✓ Relance envoyée';
+      setTimeout(() => { btn.textContent = origText; btn.disabled = false; }, 3000);
+    } else {
+      alert(data.detail || 'Erreur lors de l\'envoi de la relance.');
+      btn.textContent = origText;
+      btn.disabled = false;
     }
-  } catch(e) { alert('Erreur lors de l\'envoi de la relance.'); }
+  } catch(e) {
+    alert('Erreur réseau lors de l\'envoi.');
+    btn.textContent = origText;
+    btn.disabled = false;
+  }
 }
 
 function openNewDossierModal() {
-  window.location = '/api/v1/dashboard/nouveau-dossier';
+  document.getElementById('modal-nouveau-dossier').classList.remove('hidden');
 }
 
 function closeModal(id) {
@@ -478,6 +710,247 @@ document.getElementById('modal-dossier').addEventListener('click', function(e) {
 // Chargement initial + actualisation auto toutes les 60s
 refreshData();
 setInterval(refreshData, 60000);
+</script>
+
+<!-- ── Modal Nouveau Dossier (conforme page 1 CERFA 15692*01) ─────────────── -->
+<div id="modal-nouveau-dossier" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[90vh] flex flex-col">
+
+    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+      <div>
+        <h3 class="font-semibold text-gray-900">Nouveau dossier MDPH</h3>
+        <p class="text-xs text-gray-400 mt-0.5">Correspond à la page de garde du CERFA 15692*01</p>
+      </div>
+      <button onclick="closeNouveauDossier()" class="text-gray-400 hover:text-gray-700">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+
+    <div class="px-6 py-5 space-y-5 overflow-y-auto flex-1">
+
+      <!-- Coordonnées de l'usager -->
+      <div class="bg-blue-50 border border-blue-100 rounded-xl p-4 space-y-3">
+        <div class="text-xs font-semibold text-blue-800 uppercase tracking-wide">Coordonnées de l'usager</div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">
+              Téléphone WhatsApp <span class="text-red-500">*</span>
+            </label>
+            <input id="nd-tel" type="tel" placeholder="+33 6 12 34 56 78"
+              class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-facilim-500"/>
+            <p class="text-xs text-gray-400 mt-1">Nécessaire pour contacter l'usager via WhatsApp</p>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">
+              Email <span class="text-red-500">*</span>
+              <span class="font-normal text-gray-400">(envoi du CERFA final)</span>
+            </label>
+            <input id="nd-email" type="email" placeholder="prenom.nom@email.fr"
+              class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-facilim-500"/>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Nom (optionnel)</label>
+            <input id="nd-nom" type="text" placeholder="NOM Prénom"
+              class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-facilim-500"/>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Date de naissance (optionnel)</label>
+            <input id="nd-ddn" type="text" placeholder="JJ/MM/AAAA"
+              class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-facilim-500"/>
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-gray-600 mb-1">N° Sécurité Sociale (optionnel — 15 chiffres)</label>
+          <input id="nd-nir" type="text" maxlength="15" placeholder="1 85 04 75 XXX XXX XX"
+            class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-facilim-500"/>
+        </div>
+      </div>
+
+      <!-- Département -->
+      <div>
+        <label class="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">
+          Département MDPH <span class="text-red-500">*</span>
+        </label>
+        <input id="nd-dept" type="text" placeholder="Ex : 13, 75, 69…" maxlength="3"
+          class="w-32 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-facilim-500"/>
+      </div>
+
+      <!-- Type de demande (cases CERFA page 1) -->
+      <div>
+        <label class="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
+          Nature de la demande <span class="text-red-500">*</span>
+        </label>
+        <div class="space-y-2" id="nd-type-group">
+          <label class="flex items-start gap-3 p-3 rounded-lg border border-gray-200 cursor-pointer hover:border-facilim-500 transition-colors has-[:checked]:border-facilim-700 has-[:checked]:bg-facilim-50">
+            <input type="radio" name="nd-type" value="INITIAL" class="mt-0.5 accent-facilim-700" checked/>
+            <div>
+              <div class="text-sm font-medium text-gray-800">1 — Première demande à la MDPH</div>
+              <div class="text-xs text-gray-500 mt-0.5">La personne n'a jamais déposé de dossier</div>
+            </div>
+          </label>
+          <label class="flex items-start gap-3 p-3 rounded-lg border border-gray-200 cursor-pointer hover:border-facilim-500 transition-colors has-[:checked]:border-facilim-700 has-[:checked]:bg-facilim-50">
+            <input type="radio" name="nd-type" value="SITUATION_CHANGEE" class="mt-0.5 accent-facilim-700" onchange="toggleNumDossier(this)"/>
+            <div>
+              <div class="text-sm font-medium text-gray-800">2 — La situation a changé</div>
+              <div class="text-xs text-gray-500 mt-0.5">Évolution médicale, administrative, familiale ou du projet de vie</div>
+            </div>
+          </label>
+          <label class="flex items-start gap-3 p-3 rounded-lg border border-gray-200 cursor-pointer hover:border-facilim-500 transition-colors has-[:checked]:border-facilim-700 has-[:checked]:bg-facilim-50">
+            <input type="radio" name="nd-type" value="REEVALUATION" class="mt-0.5 accent-facilim-700" onchange="toggleNumDossier(this)"/>
+            <div>
+              <div class="text-sm font-medium text-gray-800">3 — Réévaluation ou révision des droits</div>
+              <div class="text-xs text-gray-500 mt-0.5">Demande de réexamen de la situation et/ou des droits accordés</div>
+            </div>
+          </label>
+          <label class="flex items-start gap-3 p-3 rounded-lg border border-gray-200 cursor-pointer hover:border-facilim-500 transition-colors has-[:checked]:border-facilim-700 has-[:checked]:bg-facilim-50">
+            <input type="radio" name="nd-type" value="RENOUVELLEMENT" class="mt-0.5 accent-facilim-700" onchange="toggleNumDossier(this)"/>
+            <div>
+              <div class="text-sm font-medium text-gray-800">4 — Renouvellement à l'identique</div>
+              <div class="text-xs text-gray-500 mt-0.5">La situation n'a pas évolué depuis le dernier dossier</div>
+            </div>
+          </label>
+        </div>
+
+        <!-- Aidant familial : checkbox indépendante, cumulable avec les 4 options ci-dessus -->
+        <label class="flex items-start gap-3 p-3 mt-2 rounded-lg border border-orange-200 bg-orange-50 cursor-pointer hover:border-orange-400 transition-colors has-[:checked]:border-orange-500 has-[:checked]:bg-orange-100">
+          <input type="checkbox" id="nd-aidant" class="mt-0.5 accent-orange-600"/>
+          <div>
+            <div class="text-sm font-medium text-gray-800">5 — Demande de l'aidant familial <span class="text-xs text-orange-600 font-normal">(cumulable avec 1, 2, 3 ou 4)</span></div>
+            <div class="text-xs text-gray-500 mt-0.5">L'aidant souhaite exprimer ses propres besoins (pages 19-20 du CERFA)</div>
+          </div>
+        </label>
+      </div>
+
+      <!-- Numéro dossier MDPH existant (situations 2, 3, 4, 5) -->
+      <div id="nd-num-dossier-block" class="hidden">
+        <label class="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">
+          Numéro de dossier MDPH existant
+          <span class="font-normal text-gray-400 normal-case">(facultatif — ne bloque pas la création)</span>
+        </label>
+        <div class="flex items-center gap-3">
+          <input type="checkbox" id="nd-has-num" class="accent-facilim-700"
+            onchange="document.getElementById('nd-num').disabled = !this.checked"/>
+          <span class="text-sm text-gray-600">Oui, j'ai le numéro</span>
+          <input id="nd-num" type="text" placeholder="Ex : 13-2024-001234" disabled
+            class="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-facilim-500 disabled:bg-gray-50 disabled:text-gray-400"/>
+        </div>
+      </div>
+
+      <!-- Notes initiales pour le pro -->
+      <div>
+        <label class="block text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">
+          Notes / consignes initiales (optionnel)
+        </label>
+        <textarea id="nd-notes" rows="2" placeholder="Ex : Urgence expiration droits dans 3 semaines. Certificat médical joint par email…"
+          class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-facilim-500 resize-none"></textarea>
+      </div>
+
+      <div id="nd-error" class="hidden text-sm text-red-600 bg-red-50 border border-red-100 px-3 py-2 rounded-lg"></div>
+
+    </div>
+
+    <div class="px-6 py-4 border-t border-gray-100 flex gap-3 justify-end flex-shrink-0 bg-white rounded-b-2xl">
+      <button onclick="closeNouveauDossier()"
+        class="text-sm text-gray-600 px-4 py-2 border border-gray-200 rounded-lg hover:bg-gray-50">
+        Annuler
+      </button>
+      <button onclick="createDossier()"
+        class="text-sm bg-facilim-700 hover:bg-facilim-900 text-white px-4 py-2 rounded-lg transition-colors font-medium">
+        Créer le dossier
+      </button>
+    </div>
+
+  </div>
+</div>
+
+<script>
+function closeNouveauDossier() {
+  document.getElementById('modal-nouveau-dossier').classList.add('hidden');
+  document.getElementById('nd-error').classList.add('hidden');
+  document.querySelectorAll('input[name="nd-type"]')[0].checked = true;
+  document.getElementById('nd-num-dossier-block').classList.add('hidden');
+  document.getElementById('nd-has-num').checked = false;
+  document.getElementById('nd-num').value = '';
+  document.getElementById('nd-num').disabled = true;
+  ['nd-tel','nd-email','nd-nom','nd-ddn','nd-dept','nd-notes'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+}
+
+function toggleNumDossier(radio) {
+  const show = ['SITUATION_CHANGEE','REEVALUATION','RENOUVELLEMENT'].includes(radio.value);
+  document.getElementById('nd-num-dossier-block').classList.toggle('hidden', !show);
+}
+
+async function createDossier() {
+  const tel     = document.getElementById('nd-tel').value.trim();
+  const email   = document.getElementById('nd-email').value.trim();
+  const nom     = document.getElementById('nd-nom').value.trim();
+  const ddn     = document.getElementById('nd-ddn').value.trim();
+  const nir     = document.getElementById('nd-nir').value.trim().replace(/\s/g, '');
+  const dept    = document.getElementById('nd-dept').value.trim();
+  const notes   = document.getElementById('nd-notes').value.trim();
+  const type    = document.querySelector('input[name="nd-type"]:checked')?.value || 'INITIAL';
+  const hasNum  = document.getElementById('nd-has-num').checked;
+  const numMdph = hasNum ? document.getElementById('nd-num').value.trim() : null;
+  const errEl   = document.getElementById('nd-error');
+  errEl.classList.add('hidden');
+
+  if (!tel) {
+    errEl.textContent = 'Le numéro WhatsApp est obligatoire — il permet de contacter l\'usager.';
+    errEl.classList.remove('hidden');
+    document.getElementById('nd-tel').focus();
+    return;
+  }
+  if (!email) {
+    errEl.textContent = 'L\'email est obligatoire — il sera utilisé pour envoyer le CERFA finalisé.';
+    errEl.classList.remove('hidden');
+    document.getElementById('nd-email').focus();
+    return;
+  }
+  if (!dept) {
+    errEl.textContent = 'Le département MDPH est obligatoire.';
+    errEl.classList.remove('hidden');
+    document.getElementById('nd-dept').focus();
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/v1/dossiers/initiate', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        telephone:           tel,
+        departement_code:    dept,
+        type_dossier:        type,
+        numero_dossier_mdph: numMdph,
+        aidant_familial:     document.getElementById('nd-aidant').checked,
+        email:               email || null,
+        nom_prenom:          nom   || null,
+        date_naissance:      ddn   || null,
+        notes_pro:           notes || null,
+        numero_securite_sociale: nir || null,
+      }),
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      closeNouveauDossier();
+      await refreshData();
+    } else {
+      errEl.textContent = data.detail || 'Erreur lors de la création.';
+      errEl.classList.remove('hidden');
+    }
+  } catch(e) {
+    errEl.textContent = 'Erreur réseau — vérifiez votre connexion et réessayez.';
+    errEl.classList.remove('hidden');
+  }
+}
 </script>
 </body>
 </html>

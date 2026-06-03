@@ -190,7 +190,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["https://facilim.fr"] if settings.is_production else ["*"],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "PATCH"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
     allow_headers=["*"],
 )
 
@@ -834,7 +834,14 @@ def root():
 
 
 @app.get("/dashboard")
-def dashboard_page():
+def dashboard_page(request: Request):
+    """Sert le dashboard. Vérifie le cookie JWT côté serveur avant d'envoyer le HTML."""
+    token = request.cookies.get("facilim_token")
+    if not token:
+        return RedirectResponse("/login", status_code=302)
+    payload = token_manager.verify_dashboard_token(token, settings.jwt_secret_key)
+    if not payload:
+        return RedirectResponse("/login", status_code=302)
     dashboard_path = os.path.join(os.path.dirname(__file__), "dashboards", "dashboard.html")
     if os.path.isfile(dashboard_path):
         return FileResponse(dashboard_path)
@@ -996,17 +1003,18 @@ def force_relance(
 
 
 class DossierInitiateRequest(BaseModel):
-    telephone:           str
-    email:               str          # obligatoire — nécessaire pour envoyer le CERFA final
-    departement_code:    str         = "75"
-    type_dossier:        str         = "INITIAL"
-    langue:              str         = "fr"
-    urgent:              bool        = False
-    nom_prenom:          str | None  = None
-    date_naissance:      str | None  = None
-    notes_pro:           str | None  = None
-    numero_dossier_mdph: str | None  = None
-    aidant_familial:     bool        = False
+    telephone:               str
+    email:                   str          # obligatoire — nécessaire pour envoyer le CERFA final
+    departement_code:        str         = "75"
+    type_dossier:            str         = "INITIAL"
+    langue:                  str         = "fr"
+    urgent:                  bool        = False
+    nom_prenom:              str | None  = None
+    date_naissance:          str | None  = None
+    notes_pro:               str | None  = None
+    numero_dossier_mdph:     str | None  = None
+    numero_securite_sociale: str | None  = None
+    aidant_familial:         bool        = False
 
 
 @app.post("/api/v1/dossiers/initiate")
@@ -1030,7 +1038,10 @@ def initiate_dossier(
         raise HTTPException(status_code=400, detail="L'email est obligatoire (envoi du CERFA final).")
 
     now_iso   = datetime.now(timezone.utc).isoformat()
-    phone_raw = body.telephone.strip()
+    # Normaliser en format LOCAL canonique avant chiffrement (0XXXXXXXXX)
+    # Garantit que encrypt("0642...") == encrypt("0642...") quelle que soit la saisie du pro
+    _raw = body.telephone.strip().lstrip("+")
+    phone_raw = ("0" + _raw[2:]) if (_raw.startswith("33") and len(_raw) == 11) else _raw
     phone_enc = encrypt(phone_raw)
 
     # Recherche ou création de l'usager
@@ -1066,20 +1077,31 @@ def initiate_dossier(
         db_conn=db,
     )
 
-    # Pré-remplissage synthese_json avec données connues
-    donnees_initiales: dict = {}
-    if body.nom_prenom:           donnees_initiales["nom_prenom"]     = body.nom_prenom
-    if body.date_naissance:       donnees_initiales["date_naissance"] = body.date_naissance
-    if body.email:                donnees_initiales["email"]          = body.email
-    if body.notes_pro:            donnees_initiales["notes_pro"]      = body.notes_pro
+    # Pré-remplissage synthese_json avec TOUTES les données connues → CERFA automatique
+    donnees_initiales: dict = {
+        "telephone":        phone_raw,
+        "email":            body.email,
+        "departement":      body.departement_code.strip()[:3],
+        "type_dossier":     body.type_dossier,
+        "langue":           body.langue,
+    }
+    if body.nom_prenom:           donnees_initiales["nom_prenom"]          = body.nom_prenom
+    if body.date_naissance:       donnees_initiales["date_naissance"]      = body.date_naissance
+    if body.notes_pro:            donnees_initiales["notes_pro"]           = body.notes_pro
+    if body.numero_securite_sociale:
+        donnees_initiales["numero_securite_sociale"] = body.numero_securite_sociale.replace(" ", "")
+        donnees_initiales["num_secu"]                = body.numero_securite_sociale.replace(" ", "")
     if body.numero_dossier_mdph:
-        donnees_initiales["historique_mdph"] = f"Dossier existant N°{body.numero_dossier_mdph}"
-    if body.aidant_familial:      donnees_initiales["aidant_demande"] = True
-    if body.urgent:               donnees_initiales["urgence"]        = True
+        donnees_initiales["historique_mdph"]     = f"Dossier existant N°{body.numero_dossier_mdph}"
+        donnees_initiales["numero_dossier_mdph"] = body.numero_dossier_mdph
+    if body.aidant_familial:      donnees_initiales["aidant_demande"]      = True
+    if body.urgent:               donnees_initiales["urgence"]             = True
 
+    from app.engines.orchestration_engine import _calculer_completude_live
+    score_init = _calculer_completude_live(donnees_initiales)
     db.execute(
-        "UPDATE dossiers SET synthese_json = ?, updated_at = ? WHERE id = ?",
-        (json.dumps(donnees_initiales, ensure_ascii=False), now_iso, dossier_id),
+        "UPDATE dossiers SET synthese_json = ?, score_completude = ?, updated_at = ? WHERE id = ?",
+        (json.dumps(donnees_initiales, ensure_ascii=False), score_init, now_iso, dossier_id),
     )
 
     # Création de la session WhatsApp pour le suivi conversationnel
@@ -1196,7 +1218,9 @@ def lancer_conversation_whatsapp(
     if not session or not session["telephone"]:
         raise HTTPException(status_code=400, detail="Aucun numéro WhatsApp associé à ce dossier. Veuillez ajouter le numéro de téléphone.")
 
-    phone    = session["telephone"]
+    # Normaliser en format international (33XXXXXXXXX) requis par l'API WhatsApp Cloud
+    _phone_raw = session["telephone"].strip().lstrip("+")
+    phone = ("33" + _phone_raw[1:]) if (_phone_raw.startswith("0") and len(_phone_raw) == 10) else _phone_raw
     donnees  = json.loads(dossier.get("synthese_json", "{}") or "{}")
     prenom   = (donnees.get("nom_prenom", "") or "").split()[0] if donnees.get("nom_prenom") else ""
     civilite = f"Bonjour{' ' + prenom if prenom else ''} !\n\n"
@@ -1350,6 +1374,9 @@ Retourne UNIQUEMENT un JSON avec les champs trouvés parmi cette liste :
 - adresse_complete : adresse postale complète
 - departement : code département (2 ou 3 chiffres)
 - num_secu : numéro de sécurité sociale 15 chiffres
+- email : adresse email si présente dans le document
+- telephone : numéro de téléphone si présent
+- numero_dossier_mdph : numéro de dossier MDPH existant si mentionné
 - diagnostics : liste des diagnostics/pathologies séparés par virgules
 - traitements : médicaments ou thérapies en cours
 - medecin_traitant : nom du médecin traitant
@@ -1358,6 +1385,8 @@ Retourne UNIQUEMENT un JSON avec les champs trouvés parmi cette liste :
 - historique_mdph : informations sur les droits MDPH précédents
 - accident_travail : description si accident de travail mentionné
 - restrictions_emploi : limitations pour le travail (port de charges, position, etc.)
+- representant_legal_nom : nom du représentant légal si mentionné
+- representant_legal_lien : lien avec la personne (parent, tuteur, curateur…)
 
 Ne retourne QUE les champs que tu trouves dans le document. Si un champ est absent, ne l'inclus pas.
 
@@ -1468,6 +1497,52 @@ def _generer_cerfa_pdf(dossier_id: str, db) -> tuple[str, bytes]:
     # Stocker le type de dossier dans donnees pour le bridge
     if type_dos:
         donnees["type_dossier"] = type_dos
+
+    # ── Contrôle qualité métier avant génération ────────────────────────────────
+    _alertes_cerfa = []
+
+    # Contrôle A1
+    if not donnees.get("nom_prenom"):
+        _alertes_cerfa.append("A1 — Nom/prénom manquant")
+    if not (donnees.get("num_secu") or donnees.get("numero_securite_sociale")):
+        _alertes_cerfa.append("A1 — NIR non renseigné (à collecter)")
+    if not donnees.get("genre"):
+        _alertes_cerfa.append("A1 — Genre non renseigné")
+
+    # Contrôle B1 — contradiction aide humaine
+    _dit_pas_besoin_aide = any(
+        w in str(donnees.get("impact_quotidien", "")).lower()
+        for w in ["pas besoin", "pas d'aide", "sans aide", "autonome", "ne nécessite pas"]
+    )
+    if _dit_pas_besoin_aide and donnees.get("besoins_aide_humaine"):
+        _alertes_cerfa.append(
+            "B2 — CONTRADICTION : usager dit ne pas avoir besoin d'aide humaine "
+            "mais besoins_aide_humaine=True — validation humaine requise"
+        )
+        # Flag humain automatique
+        from app.engines.case_state_engine import create_flag_humain
+        try:
+            create_flag_humain(
+                dossier_id=dossier_id,
+                raison="Contradiction B2 : déclaration vs aide humaine — vérification requise",
+                educateur_id=None, severite="NORMALE", db_conn=db,
+            )
+        except Exception:
+            pass
+
+    # Contrôle D — accident travail → a déjà travaillé
+    if donnees.get("accident_travail") and str(donnees.get("a_deja_travaille", "")).lower() == "false":
+        donnees["a_deja_travaille"] = True
+        _alertes_cerfa.append("D — Auto-correction : accident_travail détecté → a_deja_travaille=True")
+
+    # Contrôle D — France Travail / Pôle Emploi
+    _ft_mentions = ["france travail", "pôle emploi", "pole emploi"]
+    if any(w in str(donnees.get("statut_emploi", "")).lower() for w in _ft_mentions):
+        donnees["inscrit_pole_emploi"] = True
+
+    if _alertes_cerfa:
+        logger.info("[CERFA QC] %d alerte(s) détectée(s) pour dossier %s : %s",
+                    len(_alertes_cerfa), dossier_id[:8], "; ".join(_alertes_cerfa))
 
     storage_path = "/data/cerfa" if os.path.isdir("/data") else "./storage/cerfa"
     os.makedirs(storage_path, exist_ok=True)
@@ -1637,6 +1712,44 @@ class CerfaChampRequest(BaseModel):
     valeur: str = ""
 
 
+@app.post("/api/v1/dossiers/{dossier_id}/synthese-update")
+def bulk_update_synthese(
+    dossier_id: str,
+    body: dict,
+    user=Depends(_get_current_user),
+    db=Depends(_get_db),
+):
+    """
+    Met à jour plusieurs champs de synthese_json en une seule requête.
+    Les champs existants ne sont écrasés QUE si la nouvelle valeur est non vide.
+    Utilisé par : saisie manuelle dashboard, retour email, corrections pro.
+    """
+    dossier_row = db.execute("SELECT synthese_json FROM dossiers WHERE id = ?", (dossier_id,)).fetchone()
+    if not dossier_row:
+        raise HTTPException(status_code=404, detail="Dossier non trouvé")
+
+    synthese = json.loads(dossier_row["synthese_json"] or "{}")
+    champs_mis_a_jour = []
+
+    for champ, valeur in body.items():
+        if champ.startswith("_"):  # ignorer les champs internes
+            continue
+        if valeur is not None and valeur != "":
+            if champ == "notes_pro" and synthese.get("notes_pro"):
+                synthese["notes_pro"] = f"{synthese['notes_pro']}\n{valeur}".strip()
+            else:
+                synthese[champ] = valeur
+            champs_mis_a_jour.append(champ)
+
+    db.execute(
+        "UPDATE dossiers SET synthese_json = ?, updated_at = ? WHERE id = ?",
+        (json.dumps(synthese, ensure_ascii=False), datetime.now(timezone.utc).isoformat(), dossier_id),
+    )
+    logger.info("[SYNTHESE] %d champs mis à jour pour dossier %s : %s",
+                len(champs_mis_a_jour), dossier_id, champs_mis_a_jour)
+    return {"success": True, "champs_mis_a_jour": champs_mis_a_jour}
+
+
 @app.post("/api/v1/dossiers/{dossier_id}/cerfa-champ")
 def update_cerfa_champ(
     dossier_id: str,
@@ -1659,9 +1772,14 @@ def update_cerfa_champ(
     else:
         synthese[body.champ] = body.valeur
 
+    from app.engines.orchestration_engine import _calculer_completude_live
+    score = _calculer_completude_live(synthese)
     db.execute(
-        "UPDATE dossiers SET synthese_json = ?, updated_at = ? WHERE id = ?",
-        (json.dumps(synthese, ensure_ascii=False), datetime.now(timezone.utc).isoformat(), dossier_id),
+        """UPDATE dossiers SET synthese_json = ?,
+           score_completude = CASE WHEN score_completude < ? THEN ? ELSE score_completude END,
+           updated_at = ? WHERE id = ?""",
+        (json.dumps(synthese, ensure_ascii=False), score, score,
+         datetime.now(timezone.utc).isoformat(), dossier_id),
     )
     return {"success": True, "champ": body.champ}
 

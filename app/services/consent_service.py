@@ -26,8 +26,8 @@ from app.audit.event_logger import log_event
 logger = logging.getLogger("facilim.services.consent")
 
 # Mots-clés d'acceptation / refus (multi-langues basique)
-_ACCEPTANCE_KEYWORDS = {"oui", "yes", "ok", "d'accord", "dacord", "j'accepte", "accepte", "1"}
-_REFUSAL_KEYWORDS    = {"non", "no", "refus", "refuse", "je refuse", "pas d'accord", "2"}
+_ACCEPTANCE_KEYWORDS = {"oui", "yes", "ok", "d'accord", "dacord", "j'accepte", "accepte"}
+_REFUSAL_KEYWORDS    = {"non", "no", "refus", "refuse", "je refuse", "pas d'accord"}
 
 
 def parse_consent_response(message: str) -> str | None:

@@ -217,14 +217,15 @@
       errDiv.style.display = 'none';
 
       try {
-        const res = await fetch('/auth/login', {
+        const res = await fetch('/api/v1/auth/login', {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
           body:    JSON.stringify({ email, password }),
+          credentials: 'include',
         });
 
         if (res.ok) {
-          // Succès : on redirige vers la page de vérification du code
+          // Succès étape 1 : aller saisir le code de vérification
           sessionStorage.setItem('auth_email', email);
           window.location.href = '/verify';
         } else {

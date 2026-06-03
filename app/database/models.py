@@ -174,6 +174,11 @@ CREATE_TABLES_SQL: list[str] = [
         questions_json      TEXT DEFAULT '[]',
         -- Historique conversationnel chiffré
         conversation_json   TEXT DEFAULT '[]',
+        -- Autodétermination
+        has_autodetermination_conflict  INTEGER NOT NULL DEFAULT 0,
+        conflict_history_json           TEXT DEFAULT '[]',
+        -- Navigation par onglets (état conversationnel)
+        contexte_navigation_json        TEXT DEFAULT '{}',
         -- CERFA
         cerfa_version       TEXT,
         cerfa_genere_le     TEXT,

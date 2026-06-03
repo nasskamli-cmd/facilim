@@ -33,10 +33,20 @@ def initialize(encryption_key: str) -> None:
         return
     try:
         from cryptography.fernet import Fernet
-        key_bytes = encryption_key.encode()
-        if len(base64.urlsafe_b64decode(key_bytes + b"==")) != 32:
-            raise ValueError("La clé Fernet doit être de 32 bytes (base64url).")
-        _fernet = Fernet(key_bytes)
+
+        # Normalisation : re-ajouter le padding base64 si Railway l'a tronqué
+        key_stripped = encryption_key.strip().rstrip("=")
+        padding     = (4 - len(key_stripped) % 4) % 4
+        key_padded  = (key_stripped + "=" * padding).encode()
+
+        decoded = base64.urlsafe_b64decode(key_padded)
+        if len(decoded) != 32:
+            raise ValueError(
+                f"Clé Fernet invalide : {len(decoded)} bytes (32 attendus)."
+            )
+        # Reconstruire la clé correctement paddée pour Fernet
+        proper_key = base64.urlsafe_b64encode(decoded)
+        _fernet = Fernet(proper_key)
         logger.info("[ENCRYPTION] Moteur Fernet initialisé.")
     except ImportError:
         logger.error(

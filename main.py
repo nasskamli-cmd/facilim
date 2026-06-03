@@ -55,10 +55,21 @@ from services.conversation_agent import (
     get_next_groupe_cerfa,
     prepopuler_cerfa_depuis_dossier,
     extraire_cerfa_depuis_bilan,
+    appliquer_regles_nettoyage,
+    cerfa_reponses_vers_dossier_cerfa,
     MEDICAL_FIELDS,
     CERFA_GROUPES,
     _MEDICAL_REDIRECT_SENT_KEY,
     _MESSAGE_CANAL_SECURISE,
+)
+from services.agents_orchestrator import traiter_message_whatsapp
+from app.database.schemas import (
+    DossierCERFA,
+    ConfigurationDossier,
+    ConfigurationLangue,
+    ConfigurationCanal,
+    langue_vers_iso,
+    iso_vers_langue,
 )
 
 settings = get_settings()
@@ -206,6 +217,22 @@ class InitiateDossierRequest(BaseModel):
     adresse_enfant: str | None = Field(default=None, description="Adresse (numéro et rue).")
     cp_enfant: str | None = Field(default=None, description="Code postal.")
     commune_enfant: str | None = Field(default=None, description="Commune.")
+    # ── Configuration multilingue — choisie par le professionnel à la création ──
+    langue_cible: ConfigurationLangue = Field(
+        default="français",
+        description=(
+            "Langue dans laquelle Mathilde conversera avec la famille sur WhatsApp. "
+            "Valeurs : français, anglais, arabe, espagnol, portugais, italien, "
+            "allemand, turc, roumain, russe, mandarin, autre."
+        ),
+    )
+    canal_cible: ConfigurationCanal = Field(
+        default="texte",
+        description=(
+            "Canal de communication préféré : 'texte' (WhatsApp écrit) "
+            "ou 'vocal' (réponses audio TTS dans la langue cible)."
+        ),
+    )
 
 
 class DossierStatusResponse(BaseModel):
@@ -246,6 +273,12 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
 # --------------------------------------------------------------------------- #
 from fastapi.templating import Jinja2Templates
 templates = Jinja2Templates(directory="static")
+
+
+@app.get("/health")
+async def health():
+    """Health check Railway."""
+    return {"status": "ok", "version": "2.0.0-V2", "env": settings.app_env}
 
 
 @app.get("/login")
@@ -444,6 +477,14 @@ async def initiate_dossier(request: InitiateDossierRequest):
         "updated_at":           now,
         "historique_reponses":  [],
         "analyse":              {},
+        # ── Configuration multilingue transmise par le professionnel ──────────
+        # langue_famille (ISO) = compatibilité avec l'ancien système de traduction
+        # _configuration = source de vérité V3 pour l'orchestrateur multi-agents
+        "langue_famille":       langue_vers_iso(request.langue_cible),
+        "_configuration": {
+            "langue_cible": request.langue_cible,
+            "canal_cible":  request.canal_cible,
+        },
     }
 
     logger.info(f"Nouveau dossier | id={dossier_id} | dept={request.departement_code}")
@@ -1013,7 +1054,22 @@ async def _process_whatsapp_async(
             # Pré-remplissage automatique depuis les données déjà connues du dossier
             # (évite de reposer des questions sur le nom, l'adresse, le genre, etc.)
             prepopuler_cerfa_depuis_dossier(cerfa_reponses, dossier)
+            # Nettoyage automatique : marque les champs non-applicables (adulte/scolarité,
+            # première demande/urgence, renouvellement forcé si historique présent).
+            appliquer_regles_nettoyage(cerfa_reponses)
+            # Construction du modèle structuré V2 — utilisé pour le score de complétude.
+            # Les champs_obligatoires_manquants() n'évalue que les sections actives
+            # selon le profil (enfant → A+C, adulte → A+C+D+E), jamais de faux manquants.
+            _dossier_v2 = cerfa_reponses_vers_dossier_cerfa(cerfa_reponses)
+            _manquants_v2 = _dossier_v2.champs_obligatoires_manquants()
+            cerfa_reponses["__manquants_v2__"] = _manquants_v2
+            # Injecter le modèle V2 dans dossier pour que remplir_cerfa le lise directement
+            dossier["_dossier_cerfa_v2"] = _dossier_v2
             dossier["cerfa_reponses"] = cerfa_reponses
+            logger.info(
+                f"[CERFA-V2] profil={_dossier_v2.profil} "
+                f"| manquants={_manquants_v2}"
+            )
 
             current_field = get_next_cerfa_field(cerfa_reponses)
 
@@ -1075,6 +1131,19 @@ async def _process_whatsapp_async(
                         if not cerfa_reponses.get(_champ) or str(cerfa_reponses[_champ]) in ("__via_email__", "sent", ""):
                             cerfa_reponses[_champ] = _val
                             logger.info(f"[CERFA] Champ '{_champ}' extrait (batch) : {_val[:40]}")
+
+                # Règle 3 : détection des réponses négatives — évite les faux "manquants"
+                # Si l'usager dit "non" / "pas besoin" pour un champ conditionnel,
+                # on le marque "Non" pour qu'il ne soit plus redemandé.
+                _msg_neg = user_reply.lower()
+                _mots_non = ["non", "pas besoin", "pas concerné", "sans objet", "aucun", "ne s'applique pas", "pas de"]
+                if any(w in _msg_neg for w in _mots_non):
+                    _champs_conditionnels = ["emploi_accompagne", "aidant_identite", "cmi_type", "urgence_droits"]
+                    for _champ_cond in _champs_conditionnels:
+                        if _champ_cond in champs_a_extraire and not cerfa_reponses.get(_champ_cond):
+                            cerfa_reponses[_champ_cond] = "Non"
+                            logger.info(f"[CERFA R3] Réponse négative → '{_champ_cond}' = 'Non'")
+
                 else:
                     # Un seul champ → appel individuel
                     _champ = champs_a_extraire[0]
@@ -1173,39 +1242,99 @@ async def _process_whatsapp_async(
                     database.save_dossier(dossier)
                     return
 
-            # Log du prochain groupe pour tracer les blocages
-            _prochain_g = get_next_groupe_cerfa(cerfa_reponses)
+            # ── Circuit V3 : Orchestrateur Multi-Agents ─────────────────────
+            # Récupère le DossierCERFA V3 persisté (ou None si premier message)
+            _dossier_v3: DossierCERFA | None = dossier.get("_dossier_cerfa_v2")
+
+            # Restaurer la ConfigurationDossier depuis _configuration si premier message
+            if _dossier_v3 is None and dossier.get("_configuration"):
+                _conf_raw = dossier["_configuration"]
+                _conf_v3  = ConfigurationDossier(
+                    langue_cible = _conf_raw.get("langue_cible", "français"),
+                    canal_cible  = _conf_raw.get("canal_cible",  "texte"),
+                )
+                _dossier_v3 = DossierCERFA(configuration=_conf_v3)
+                logger.info(
+                    f"[V3] Nouveau DossierCERFA | langue={_conf_v3.langue_cible} "
+                    f"| canal={_conf_v3.canal_cible}"
+                )
+
             logger.info(
-                f"[CERFA-FLOW] Avant generer_reponse_agent "
+                f"[V3-FLOW] Avant orchestrer "
                 f"| dossier={dossier['dossier_id']} "
-                f"| prochain_groupe={_prochain_g['id'] if _prochain_g else 'AUCUN'} "
-                f"| cerfa_reponses_keys={[k for k in cerfa_reponses if not k.startswith('__')]}"
+                f"| profil={_dossier_v3.profil if _dossier_v3 else 'inconnu'} "
+                f"| langue={_dossier_v3.section_a.langue_usager if _dossier_v3 else 'fr'}"
             )
 
             reponse_envoyee = False
             try:
-                reponse_agent = await asyncio.to_thread(
-                    generer_reponse_agent,
-                    user_reply,             # message_entrant
-                    historique_conv,        # historique
-                    donnees_collectees,     # donnees_collectees
-                    elements_manquants,     # elements_manquants
-                    _oai_client,            # openai_client
-                    is_enfant_agent,        # is_enfant
-                    cerfa_reponses,         # cerfa_reponses
-                    force_medical_redirect, # force_medical_redirect
+                reponse_agent, _dossier_v3_maj = await asyncio.to_thread(
+                    traiter_message_whatsapp,
+                    user_reply,          # message (texte ou transcription vocale)
+                    historique_conv,     # historique conversation
+                    cerfa_reponses,      # dict plat de compatibilité
+                    _oai_client,         # client OpenAI
+                    _dossier_v3,         # DossierCERFA V3 existant (ou None)
                 )
-                await asyncio.to_thread(send_text_message, phone_number, reponse_agent)
+                # Persister le DossierCERFA V3 mis à jour dans le dossier
+                dossier["_dossier_cerfa_v2"] = _dossier_v3_maj
+                # Synchroniser les champs clés vers cerfa_reponses pour compatibilité
+                # avec les fonctions legacy (cerfa_filler, score de complétude)
+                cerfa_reponses["__manquants_v2__"] = _dossier_v3_maj.champs_obligatoires_manquants()
+                dossier["cerfa_reponses"] = cerfa_reponses
+
+                _canal = _dossier_v3_maj.configuration.canal_cible
+                _langue = _dossier_v3_maj.configuration.langue_cible
+
+                if _canal == "vocal":
+                    # ── Mode vocal : générer l'audio TTS dans la langue cible ──
+                    from services.agents_orchestrator import generer_tts
+                    _audio = await asyncio.to_thread(
+                        generer_tts, reponse_agent, _langue, _oai_client
+                    )
+                    if _audio:
+                        try:
+                            from services.whatsapp_client import send_audio_message
+                            await asyncio.to_thread(
+                                send_audio_message, phone_number, _audio
+                            )
+                            logger.info(
+                                f"[TTS] Audio envoyé | langue={_langue} "
+                                f"| taille={len(_audio)} octets"
+                            )
+                        except Exception as _tts_err:
+                            logger.warning(
+                                f"[TTS] Envoi audio échoué ({_tts_err}) "
+                                "→ fallback texte"
+                            )
+                            await asyncio.to_thread(
+                                send_text_message, phone_number, reponse_agent
+                            )
+                    else:
+                        # TTS indisponible → fallback texte silencieux
+                        await asyncio.to_thread(
+                            send_text_message, phone_number, reponse_agent
+                        )
+                else:
+                    # ── Mode texte (défaut) ───────────────────────────────────
+                    await asyncio.to_thread(send_text_message, phone_number, reponse_agent)
+
                 reponse_envoyee = True
                 dossier["historique_reponses"].append({
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                     "role":      "assistant",
                     "content":   reponse_agent,
-                    "type":      "agent",
+                    "type":      "agent_v3",
+                    "agent":     "orchestrateur",
+                    "canal":     _canal,
+                    "langue":    _langue,
                 })
                 dossier["questions_en_attente"] = 1
                 database.save_dossier(dossier)
-                logger.info(f"Dossier {dossier['dossier_id']} | Agent → réponse envoyée")
+                logger.info(
+                    f"Dossier {dossier['dossier_id']} | OrchestratorV3 → réponse envoyée "
+                    f"| langue={_langue} | canal={_canal} | profil={_dossier_v3_maj.profil}"
+                )
             except Exception as agent_err:
                 logger.error(f"Agent conversationnel erreur : {agent_err}", exc_info=True)
 

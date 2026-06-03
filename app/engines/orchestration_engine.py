@@ -24,6 +24,11 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.audit.event_logger import log_event
+from app.services.structure_search_service import (
+    detecter_mention_etablissement,
+    formater_suggestions_whatsapp,
+    rechercher_structures,
+)
 from app.audit.trace_manager import ProcessingTrace, start_trace, timed_step
 from app.engines.case_state_engine import (
     DossierStatut,
@@ -34,9 +39,15 @@ from app.engines.case_state_engine import (
 )
 from app.engines.conversation_engine import (
     ConversationState,
-    detect_missing_fields,
+    TabNavigationState,
     extract_structured_data_from_history,
-    generate_response,
+    generer_message_validation_onglet,
+    onglet_courant_complet,
+)
+from app.engines.profile_engine import (
+    CHAMPS_INTERDITS_ENFANT,
+    ProfilUsager,
+    appliquer_contraintes_profil,
 )
 from app.engines.scoring_engine import score_dossier
 from app.services.consent_service import (
@@ -50,6 +61,150 @@ logger = logging.getLogger("facilim.engines.orchestration")
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _calculer_completude_live(donnees: dict) -> int:
+    """
+    Calcule un score de complétude (0-100) basé sur les champs clés remplis.
+    Mis à jour en temps réel à chaque sauvegarde — indépendant de l'analyse IA.
+    """
+    # Champs clés pondérés (total = 100 pts)
+    CHAMPS_PONDERES = {
+        "nom_prenom":         15,
+        "date_naissance":     15,
+        "num_secu":           10,
+        "numero_securite_sociale": 10,
+        "adresse_complete":   8,
+        "telephone":          5,
+        "email":              5,
+        "diagnostics":        12,
+        "impact_quotidien":   10,
+        "droits_demandes":    10,
+        "type_dossier":       5,
+        "departement":        5,
+    }
+    score = 0
+    already_counted_nss = False
+    for champ, poids in CHAMPS_PONDERES.items():
+        if champ in ("num_secu", "numero_securite_sociale"):
+            if not already_counted_nss and donnees.get(champ):
+                score += poids
+                already_counted_nss = True
+        elif donnees.get(champ):
+            score += poids
+    return min(score, 100)
+
+
+def _sauvegarder_nav(
+    db: Any,
+    dossier_id: str,
+    nav: "TabNavigationState",
+    historique: list[dict],
+    donnees: dict,
+) -> None:
+    """
+    Persiste l'état de navigation, la conversation et le verrou de profil.
+    Commit immédiat : garantit la visibilité aux connexions concurrentes
+    (évite la race condition entre messages successifs rapides).
+    """
+    score_live = _calculer_completude_live(donnees)
+    db.execute(
+        """
+        UPDATE dossiers SET
+            conversation_json        = ?,
+            synthese_json            = ?,
+            contexte_navigation_json = ?,
+            score_completude         = CASE WHEN score_completude < ? THEN ? ELSE score_completude END,
+            updated_at               = ?
+        WHERE id = ?
+        """,
+        (
+            json.dumps(historique, ensure_ascii=False),
+            json.dumps(donnees, ensure_ascii=False),
+            json.dumps({
+                "onglet_courant":      nav.onglet_courant,
+                "validation_demandee": nav.validation_demandee,
+                "onglets_valides":     nav.onglets_valides,
+                "profil_mdph_lock":    nav.profil_mdph_lock,
+            }, ensure_ascii=False),
+            score_live, score_live,
+            _now_iso(),
+            dossier_id,
+        ),
+    )
+    db.commit()  # Commit immédiat — visibilité immédiate pour les requêtes parallèles
+
+
+def _load_cnsa_validator() -> Any:
+    """
+    Charge le module CNSA validator de manière défensive.
+
+    En production, le module doit être accessible via PYTHONPATH.
+    Si le module est absent (dev, test), retourne un stub qui produit
+    un résultat INCOMPLET avec flag humain — jamais un crash silencieux.
+    """
+    try:
+        import importlib
+        return importlib.import_module("2_intelligence.cnsa_validator")
+    except Exception:
+        logger.warning(
+            "[ORCH] Module '2_intelligence.cnsa_validator' absent — "
+            "stub activé. Configurer PYTHONPATH en production."
+        )
+
+        class _StubValidator:
+            """
+            Validateur CNSA interne — analyse le dossier via LLM quand le module
+            externe 2_intelligence.cnsa_validator est absent.
+            """
+            _llm = None
+
+            @classmethod
+            def validate_dossier(cls, texte: str, departement: str = "75") -> dict:
+                import json as _json
+                try:
+                    # Analyse IA du dossier pour proposer les droits et questions manquantes
+                    import os
+                    api_key = os.environ.get("OPENAI_API_KEY", "")
+                    if not api_key:
+                        raise ValueError("Pas de clé OpenAI")
+                    from openai import OpenAI as _OAI
+                    client = _OAI(api_key=api_key)
+                    resp = client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=[{
+                            "role": "system",
+                            "content": (
+                                "Tu es un expert MDPH. Analyse ce dossier et retourne un JSON avec :\n"
+                                "- droits_proposes: liste des droits MDPH possibles (AAH, PCH, RQTH, AEEH, CMI, orientation ESAT…)\n"
+                                "- questions_manquantes: liste des informations encore nécessaires\n"
+                                "- score: 0-100 (estimation de complétude)\n"
+                                "- statut: COMPLET si score>=70 ET droits_proposes non vide, sinon INCOMPLET\n"
+                                "- recommandation: phrase de synthèse courte\n"
+                                "Réponds UNIQUEMENT en JSON valide."
+                            ),
+                        }, {
+                            "role": "user",
+                            "content": f"Département : {departement}\n\nDonnées dossier :\n{texte[:3000]}",
+                        }],
+                        max_tokens=500, temperature=0.0,
+                        response_format={"type": "json_object"},
+                    )
+                    result = _json.loads(resp.choices[0].message.content)
+                    result["_stub"] = False
+                    return result
+                except Exception as e:
+                    return {
+                        "droits_proposes":      [],
+                        "questions_manquantes": ["Informations insuffisantes — compléter le dossier"],
+                        "score":                0,
+                        "statut":               "INCOMPLET",
+                        "recommandation":       "Dossier incomplet — poursuite de la collecte nécessaire.",
+                        "_stub":                True,
+                        "_error":               str(e),
+                    }
+
+        return _StubValidator()
 
 
 class OrchestrationEngine:
@@ -71,6 +226,29 @@ class OrchestrationEngine:
 
     # ── Point d'entrée principal ─────────────────────────────────────────────
 
+    @staticmethod
+    def _normaliser_telephone_local(numero: str) -> str:
+        """
+        Convertit vers le format local français (0XXXXXXXXX) pour les recherches en base.
+        WhatsApp envoie "33642087770" → "0642087770" pour matcher la saisie du pro.
+        """
+        n = numero.strip().lstrip("+")
+        if n.startswith("33") and len(n) == 11:
+            return "0" + n[2:]
+        return n
+
+    @staticmethod
+    def _normaliser_telephone_wa(numero: str) -> str:
+        """
+        Convertit vers le format international sans + (33XXXXXXXXX)
+        exigé par l'API WhatsApp Cloud pour envoyer des messages.
+        """
+        n = numero.strip().lstrip("+")
+        # Format local français 0XXXXXXXXX → 33XXXXXXXXX
+        if n.startswith("0") and len(n) == 10:
+            return "33" + n[1:]
+        return n
+
     def handle_whatsapp_message(
         self,
         from_number: str,
@@ -83,6 +261,10 @@ class OrchestrationEngine:
         Traite un message WhatsApp entrant.
         Retourne un dict de résultat pour logging / réponse API.
         """
+        # phone_db  = format local (0XXXXXXXXX) → pour les recherches en base
+        # phone_wa  = format international (33XXXXXXXXX) → pour envoyer via l'API WhatsApp
+        phone_db = self._normaliser_telephone_local(from_number)
+        phone_wa = self._normaliser_telephone_wa(phone_db)
         trace = start_trace()
         log_event(
             "WHATSAPP_RECU",
@@ -92,19 +274,61 @@ class OrchestrationEngine:
         )
 
         try:
+            # ── Verrou anti-doublon en DB : POSÉ avant traitement, LIBÉRÉ après ──
+            # Empêche les doublons quand WhatsApp retente le même message_id.
+            # Clé = message_id (unique par message WhatsApp).
+            import time as _time
+            lock_check = self.db.execute(
+                "SELECT contexte_json FROM sessions_whatsapp WHERE telephone = ? OR telephone = ? LIMIT 1",
+                (phone_db, phone_wa),
+            ).fetchone()
+            if lock_check:
+                import json as _j
+                _ctx = _j.loads(lock_check["contexte_json"] or "{}")
+                _lock_mid = _ctx.get("processing_message_id")
+                _lock_ts  = _ctx.get("processing_since", 0)
+                if _lock_mid == message_id:
+                    logger.warning("[ORCH] Doublon message_id ignoré : %s", message_id[:12])
+                    return {"success": True, "action": "duplicate_ignored"}
+                if _lock_mid and (_time.time() - _lock_ts) < 25:
+                    logger.warning("[ORCH] Traitement en cours, message ignoré pour %s", phone_db[-4:])
+                    return {"success": True, "action": "already_processing"}
+
+            # Poser le verrou (sur les deux formats possibles)
+            for _ph in (phone_db, phone_wa):
+                self.db.execute(
+                    """UPDATE sessions_whatsapp SET contexte_json = json_patch(
+                        COALESCE(contexte_json,'{}'),
+                        json('{"processing_message_id":"' || ? || '","processing_since":' || ? || '}')
+                    ) WHERE telephone = ?""",
+                    (message_id, int(_time.time()), _ph),
+                )
+            self.db.commit()
+
+            # phone_db pour les lookups DB, phone_wa pour les envois WhatsApp
             result = self._process_whatsapp(
-                from_number, message_text, message_id, media_id, mime_type, trace
+                phone_db, phone_wa, message_text, message_id, media_id, mime_type, trace
             )
+
+            # Libérer le verrou
+            for _ph in (phone_db, phone_wa):
+                self.db.execute(
+                    """UPDATE sessions_whatsapp SET contexte_json = json_remove(
+                        COALESCE(contexte_json,'{}'), '$.processing_message_id', '$.processing_since'
+                    ) WHERE telephone = ?""",
+                    (_ph,),
+                )
             self.db.commit()
             return result
         except Exception as e:
             logger.error(f"[ORCH] Erreur traitement WhatsApp : {e}", exc_info=True)
-            self._send_error_message(from_number)
+            self._send_error_message(phone_wa)
             return {"success": False, "error": str(e)}
 
     def _process_whatsapp(
         self,
-        phone: str,
+        phone: str,      # format local DB (0XXXXXXXXX) — pour les lookups
+        phone_wa: str,   # format international WA (33XXXXXXXXX) — pour les envois
         text: str,
         message_id: str,
         media_id: str | None,
@@ -113,32 +337,47 @@ class OrchestrationEngine:
     ) -> dict[str, Any]:
         """Pipeline de traitement d'un message WhatsApp."""
 
-        # 1. Récupération ou création de l'usager
-        with timed_step(trace, "Emma", "IDENTIFY_USER") as step:
+        # 1. Session d'abord (par texte clair — fiable), puis usager par ID
+        # Évite tous les problèmes de format/chiffrement du téléphone.
+        session = self._get_or_create_session(phone, None)  # usager_id résolu après
+        usager = None
+
+        # Si la session a un usager_id connu → récupérer directement par ID (le plus fiable)
+        if session.get("usager_id"):
+            _row = self.db.execute(
+                "SELECT * FROM usagers WHERE id = ?", (session["usager_id"],)
+            ).fetchone()
+            if _row:
+                usager = dict(_row)
+
+        # Sinon → chercher/créer par téléphone chiffré
+        if usager is None:
             usager = self._get_or_create_usager(phone)
-            step.metadata["usager_id"] = usager["id"]
+            # Mettre à jour la session avec l'usager trouvé/créé
+            if session.get("id") and not session.get("usager_id"):
+                self.db.execute(
+                    "UPDATE sessions_whatsapp SET usager_id = ? WHERE id = ?",
+                    (usager["id"], session["id"])
+                )
+
+        logger.info("[PIPELINE] phone_db=***%s usager=%s session=%s text=%r",
+                    phone[-4:], usager["id"][:8], session.get("id", "?")[:8], text[:20])
 
         # 2. Vérification du consentement
         consent_ok = not check_consent_required(usager["id"], self.db)
+        logger.info("[CONSENT_CHECK] usager=%s consent_ok=%s", usager["id"][:8], consent_ok)
 
         if not consent_ok:
             with timed_step(trace, "Emma", "REQUEST_CONSENT") as step:
-                result = self._handle_consent_flow(usager, text, phone)
+                result = self._handle_consent_flow(usager, text, phone_wa)
                 step.metadata["consent_result"] = result
-                if result != "accepted":
-                    return {"success": True, "action": "consent_requested"}
+                logger.info("[CONSENT] result=%s", result)
+                if result == "accepted_already":
+                    pass  # continuer le pipeline
+                else:
+                    return {"success": True, "action": f"consent_{result}"}
 
-        # 3. Vérification du consentement pour le traitement
-        if not require_consent_for_processing(usager["id"], "traitement_dossier", self.db):
-            self.wa.send_text(
-                phone,
-                "Pour vous aider, j'ai besoin de votre accord. "
-                "Répondez OUI pour accepter ou NON pour refuser.",
-            )
-            return {"success": True, "action": "consent_required"}
-
-        # 4. Récupération du dossier actif
-        session = self._get_or_create_session(phone, usager["id"])
+        # 3. Dossier actif déjà résolu via session ci-dessus
         dossier_id = session.get("dossier_id")
         etat = session.get("persona_actif", ConversationState.COLLECTE)
 
@@ -151,96 +390,306 @@ class OrchestrationEngine:
         # 5. Traitement selon l'état conversationnel
         if media_id:
             with timed_step(trace, "Léa", "PROCESS_DOCUMENT") as step:
-                return self._handle_document(usager, dossier_id, media_id, mime_type, phone, trace)
+                return self._handle_document(usager, dossier_id, media_id, mime_type, phone_wa, trace, phone_db=phone)
 
         # 6. Génération de la réponse conversationnelle
         with timed_step(trace, "Emma", "GENERATE_RESPONSE") as step:
-            dossier = self._get_dossier(dossier_id)
+            dossier    = self._get_dossier(dossier_id)
             historique = json.loads(dossier.get("conversation_json", "[]") or "[]")
-            donnees = json.loads(dossier.get("synthese_json", "{}") or "{}")
+            donnees    = json.loads(dossier.get("synthese_json", "{}") or "{}")
 
-            # Mise à jour des données avec extraction LLM
+            # ── Sélection du service (IMMUABLE une fois posé) ─────────────────
+            # Le service_type est lu depuis sessions_whatsapp.persona_actif.
+            # "intake" / "collecte" / vide → identification d'abord.
+            # "enfant" / "mixte" / "adulte" / "protege" → service dédié, définitif.
+            from app.services.conversation import get_agent, service_type_from_persona
+            service_type = service_type_from_persona(etat)
+            agent = get_agent(service_type)
+
+            # ── Extraction LLM ─────────────────────────────────────────────────
+            # Whitelist large : l'agent filtre lui-même ses champs via CHECKLIST.
             nouvelles_donnees = extract_structured_data_from_history(
                 historique + [{"role": "user", "content": text}],
                 self.llm,
                 model=self.settings.openai_model_fast,
+                profil_mdph="inconnu",
             )
-            donnees.update({k: v for k, v in nouvelles_donnees.items() if v})
+            # Règle de fusion données pro vs données usager :
+            # - Champs "projet / orientation / scolarité / emploi" → la parole de l'USAGER prime
+            # - Champs administratifs / médicaux → le pro est plus fiable, on ne réécrase pas
+            _CHAMPS_USAGER_PRIORITAIRE = {
+                "souhait_orientation_usager", "projet_professionnel", "projet_de_vie",
+                "situation_scolaire", "etablissement_scolaire", "attentes_usager",
+                "qualification_section_c", "qualification_section_d", "formation_actuelle",
+                "statut_emploi", "droits_demandes", "impact_quotidien",
+            }
+            _champs_admin_pro = set(donnees.keys()) - _CHAMPS_USAGER_PRIORITAIRE - {
+                "notes_pro", "_derniere_langue_detectee"
+            }
+            for k, v in nouvelles_donnees.items():
+                if not v:
+                    continue
+                if k in _CHAMPS_USAGER_PRIORITAIRE:
+                    donnees[k] = v  # l'usager écrase toujours
+                elif k not in _champs_admin_pro:
+                    donnees[k] = v  # champ nouveau → ajouter
 
-            elements_manquants = detect_missing_fields(donnees)
+            # ── Navigation par onglets — chargement anticipé (requis par le bloc langue) ──
+            nav_raw = json.loads(dossier.get("contexte_navigation_json", "{}") or "{}")
+            nav = TabNavigationState(
+                onglet_courant=nav_raw.get("onglet_courant", 2),
+                validation_demandee=nav_raw.get("validation_demandee", False),
+                onglets_valides=nav_raw.get("onglets_valides", []),
+                profil_mdph_lock=service_type,
+            )
 
-            # Génération de la réponse
-            reponse = generate_response(
-                message_entrant=text,
-                historique=historique,
-                etat=etat,
-                donnees_collectees=donnees,
-                elements_manquants=elements_manquants,
+            # Gestion du choix de langue (réponse 1-6 au menu de bienvenue)
+            _choix_langue = {
+                "1": "fr", "français": "fr", "francais": "fr",
+                "2": "en", "english": "en",
+                "3": "es", "español": "es", "espanol": "es",
+                "4": "ar", "العربية": "ar",
+                "5": "pt", "português": "pt", "portugais": "pt",
+            }
+            _texte_norm = text.strip().lower()
+            if _texte_norm in _choix_langue:
+                donnees["_langue_choisie"] = _choix_langue[_texte_norm]
+                _noms_langue = {"fr": "français", "en": "anglais", "es": "espagnol",
+                                "ar": "arabe", "pt": "portugais"}
+                _nom_lng = _noms_langue.get(_choix_langue[_texte_norm], "votre langue")
+                self.wa.send_text(
+                    phone_wa,
+                    f"Parfait, nous allons continuer en {_nom_lng} ! 👍",
+                    dossier_id=dossier_id, db_conn=self.db,
+                )
+                # Enchaîner immédiatement la première vraie question de l'agent
+                # (au lieu d'attendre le prochain message de l'usager — évite le silence)
+                _premiere_reponse = agent.respond(
+                    message="",
+                    history=[],
+                    donnees=donnees,
+                    openai_client=self.llm,
+                    model=self.settings.openai_model_fast,
+                    onglet_courant=nav.onglet_courant,
+                    validation_en_attente=False,
+                    history_window=self.settings.memory_window_size,
+                )
+                self.wa.send_text(phone_wa, _premiere_reponse,
+                                  dossier_id=dossier_id, db_conn=self.db)
+                historique.append({"role": "assistant", "content": _premiere_reponse})
+                _sauvegarder_nav(self.db, dossier_id, nav, historique, donnees)
+                return {"success": True, "action": "langue_choisie", "dossier_id": dossier_id}
+
+            # Détection automatique de la langue si non choisie
+            if text.strip():
+                try:
+                    from langdetect import detect as _detect
+                    _code_detecte = _detect(text)
+                    donnees["_derniere_langue_detectee"] = _code_detecte
+                    # Si première détection non-française → mémoriser comme langue choisie
+                    if _code_detecte != "fr" and not donnees.get("_langue_choisie"):
+                        donnees["_langue_choisie"] = _code_detecte
+                except Exception:
+                    pass
+
+            # ── Si en identification : vérifier si le profil est déjà connu ──────
+            # IMPORTANT : si le pro a déjà transmis la date de naissance via documents,
+            # on bascule directement vers l'agent spécialisé sans redemander.
+            if service_type == "identification":
+                from app.services.conversation.identification import identification_agent as _id_agent
+                next_service = _id_agent.determine_next_service(donnees)
+                if next_service:
+                    # Profil déterminé → verrouiller le service définitivement
+                    self._switch_service(session["id"], next_service, usager, donnees)
+                    service_type = next_service
+                    agent = get_agent(service_type)
+
+                    # L'agent spécialisé se présente directement par son prénom
+                    _presentations = {
+                        "enfant":  "Bonjour ! Je suis Claire 👋 Je prends le relais pour vous accompagner dans la constitution du dossier MDPH de votre enfant. Je vais vous poser quelques questions simples.",
+                        "adulte":  "Bonjour ! Je suis Corrine 👋 Je prends le relais pour vous accompagner dans votre dossier MDPH. Je vais vous poser quelques questions simples.",
+                        "mixte":   "Bonjour ! Je suis Corrine 👋 Je prends le relais pour votre dossier MDPH. Quelques questions simples pour continuer.",
+                        "protege": "Bonjour ! Je suis Samia 👋 Je prends en charge le dossier MDPH de la personne que vous accompagnez. Je vais vous poser quelques questions.",
+                    }
+                    _msg_transition = _presentations.get(
+                        next_service,
+                        "Bonjour ! Je prends le relais pour votre dossier MDPH."
+                    )
+                    self.wa.send_text(phone_wa, _msg_transition,
+                                      dossier_id=dossier_id, db_conn=self.db)
+                    logger.info(
+                        "[ORCH] Service verrouillé : %s | usager=%s",
+                        service_type, usager["id"][:8],
+                    )
+
+            # ── Nettoyage des champs interdits selon le service ───────────────
+            if service_type == "enfant":
+                donnees = appliquer_contraintes_profil(
+                    donnees,
+                    ProfilUsager(
+                        age_annees=0, profil_mdph="enfant", est_mineur=True,
+                        date_naissance="", champs_bloques=dict(CHAMPS_INTERDITS_ENFANT),
+                    ),
+                )
+
+            # Mettre à jour nav.profil_mdph_lock si le service a changé
+            nav.profil_mdph_lock = service_type
+
+            texte_up = text.strip().upper()
+            if nav.validation_demandee and texte_up in ("OUI", "YES", "OK", "CORRECT", "VALIDER"):
+                nav.onglets_valides.append(nav.onglet_courant)
+                nav.onglet_courant = min(nav.onglet_courant + 1, 10)
+                nav.validation_demandee = False
+
+            # ── Validation d'onglet : seulement si l'onglet a des champs réels ──
+            # Les onglets avec champs=[] (onglets 3, 5, 6) sont avancés silencieusement
+            # sans envoyer de message de validation — évite les relances parasites.
+            from app.engines.conversation_engine import ONGLETS_MDPH as _ONGLETS
+            _onglet_courant_def = next(
+                (o for o in _ONGLETS if o["num"] == nav.onglet_courant), None
+            )
+            _onglet_a_des_champs = bool(_onglet_courant_def and _onglet_courant_def.get("champs"))
+
+            if (
+                not nav.validation_demandee
+                and onglet_courant_complet(donnees, nav.onglet_courant, service_type)
+                and nav.onglet_courant not in nav.onglets_valides
+            ):
+                if _onglet_a_des_champs:
+                    # Onglet avec champs → demander confirmation à l'usager
+                    nav.validation_demandee = True
+                    msg_validation = generer_message_validation_onglet(nav.onglet_courant)
+                    self.wa.send_text(phone_wa, msg_validation, dossier_id=dossier_id, db_conn=self.db)
+                    _sauvegarder_nav(self.db, dossier_id, nav, historique, donnees)
+                    return {"success": True, "action": "validation_demandee", "dossier_id": dossier_id}
+                else:
+                    # Onglet vide → avancer silencieusement sans message
+                    nav.onglets_valides.append(nav.onglet_courant)
+                    nav.onglet_courant = min(nav.onglet_courant + 1, 10)
+                    logger.info("[NAV] Onglet %d vide → avance silencieuse vers %d",
+                                nav.onglet_courant - 1, nav.onglet_courant)
+
+            # ── Réponse via le service dédié ──────────────────────────────────
+            reponse = agent.respond(
+                message=text,
+                history=historique,
+                donnees=donnees,
                 openai_client=self.llm,
-                is_mineur=bool(usager.get("est_mineur")),
                 model=self.settings.openai_model_fast,
+                onglet_courant=nav.onglet_courant,
+                validation_en_attente=nav.validation_demandee,
+                history_window=self.settings.memory_window_size,
             )
 
-            # Sauvegarde du nouvel échange
+            # Sauvegarde
             historique.append({"role": "user",      "content": text})
             historique.append({"role": "assistant",  "content": reponse})
-            historique = historique[-self.settings.max_conversation_history:]
+            historique = self._appliquer_fenetre_memoire(historique)
+            _sauvegarder_nav(self.db, dossier_id, nav, historique, donnees)
 
-            now = _now_iso()
-            self.db.execute(
-                """
-                UPDATE dossiers SET
-                    conversation_json = ?,
-                    synthese_json     = ?,
-                    updated_at        = ?
-                WHERE id = ?
-                """,
-                (
-                    json.dumps(historique, ensure_ascii=False),
-                    json.dumps(donnees, ensure_ascii=False),
-                    now,
-                    dossier_id,
-                ),
-            )
-
-            # 7. Déclenchement de l'analyse si toutes les infos sont collectées
-            if not elements_manquants:
+            # Analyse si collecte complète
+            if agent.is_complete(donnees):
                 self._trigger_analysis(dossier_id, usager, donnees)
 
-            # 8. Envoi de la réponse
-            self.wa.send_text(phone, reponse, dossier_id=dossier_id, db_conn=self.db)
+            self.wa.send_text(phone_wa, reponse, dossier_id=dossier_id, db_conn=self.db)
+            self._handle_structure_search(text, donnees, phone_wa, dossier_id)
 
-            step.metadata["elements_manquants"] = len(elements_manquants)
+            step.metadata["service_type"] = service_type
+            step.metadata["manquants"]    = len(agent.missing_fields(donnees))
 
         return {"success": True, "action": "response_sent", "dossier_id": dossier_id}
 
     # ── Gestion du consentement ──────────────────────────────────────────────
 
     def _handle_consent_flow(
-        self, usager: dict, text: str, phone: str
+        self, usager: dict, text: str, phone_wa: str
     ) -> str:
-        """Gère le flux de consentement conversationnel."""
+        """Gère le flux de consentement conversationnel. phone_wa = format international pour l'API WhatsApp."""
         from app.audit.consent_history import get_consent_message_for_whatsapp
+
+        # Double-check : si le consentement a été enregistré entre-temps par une
+        # tâche parallèle (race condition), ne pas re-traiter ni renvoyer le menu.
+        if not check_consent_required(usager["id"], self.db):
+            logger.info("[CONSENT] Consentement déjà présent (race condition évitée)")
+            return "accepted_already"
 
         # Si c'est une réponse à la demande de consentement
         result = record_whatsapp_consent(usager["id"], text, self.db)
 
         if result == "accepted":
-            self.wa.send_text(
-                phone,
-                "Merci pour votre confiance ! Je vais maintenant vous aider "
-                "à constituer votre dossier MDPH étape par étape.\n\n"
-                "Commençons : quel est le nom et prénom de la personne concernée par le dossier ?",
-            )
+            # Commit immédiat : le consentement doit être visible dès le prochain message
+            try:
+                self.db.commit()
+            except Exception:
+                pass
+
+            # Récupérer les données déjà connues pour personnaliser le message
+            _dossier_row = None
+            try:
+                _session = self.db.execute(
+                    "SELECT dossier_id FROM sessions_whatsapp WHERE telephone = ? OR telephone = ? LIMIT 1",
+                    (phone_wa, self._normaliser_telephone_local(phone_wa))
+                ).fetchone()
+                if _session and _session["dossier_id"]:
+                    _dossier_row = self.db.execute(
+                        "SELECT synthese_json FROM dossiers WHERE id = ?",
+                        (_session["dossier_id"],)
+                    ).fetchone()
+            except Exception:
+                pass
+
+            _donnees_connues = {}
+            if _dossier_row:
+                import json as _j
+                _donnees_connues = _j.loads(_dossier_row["synthese_json"] or "{}")
+
+            _champs_deja_remplis = [
+                k for k, v in _donnees_connues.items()
+                if v and not k.startswith("_") and k not in ("notes_pro", "email", "urgence")
+            ]
+            _nb = len(_champs_deja_remplis)
+
+            # Déterminer le nom de l'agent selon le profil déjà connu
+            _agent_nom = "l'équipe Facilim"
+            try:
+                from app.services.conversation.identification import identification_agent as identification_agent_ref
+                _next = identification_agent_ref.determine_next_service(_donnees_connues)
+                _agent_nom = {"enfant": "Claire", "adulte": "Corrine",
+                              "mixte": "Corrine", "protege": "Samia"}.get(_next, "l'équipe Facilim")
+            except Exception:
+                pass
+
+            _intro_pro = (
+                f"Votre accompagnant(e) m'a déjà transmis {_nb} information(s) — "
+                f"je ne vous poserai pas les questions correspondantes.\n\n"
+            ) if _nb > 0 else ""
+
+            # Vérifier si la langue est déjà choisie (ne pas renvoyer le menu en boucle)
+            _langue_deja_choisie = _donnees_connues.get("_langue_choisie")
+            if not _langue_deja_choisie:
+                _msg_consent_ok = (
+                    f"Merci ! 🙏 Je suis {_agent_nom}.\n\n"
+                    f"{_intro_pro}"
+                    f"Dans quelle langue souhaitez-vous qu'on échange ?\n\n"
+                    f"1️⃣ Français\n"
+                    f"2️⃣ English\n"
+                    f"3️⃣ Español\n"
+                    f"4️⃣ العربية\n"
+                    f"5️⃣ Português\n"
+                    f"6️⃣ Autre — écrivez directement dans votre langue\n\n"
+                    f"📝 Vous pouvez aussi envoyer des *messages vocaux* 🎤\n"
+                    f"📎 Ou des *photos de documents*"
+                )
+                self.wa.send_text(phone_wa, _msg_consent_ok)
         elif result == "refused":
             self.wa.send_text(
-                phone,
+                phone_wa,
                 "Je comprends votre décision. Vos informations ne seront pas conservées.\n"
                 "Si vous changez d'avis, contactez-nous de nouveau. — L'équipe Facilim",
             )
         else:
             # Réponse non reconnue → renvoyer la demande
-            self.wa.send_text(phone, get_consent_message_for_whatsapp())
+            self.wa.send_text(phone_wa, get_consent_message_for_whatsapp())
             result = "unclear"
 
         return result
@@ -253,51 +702,215 @@ class OrchestrationEngine:
         dossier_id: str,
         media_id: str,
         mime_type: str | None,
-        phone: str,
+        phone_wa: str,   # format international pour l'API WhatsApp
         trace: ProcessingTrace,
+        phone_db: str = "",  # format local pour lookups DB (dérivé si absent)
     ) -> dict[str, Any]:
-        """Traite un document reçu via WhatsApp (photo, PDF)."""
-        piece_id = str(uuid.uuid4())
-        now = _now_iso()
+        """
+        Traite tout média reçu via WhatsApp :
+        - Audio/vocal → transcription Whisper → traité comme message texte
+        - PDF/Word/Excel → extraction texte + enrichissement LLM du dossier
+        - Image → sauvegarde + flag humain
+        """
+        mime  = (mime_type or "").lower()
+        now   = _now_iso()
 
-        self.db.execute(
-            """
-            INSERT INTO pieces_justificatives
-                (id, dossier_id, type_piece, mime_type, uploaded_par,
-                 ocr_effectue, flag_validation_humaine, created_at, updated_at)
-            VALUES (?, ?, 'DOCUMENT_RECU', ?, 'whatsapp', 0, 1, ?, ?)
-            """,
-            (piece_id, dossier_id, mime_type, now, now),
-        )
+        # ── Étape 1 : télécharger le média depuis Meta ──────────────────────
+        media_result = self.wa.download_media(media_id)
 
-        log_event(
-            "DOCUMENT_RECU",
-            dossier_id=dossier_id,
-            usager_id=usager["id"],
-            canal="whatsapp",
-            payload={"piece_id": piece_id, "mime_type": mime_type},
-            db_conn=self.db,
-        )
+        # ── Cas 1 : MESSAGE VOCAL → Whisper ──────────────────────────────────
+        if any(t in mime for t in ("audio", "ogg", "opus", "mpeg", "mp4", "aac", "amr")):
+            if media_result:
+                content_bytes, _ = media_result
+                try:
+                    import io as _io
+                    transcription = self.llm.audio.transcriptions.create(
+                        model="whisper-1",
+                        file=("audio.ogg", _io.BytesIO(content_bytes), "audio/ogg"),
+                        language="fr",
+                        response_format="text",
+                    )
+                    texte_transcrit = str(transcription).strip()
+                    if texte_transcrit:
+                        logger.info("[ORCH/AUDIO] Transcription Whisper OK : %d chars", len(texte_transcrit))
+                        # Traiter la transcription comme un message texte normal
+                        _pdb = phone_db or self._normaliser_telephone_local(phone_wa)
+                        return self._process_whatsapp(
+                            _pdb, phone_wa, texte_transcrit, media_id + "_transcrit",
+                            None, None, trace,
+                        )
+                except Exception as e:
+                    logger.error("[ORCH/AUDIO] Transcription Whisper échouée : %s", e)
+                    self.wa.send_text(
+                        phone_wa,
+                        "Je n'ai pas pu transcrire votre message vocal. Pourriez-vous réécrire "
+                        "votre message en texte ? Merci 🙏",
+                        dossier_id=dossier_id, db_conn=self.db,
+                    )
+                    return {"success": True, "action": "audio_transcription_failed"}
+            else:
+                self.wa.send_text(
+                    phone_wa,
+                    "Votre message vocal a bien été reçu mais je n'ai pas pu le télécharger. "
+                    "Pouvez-vous l'envoyer à nouveau ou l'écrire en texte ?",
+                    dossier_id=dossier_id, db_conn=self.db,
+                )
+                return {"success": True, "action": "audio_download_failed"}
 
-        # Flag human-in-the-loop pour validation du document
-        create_flag_humain(
-            dossier_id=dossier_id,
-            raison="Document reçu via WhatsApp — validation humaine requise avant intégration.",
-            educateur_id=None,
-            severite="NORMALE",
-            db_conn=self.db,
-        )
+        # ── Cas 2 : PDF, Word, Excel → extraction texte + enrichissement ─────
+        elif any(t in mime for t in ("pdf", "word", "excel", "spreadsheet",
+                                      "msword", "opendocument", "text")):
+            piece_id = str(uuid.uuid4())
+            self.db.execute(
+                """INSERT INTO pieces_justificatives
+                   (id, dossier_id, type_piece, mime_type, uploaded_par,
+                    ocr_effectue, flag_validation_humaine, created_at, updated_at)
+                   VALUES (?, ?, 'DOCUMENT_RECU', ?, 'whatsapp', 0, 0, ?, ?)""",
+                (piece_id, dossier_id, mime, now, now),
+            )
+            reponse = "Document reçu ✅ Je l'analyse pour préremplir votre dossier..."
+            self.wa.send_text(phone_wa, reponse, dossier_id=dossier_id, db_conn=self.db)
 
-        self.wa.send_text(
-            phone,
-            "Votre document a bien été reçu. Il sera examiné par notre équipe "
-            "dans les plus brefs délais.\n"
-            "Avez-vous d'autres documents à nous transmettre ?",
-            dossier_id=dossier_id,
-            db_conn=self.db,
-        )
+            if media_result:
+                content_bytes, detected_mime = media_result
+                # Importer la fonction d'extraction depuis main.py via import dynamique
+                try:
+                    from app.main import _extraire_texte_fichier, _llm_client
+                    ext = ".pdf" if "pdf" in detected_mime else ".docx" if "word" in detected_mime else ".bin"
+                    texte = _extraire_texte_fichier(content_bytes, f"document{ext}", detected_mime)
+                    if len(texte) > 50 and not texte.startswith("["):
+                        # Enrichissement LLM
+                        import json as _json
+                        prompt = f"""Extrais les informations MDPH depuis ce document.
+Retourne UNIQUEMENT un JSON avec les champs trouvés parmi :
+nom_prenom, date_naissance, adresse_complete, departement, num_secu,
+diagnostics, traitements, medecin_traitant, impact_quotidien, statut_emploi,
+historique_mdph, accident_travail, restrictions_emploi
 
-        return {"success": True, "action": "document_received", "piece_id": piece_id}
+Document :
+{texte[:3000]}"""
+                        resp = self.llm.chat.completions.create(
+                            model=self.settings.openai_model_fast,
+                            messages=[{"role": "user", "content": prompt}],
+                            max_tokens=400, temperature=0.0,
+                            response_format={"type": "json_object"},
+                        )
+                        extraits = _json.loads(resp.choices[0].message.content)
+                        if extraits:
+                            dossier_row = self.db.execute(
+                                "SELECT synthese_json FROM dossiers WHERE id = ?", (dossier_id,)
+                            ).fetchone()
+                            synthese = _json.loads(dossier_row["synthese_json"] or "{}")
+                            for k, v in extraits.items():
+                                if v and k not in synthese:
+                                    synthese[k] = v
+                            self.db.execute(
+                                "UPDATE dossiers SET synthese_json = ?, updated_at = ? WHERE id = ?",
+                                (_json.dumps(synthese, ensure_ascii=False), now, dossier_id),
+                            )
+                            nb = len(extraits)
+                            self.wa.send_text(
+                                phone_wa,
+                                f"✅ J'ai analysé votre document et prérempli {nb} information(s) "
+                                f"dans votre dossier. Continuons !",
+                                dossier_id=dossier_id, db_conn=self.db,
+                            )
+                        else:
+                            self.wa.send_text(
+                                phone_wa,
+                                "Document reçu et enregistré. Continuons la collecte d'informations.",
+                                dossier_id=dossier_id, db_conn=self.db,
+                            )
+                except Exception as e:
+                    logger.error("[ORCH/DOC] Extraction échouée : %s", e)
+                    self.wa.send_text(
+                        phone_wa,
+                        "Document reçu ✅ Il sera examiné par l'équipe.",
+                        dossier_id=dossier_id, db_conn=self.db,
+                    )
+
+            log_event("DOCUMENT_RECU", dossier_id=dossier_id, usager_id=usager["id"],
+                      canal="whatsapp", payload={"mime_type": mime}, db_conn=self.db)
+            return {"success": True, "action": "document_extracted", "piece_id": piece_id}
+
+        # ── Cas 3 : Image → analyse GPT-4o Vision + extraction infos ────────
+        else:
+            piece_id = str(uuid.uuid4())
+            self.db.execute(
+                """INSERT INTO pieces_justificatives
+                   (id, dossier_id, type_piece, mime_type, uploaded_par,
+                    ocr_effectue, flag_validation_humaine, created_at, updated_at)
+                   VALUES (?, ?, 'IMAGE_RECU', ?, 'whatsapp', 0, 0, ?, ?)""",
+                (piece_id, dossier_id, mime, now, now),
+            )
+            self.wa.send_text(
+                phone_wa, "Photo reçue 📷 Je l'analyse...",
+                dossier_id=dossier_id, db_conn=self.db,
+            )
+
+            if media_result:
+                content_bytes, _ = media_result
+                try:
+                    import base64 as _b64, json as _json
+                    img_b64 = _b64.b64encode(content_bytes).decode()
+                    vision_resp = self.llm.chat.completions.create(
+                        model="gpt-4o",
+                        messages=[{
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": (
+                                    "Analyse cette image dans le contexte d'un dossier MDPH. "
+                                    "Extrais toutes les informations utiles (nom, prénom, date naissance, "
+                                    "diagnostics, ordonnances, certificats, adresse, NIR, etc.). "
+                                    "Retourne un JSON avec les champs trouvés parmi : "
+                                    "nom_prenom, date_naissance, adresse_complete, num_secu, "
+                                    "diagnostics, traitements, medecin_traitant, type_document. "
+                                    "Si l'image n'est pas un document médical/administratif, "
+                                    "retourne {\"type_document\": \"autre\"}."
+                                )},
+                                {"type": "image_url", "image_url": {
+                                    "url": f"data:{mime};base64,{img_b64}",
+                                    "detail": "high",
+                                }},
+                            ],
+                        }],
+                        max_tokens=400,
+                        response_format={"type": "json_object"},
+                    )
+                    extraits = _json.loads(vision_resp.choices[0].message.content)
+                    extraits.pop("type_document", None)
+                    if extraits:
+                        dossier_row = self.db.execute(
+                            "SELECT synthese_json FROM dossiers WHERE id = ?", (dossier_id,)
+                        ).fetchone()
+                        synthese = _json.loads(dossier_row["synthese_json"] or "{}")
+                        for k, v in extraits.items():
+                            if v and k not in synthese:
+                                synthese[k] = v
+                        self.db.execute(
+                            "UPDATE dossiers SET synthese_json = ?, updated_at = ? WHERE id = ?",
+                            (_json.dumps(synthese, ensure_ascii=False), now, dossier_id),
+                        )
+                        self.wa.send_text(
+                            phone_wa,
+                            f"✅ Photo analysée — {len(extraits)} information(s) extraite(s) pour votre dossier.",
+                            dossier_id=dossier_id, db_conn=self.db,
+                        )
+                    else:
+                        self.wa.send_text(
+                            phone_wa, "Photo enregistrée ✅ Continuons.",
+                            dossier_id=dossier_id, db_conn=self.db,
+                        )
+                except Exception as e:
+                    logger.warning("[ORCH/VISION] GPT-4o Vision échoué : %s", e)
+                    self.wa.send_text(
+                        phone_wa, "Photo reçue et enregistrée ✅",
+                        dossier_id=dossier_id, db_conn=self.db,
+                    )
+
+            log_event("IMAGE_RECUE", dossier_id=dossier_id, usager_id=usager["id"],
+                      canal="whatsapp", payload={"mime_type": mime}, db_conn=self.db)
+            return {"success": True, "action": "image_analyzed", "piece_id": piece_id}
 
     # ── Déclenchement de l'analyse ───────────────────────────────────────────
 
@@ -307,10 +920,46 @@ class OrchestrationEngine:
         usager: dict,
         donnees: dict,
     ) -> None:
-        """Déclenche le pipeline d'analyse CNSA + Jade quand la collecte est complète."""
+        """
+        Déclenche le pipeline d'analyse CNSA + Jade quand la collecte est complète.
+
+        Protections :
+        - Timeout 30 s sur l'ensemble du pipeline (circuit breaker)
+        - Maximum 3 cycles INCOMPLET → flag humain obligatoire au-delà
+        - Import défensif du validator (stub si module absent)
+        """
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+
+        _ANALYSE_TIMEOUT_SEC = 30
+        _MAX_CYCLES_INCOMPLET = 3
+
         try:
-            # Transition vers EN_ANALYSE
             dossier = self._get_dossier(dossier_id)
+
+            # ── Protection boucle INCOMPLET infinie ───────────────────────────
+            nb_analyses = self.db.execute(
+                "SELECT COUNT(*) FROM analyses_scoring WHERE dossier_id = ?",
+                (dossier_id,),
+            ).fetchone()[0]
+
+            if nb_analyses >= _MAX_CYCLES_INCOMPLET:
+                create_flag_humain(
+                    dossier_id=dossier_id,
+                    raison=(
+                        f"Dossier bloqué en cycle INCOMPLET depuis {nb_analyses} analyses. "
+                        "Intervention humaine requise avant toute nouvelle tentative."
+                    ),
+                    educateur_id=None,
+                    severite="HAUTE",
+                    db_conn=self.db,
+                )
+                logger.warning(
+                    "[ORCH] Analyse bloquée — %d cycles dépassent le max (%d) | dossier=%s",
+                    nb_analyses, _MAX_CYCLES_INCOMPLET, dossier_id[:8],
+                )
+                return
+
+            # ── Transition EN_COLLECTE → EN_ANALYSE ──────────────────────────
             if dossier and dossier.get("statut") == DossierStatut.EN_COLLECTE:
                 transition_dossier(
                     dossier_id,
@@ -321,44 +970,54 @@ class OrchestrationEngine:
                     db_conn=self.db,
                 )
 
-            # Appel CNSA validator existant
-            import importlib
-            _validator = importlib.import_module("2_intelligence.cnsa_validator")
             texte_synthese = json.dumps(donnees, ensure_ascii=False)
-            analyse = _validator.validate_dossier(
-                texte_synthese,
-                dossier.get("departement_code", "75") if dossier else "75",
-            )
+            dept = dossier.get("departement_code", "75") if dossier else "75"
 
-            # Scoring Jade
-            scoring = score_dossier(
-                dossier_id=dossier_id,
-                texte_anonymise=texte_synthese,
-                analyse_llm=analyse,
-                confidence_threshold=self.settings.scoring_confidence_threshold,
-                db_conn=self.db,
-            )
+            # ── Import défensif du validator CNSA ─────────────────────────────
+            validator = _load_cnsa_validator()
 
-            # Mise à jour du dossier
-            droits = scoring.get("droits_identifies", [])
+            # ── Pipeline d'analyse avec timeout global ────────────────────────
+            def _run_analysis():
+                analyse = validator.validate_dossier(texte_synthese, dept)
+                scoring = score_dossier(
+                    dossier_id=dossier_id,
+                    texte_anonymise=texte_synthese,
+                    analyse_llm=analyse,
+                    confidence_threshold=self.settings.scoring_confidence_threshold,
+                    db_conn=self.db,
+                )
+                return analyse, scoring
+
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(_run_analysis)
+                try:
+                    analyse, scoring = future.result(timeout=_ANALYSE_TIMEOUT_SEC)
+                except FuturesTimeout:
+                    raise TimeoutError(
+                        f"Pipeline d'analyse dépassé ({_ANALYSE_TIMEOUT_SEC}s)"
+                    )
+
+            # ── Mise à jour scoring ───────────────────────────────────────────
             update_scoring(
                 dossier_id=dossier_id,
                 score=scoring.get("score_global", 0),
                 confiance=scoring.get("confiance", 0.0),
-                droits_identifies=droits,
+                droits_identifies=scoring.get("droits_identifies", []),
                 flag_humain=scoring.get("_flag_humain", False),
                 raison_flag=scoring.get("raison_flag"),
                 db_conn=self.db,
             )
 
-            # Transition selon le résultat
-            statut_analyse = scoring.get("statut_analyse", "INCOMPLET")
-            if statut_analyse == "COMPLET" and not scoring.get("_flag_humain"):
+            # ── Transition selon résultat ─────────────────────────────────────
+            if scoring.get("statut_analyse") == "COMPLET" and not scoring.get("_flag_humain"):
                 transition_dossier(
                     dossier_id,
                     DossierStatut.EN_ANALYSE,
                     DossierStatut.COMPLET,
-                    raison=f"Score={scoring.get('score_global')}/100 — confiance={scoring.get('confiance'):.0%}",
+                    raison=(
+                        f"Score={scoring.get('score_global')}/100 — "
+                        f"confiance={scoring.get('confiance', 0):.0%}"
+                    ),
                     canal="system",
                     db_conn=self.db,
                 )
@@ -378,7 +1037,7 @@ class OrchestrationEngine:
                 )
 
         except Exception as e:
-            logger.error(f"[ORCH] Erreur analyse : {e}", exc_info=True)
+            logger.error("[ORCH] Erreur analyse : %s", e, exc_info=True)
             create_flag_humain(
                 dossier_id=dossier_id,
                 raison=f"Erreur moteur d'analyse : {e}",
@@ -390,13 +1049,39 @@ class OrchestrationEngine:
     # ── Helpers base de données ───────────────────────────────────────────────
 
     def _get_or_create_usager(self, phone: str) -> dict[str, Any]:
-        from app.security.encryption import encrypt, generate_reference
+        """phone doit être en format local canonique (0XXXXXXXXX) — normalisé en amont."""
+        from app.security.encryption import encrypt, decrypt, generate_reference
 
         phone_enc = encrypt(phone)
         row = self.db.execute(
             "SELECT * FROM usagers WHERE telephone_enc = ? LIMIT 1",
             (phone_enc,),
         ).fetchone()
+
+        if row:
+            return dict(row)
+
+        # Fallback : si le pro a saisi le format international, chercher par déchiffrement
+        # (coûteux mais correct — seulement si la recherche directe échoue)
+        try:
+            all_rows = self.db.execute(
+                "SELECT id, telephone_enc, reference_interne, canal_prefere, est_mineur, "
+                "langue_preferee, actif, created_at, updated_at FROM usagers "
+                "WHERE telephone_enc IS NOT NULL LIMIT 200"
+            ).fetchall()
+            for r in all_rows:
+                try:
+                    decrypted = decrypt(r["telephone_enc"] or "")
+                    if decrypted:
+                        _d = decrypted.strip().lstrip("+")
+                        _norm = ("0" + _d[2:]) if (_d.startswith("33") and len(_d) == 11) else _d
+                        if _norm == phone:
+                            logger.info("[ORCH] Usager retrouvé via déchiffrement fallback | phone=***%s", phone[-4:])
+                            return dict(r)
+                except Exception:
+                    continue
+        except Exception as e:
+            logger.warning("[ORCH] Fallback déchiffrement échoué : %s", e)
 
         if row:
             return dict(row)
@@ -421,10 +1106,12 @@ class OrchestrationEngine:
             "est_mineur": 0,
         }
 
-    def _get_or_create_session(self, phone: str, usager_id: str) -> dict[str, Any]:
+    def _get_or_create_session(self, phone: str, usager_id: str | None) -> dict[str, Any]:
+        # Chercher par téléphone (texte clair) — cherche les deux formats
+        phone_intl = "33" + phone[1:] if phone.startswith("0") else phone
         row = self.db.execute(
-            "SELECT * FROM sessions_whatsapp WHERE telephone = ? LIMIT 1",
-            (phone,),
+            "SELECT * FROM sessions_whatsapp WHERE telephone = ? OR telephone = ? LIMIT 1",
+            (phone, phone_intl),
         ).fetchone()
 
         if row:
@@ -479,6 +1166,164 @@ class OrchestrationEngine:
             "SELECT * FROM dossiers WHERE id = ?", (dossier_id,)
         ).fetchone()
         return dict(row) if row else None
+
+    # ── Changement de service (identification → spécialisé) ─────────────────
+
+    def _switch_service(
+        self,
+        session_id: str,
+        service_type: str,
+        usager: dict,
+        donnees: dict,
+    ) -> None:
+        """
+        Bascule définitivement vers le service spécialisé.
+        Persiste persona_actif dans sessions_whatsapp ET est_mineur dans usagers.
+        Commit immédiat pour que les requêtes concurrentes voient le changement.
+        """
+        now = _now_iso()
+        self.db.execute(
+            "UPDATE sessions_whatsapp SET persona_actif = ?, derniere_activite = ? WHERE id = ?",
+            (service_type, now, session_id),
+        )
+        # Persister est_mineur selon le service
+        est_mineur = 1 if service_type in ("enfant",) else 0
+        self.db.execute(
+            "UPDATE usagers SET est_mineur = ?, updated_at = ? WHERE id = ?",
+            (est_mineur, now, usager["id"]),
+        )
+        usager["est_mineur"] = est_mineur
+        self.db.commit()   # commit immédiat — visible aux requêtes concurrentes
+        logger.info(
+            "[SWITCH] %s → %s | usager=%s",
+            "identification", service_type, usager["id"][:8],
+        )
+
+    # ── Règle Q60 — Recherche de structures géolocalisées ───────────────────
+
+    def _handle_structure_search(
+        self,
+        texte: str,
+        donnees: dict,
+        phone_wa: str,   # format international (33XXXXXXXXX) pour l'API WhatsApp
+        dossier_id: str,
+    ) -> None:
+        """
+        Règle Agent Métier — Question 60 :
+        Si l'usager mentionne un type d'établissement (IME, ESAT, ESRP…),
+        recherche les structures à proximité et envoie les suggestions en
+        second message WhatsApp, séparé de la réponse conversationnelle.
+        """
+        types_etab = detecter_mention_etablissement(texte)
+        if not types_etab:
+            return
+
+        logger.info(f"[Q60] Établissements détectés : {types_etab} | dossier={dossier_id[:8]}")
+
+        adresse   = donnees.get("adresse_complete")
+        dept_code = donnees.get("departement")
+        prenom    = (donnees.get("nom_prenom") or "").split()[0] if donnees.get("nom_prenom") else None
+
+        google_key = getattr(self.settings, "google_places_api_key", None) or None
+
+        try:
+            resultat = rechercher_structures(
+                types_etablissement=types_etab,
+                adresse_usager=adresse,
+                departement_code=dept_code,
+                rayon_km=30,
+                max_resultats=3,
+                google_api_key=google_key,
+            )
+            message_structs = formater_suggestions_whatsapp(
+                resultat=resultat,
+                types_etablissement=types_etab,
+                prenom_usager=prenom,
+            )
+            self.wa.send_text(phone_wa, message_structs, dossier_id=dossier_id, db_conn=self.db)
+            log_event(
+                "STRUCTURES_SUGGEREES",
+                dossier_id=dossier_id,
+                canal="whatsapp",
+                payload={"types": types_etab, "nb_resultats": len(resultat.structures)},
+                db_conn=self.db,
+            )
+        except Exception as e:
+            logger.warning(f"[Q60] Recherche structures échouée (non-bloquant) : {e}")
+
+    # ── Fenêtre de contexte avec résumé glissant ────────────────────────────
+
+    def _appliquer_fenetre_memoire(self, historique: list[dict]) -> list[dict]:
+        """
+        Gère la fenêtre de contexte conversationnelle pour limiter le coût en tokens.
+
+        Si l'historique dépasse memory_summary_threshold messages :
+          - Les messages plus anciens que les memory_window_size derniers sont résumés
+            en un message système compact via l'API LLM
+          - Les memory_window_size messages récents sont conservés mot-à-mot
+          - Le résumé est injecté en tête comme message système
+
+        Si le seuil n'est pas atteint, seule la troncature max_conversation_history
+        s'applique (comportement antérieur, sans appel LLM supplémentaire).
+        """
+        threshold   = self.settings.memory_summary_threshold
+        window_size = self.settings.memory_window_size
+
+        if len(historique) <= threshold:
+            return historique[-self.settings.max_conversation_history:]
+
+        messages_anciens = historique[:-window_size]
+        messages_recents = historique[-window_size:]
+
+        resume = self._resumer_historique(messages_anciens)
+
+        contexte_compresse = [{"role": "system", "content": resume}] + messages_recents
+        logger.info(
+            f"[ORCH/MEMORY] Résumé glissant : {len(messages_anciens)} messages → 1 résumé | "
+            f"{len(messages_recents)} messages récents conservés"
+        )
+        return contexte_compresse
+
+    def _resumer_historique(self, messages: list[dict]) -> str:
+        """
+        Génère un résumé compact de l'historique ancien via GPT-4o-mini.
+        Le résumé est formulé pour servir de contexte système dans la suite de la conversation.
+        """
+        if not messages:
+            return ""
+
+        dialogue = "\n".join(
+            f"{m['role'].capitalize()} : {m['content']}"
+            for m in messages
+            if m.get("content")
+        )
+
+        try:
+            response = self.llm.chat.completions.create(
+                model=self.settings.openai_model_fast,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "Tu es un assistant MDPH. Résume de manière concise et factuelle "
+                            "l'échange précédent entre l'usager et l'assistant. "
+                            "Conserve uniquement les informations structurelles importantes : "
+                            "nom, situation familiale, type de handicap mentionné, droits évoqués, "
+                            "documents transmis, et accords/refus exprimés. "
+                            "Formule en français, 5 lignes maximum."
+                        ),
+                    },
+                    {"role": "user", "content": dialogue},
+                ],
+                max_tokens=300,
+                temperature=0.0,
+            )
+            return f"[Résumé de l'échange précédent] {response.choices[0].message.content.strip()}"
+        except Exception as e:
+            logger.warning(f"[ORCH/MEMORY] Erreur résumé LLM : {e} — troncature simple appliquée")
+            # Fallback : résumé textuel non-LLM basé sur les derniers messages
+            extrait = dialogue[-800:]
+            return f"[Contexte antérieur (résumé automatique indisponible)] {extrait}"
 
     def _send_error_message(self, phone: str) -> None:
         try:

@@ -62,6 +62,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
+        extra="ignore",   # ignore les nouvelles variables Railway (jwt_secret_key, auth_password_hash...)
     )
 
 
