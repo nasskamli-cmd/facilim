@@ -1469,6 +1469,146 @@ def valider_droits(
     return {"success": True, "statut": "COMPLET"}
 
 
+def _ajouter_page_couverture(cerfa_bytes: bytes, donnees: dict) -> bytes:
+    """
+    Génère une page de couverture avec reportlab et la fusionne AVANT le CERFA avec pypdf.
+    Le CERFA officiel et ses champs ne sont pas modifiés.
+    En cas d'erreur, lève une exception — l'appelant décide du fallback.
+    """
+    import io
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors
+    from reportlab.lib.units import cm
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
+    from pypdf import PdfReader, PdfWriter
+
+    # ── Génération de la page de couverture avec reportlab ───────────────────
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        topMargin=3 * cm,
+        bottomMargin=2.5 * cm,
+        leftMargin=2.5 * cm,
+        rightMargin=2.5 * cm,
+    )
+    styles = getSampleStyleSheet()
+
+    style_titre = ParagraphStyle(
+        "titre",
+        parent=styles["Heading1"],
+        fontSize=14,
+        textColor=colors.HexColor("#1a3a6b"),
+        spaceAfter=0.3 * cm,
+        alignment=TA_CENTER,
+        fontName="Helvetica-Bold",
+    )
+    style_sous_titre = ParagraphStyle(
+        "sous_titre",
+        parent=styles["Normal"],
+        fontSize=11,
+        textColor=colors.HexColor("#1a3a6b"),
+        spaceAfter=0.8 * cm,
+        alignment=TA_CENTER,
+        fontName="Helvetica",
+    )
+    style_corps = ParagraphStyle(
+        "corps",
+        parent=styles["Normal"],
+        fontSize=10,
+        leading=16,
+        spaceAfter=0.5 * cm,
+        alignment=TA_JUSTIFY,
+        fontName="Helvetica",
+    )
+    style_important = ParagraphStyle(
+        "important",
+        parent=styles["Normal"],
+        fontSize=10,
+        leading=16,
+        spaceAfter=0.5 * cm,
+        alignment=TA_JUSTIFY,
+        fontName="Helvetica-Bold",
+        textColor=colors.HexColor("#1a3a6b"),
+    )
+    style_pied = ParagraphStyle(
+        "pied",
+        parent=styles["Normal"],
+        fontSize=8,
+        textColor=colors.HexColor("#666666"),
+        alignment=TA_CENTER,
+        fontName="Helvetica",
+    )
+
+    # Informations de contexte
+    nom_prenom = donnees.get("nom_prenom", "").strip()
+    reference  = donnees.get("reference", "")
+    dept       = donnees.get("departement", "")
+    mention_ref = f"Dossier : {reference} — Département {dept}" if reference else ""
+
+    elements = [
+        Spacer(1, 1.5 * cm),
+        Paragraph("FACILIM", style_titre),
+        Paragraph("Aide à la préparation du dossier MDPH", style_sous_titre),
+        HRFlowable(width="100%", thickness=1, color=colors.HexColor("#1a3a6b")),
+        Spacer(1, 1 * cm),
+        Paragraph("INFORMATIONS IMPORTANTES", style_important),
+        Spacer(1, 0.5 * cm),
+        Paragraph(
+            "Ce dossier a été préparé avec l'assistance de Facilim à partir des informations "
+            "déclarées par le demandeur et des documents transmis.",
+            style_corps,
+        ),
+        Paragraph(
+            "Le contenu du dossier doit être <b>relu, vérifié et validé</b> par le demandeur "
+            "ou son représentant légal avant signature et transmission à la MDPH.",
+            style_corps,
+        ),
+        Paragraph(
+            "<b>La responsabilité de l'exactitude des informations appartient au signataire "
+            "du dossier.</b>",
+            style_important,
+        ),
+        Spacer(1, 0.5 * cm),
+        HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#cccccc")),
+        Spacer(1, 0.5 * cm),
+        Paragraph(
+            "Facilim est un outil numérique d'aide à la constitution de dossiers MDPH. "
+            "Il ne se substitue pas à l'accompagnement professionnel ni à la responsabilité "
+            "du demandeur ou de son représentant légal.",
+            style_corps,
+        ),
+    ]
+
+    if nom_prenom:
+        elements.insert(3, Paragraph(f"Dossier préparé pour : <b>{nom_prenom}</b>", style_sous_titre))
+    if mention_ref:
+        elements.append(Spacer(1, 0.5 * cm))
+        elements.append(Paragraph(mention_ref, style_pied))
+
+    doc.build(elements)
+    couverture_bytes = buf.getvalue()
+
+    # ── Fusion : couverture AVANT le CERFA ───────────────────────────────────
+    writer = PdfWriter()
+
+    # Page 1 : couverture
+    couverture_reader = PdfReader(io.BytesIO(couverture_bytes))
+    for page in couverture_reader.pages:
+        writer.add_page(page)
+
+    # Pages 2-N : CERFA officiel (inchangé)
+    cerfa_reader = PdfReader(io.BytesIO(cerfa_bytes))
+    for page in cerfa_reader.pages:
+        writer.add_page(page)
+
+    out = io.BytesIO()
+    writer.write(out)
+    return out.getvalue()
+
+
 def _generer_cerfa_pdf(dossier_id: str, db) -> tuple[str, bytes]:
     """
     Génère le PDF CERFA pour un dossier et retourne (pdf_path, pdf_bytes).
@@ -1556,6 +1696,16 @@ def _generer_cerfa_pdf(dossier_id: str, db) -> tuple[str, bytes]:
     try:
         from app.engines.pdf.v2_bridge import generer_cerfa_depuis_synthese
         pdf_bytes = generer_cerfa_depuis_synthese(donnees, service_type, num_mdph)
+
+        # ── Page de couverture (Point 5) ──────────────────────────────────────
+        # Générée séparément avec reportlab, fusionnée AVANT le CERFA avec pypdf.
+        # Ne modifie pas le CERFA officiel ni ses champs.
+        try:
+            pdf_bytes = _ajouter_page_couverture(pdf_bytes, donnees)
+            logger.info("[CERFA] Page de couverture ajoutée | dossier=%s", dossier_id[:8])
+        except Exception as e_cov:
+            logger.warning("[CERFA] Page de couverture ignorée (%s) — PDF CERFA seul transmis", e_cov)
+
         with open(output_path, "wb") as f:
             f.write(pdf_bytes)
         logger.info("[CERFA V2] PDF généré via moteur V2 | dossier=%s | %d bytes",
