@@ -664,6 +664,24 @@ class OrchestrationEngine:
                 f"je ne vous poserai pas les questions correspondantes.\n\n"
             ) if _nb > 0 else ""
 
+            # ── Message d'information post-consentement (Point 1) ─────────────
+            # Envoyé UNE SEULE FOIS, uniquement quand result == "accepted".
+            # Protection naturelle : ce bloc n'est jamais atteint si :
+            #   - consentement déjà présent → retour "accepted_already" ligne 614
+            #   - reprise de conversation → _handle_consent_flow non appelée
+            #   - relance dashboard → _handle_consent_flow non appelée
+            _MSG_INFO_FACILIM = (
+                "ℹ️ Facilim prépare votre dossier MDPH à partir des informations "
+                "que vous nous communiquez et des documents transmis.\n\n"
+                "Avant toute signature ou transmission à la MDPH, il est important "
+                "de relire l'ensemble du dossier et de vérifier l'exactitude des informations.\n\n"
+                "Vous restez libre de modifier, compléter ou corriger tout élément "
+                "avant validation finale."
+            )
+            self.wa.send_text(phone_wa, _MSG_INFO_FACILIM)
+            logger.info("[CONSENT] Message information post-consentement envoyé | usager=%s",
+                        usager["id"][:8])
+
             # Vérifier si la langue est déjà choisie (ne pas renvoyer le menu en boucle)
             _langue_deja_choisie = _donnees_connues.get("_langue_choisie")
             if not _langue_deja_choisie:
