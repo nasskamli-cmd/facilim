@@ -121,32 +121,33 @@ def synthese_to_v2_dossier(
     dossier["situation_familiale"] = _sit_mat
 
     # ── Situation professionnelle ────────────────────────────────────────────────
+    # Règle : préremplir uniquement ce qui est EXPLICITEMENT déclaré.
+    # Aucune déduction par sous-chaîne dans les champs texte libres.
     statut = str(synthese.get("statut_emploi", "")).lower()
-    _accident = bool(
-        synthese.get("accident_travail")
-        or "accident" in statut
-        or "at " in statut
-    )
+
+    # accident_travail : uniquement si clé booléenne structurée présente
+    _accident = bool(synthese.get("accident_travail"))
+
+    # inscrit_pole_emploi : uniquement si clé booléenne structurée présente
     _inscrit_pe = bool(
         synthese.get("inscrit_pole_emploi")
         or synthese.get("france_travail")
-        or "france travail" in statut
-        or "pôle emploi" in statut
-        or "pole emploi" in statut
-        or "ft " in statut
     )
+
+    # en_formation : clé structurée ou réponse explicite "oui" à la question dédiée
+    # La présence du mot "formation" dans statut_emploi n'est PAS suffisante.
     _en_formation = bool(
         synthese.get("en_formation")
         or synthese.get("qualification_section_c") == "oui"
-        or "formation" in statut
         or synthese.get("formation_actuelle")
     )
-    # Règle : accident du travail → a déjà travaillé
+
+    # a_deja_travaille : uniquement si clé structurée ou AT confirmé par clé structurée.
+    # Règle métier forte autorisée : AT confirmé → a forcément travaillé.
+    # Déduction par sous-chaîne dans statut_emploi SUPPRIMÉE.
     _a_deja_travaille = bool(
-        _accident
-        or synthese.get("a_deja_travaille")
-        or any(w in statut for w in ["emploi", "esat", "cdi", "cdd", "travaillé",
-                                      "licencié", "inaptitude", "reconversion"])
+        synthese.get("a_deja_travaille")
+        or _accident  # déduction métier forte : AT confirmé = a travaillé
     )
 
     dossier["situation_emploi"]      = synthese.get("statut_emploi", "")
