@@ -57,6 +57,12 @@ def mapper_section_c(dossier_cerfa: DossierCERFA, _cases_cerfa: dict[str, Any]) 
         fields["case_P10_materiel_adapte"] = True
         _set(fields, "Texte P10 materiel_adapte_detail", b.detail_materiel_adapte)
 
+    # ── Texte narratif Phase 3 (scolarité) ───────────────────────────────────
+    _texte_narratif_c = getattr(dossier_cerfa, "texte_c_scolarite", None) or ""
+    if _texte_narratif_c and len(_texte_narratif_c) >= 80:
+        _set(fields, "Texte P11 difficultes_scolaires", _texte_narratif_c)
+        logger.debug("[PDF/section_c] Texte narratif Phase 3 utilisé (%d chars)", len(_texte_narratif_c))
+
     # ── Projet d'orientation scolaire ─────────────────────────────────────────
     _set(fields, "Texte P11 projet_orientation_scolaire", b.projet_orientation_scolaire)
     _set(fields, "Texte P11 attentes_famille",            b.attentes_famille_scolarite)

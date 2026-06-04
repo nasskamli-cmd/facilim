@@ -48,6 +48,18 @@ def mapper_section_d(dossier_cerfa: DossierCERFA, cases_cerfa: dict[str, Any]) -
         _set(fields, "Texte P14 formations_suivies",  d.formations_suivies)
         _set(fields, "Texte P14 competences_cles",    d.competences_cles)
 
+    # ── Texte narratif Phase 3 (situation pro) ───────────────────────────────
+    _texte_narratif_d = getattr(dossier_cerfa, "texte_d_situation_pro", None) or ""
+    if _texte_narratif_d and len(_texte_narratif_d) >= 80 and d:
+        _set(fields, "Texte P13 consequences_pro", _texte_narratif_d)
+        logger.debug("[PDF/section_d] Texte narratif Phase 3 utilisé (%d chars)", len(_texte_narratif_d))
+
+    # ── Texte narratif Phase 3 (projet de vie / section E) ────────────────────
+    _texte_narratif_e = getattr(dossier_cerfa, "texte_e_projet_vie", None) or ""
+    if _texte_narratif_e and len(_texte_narratif_e) >= 80 and e:
+        _set(fields, "Texte P18 projet_vie_narratif", _texte_narratif_e)
+        logger.debug("[PDF/section_d] Texte narratif Projet de vie utilisé (%d chars)", len(_texte_narratif_e))
+
     # ── Onglet 9 — Projet professionnel ──────────────────────────────────────
     if e:
         # Cases d'orientation (déjà calculées par le moteur de règles)

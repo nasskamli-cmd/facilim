@@ -162,6 +162,57 @@ except Exception as _e:
 db_conn_module.configure(settings.database_url)
 db_conn_module.initialize_schema()
 
+# ── Migrations idempotentes — s'exécutent au démarrage ───────────────────────
+try:
+    from app.database.migrations import run_all as _run_migrations
+    _migration_result = _run_migrations(verbose=False)
+    if _migration_result.get("applied"):
+        logger.info("[STARTUP] Migrations appliquées : %s", _migration_result["applied"])
+    if _migration_result.get("errors"):
+        logger.error("[STARTUP] Erreurs migrations : %s", _migration_result["errors"])
+except Exception as _mig_err:
+    logger.warning("[STARTUP] Migrations non bloquantes : %s", _mig_err)
+
+# ── Vérification et correction des colonnes Phase 3+ ─────────────────────────
+# SQLite peut marquer une migration comme appliquée même si certaines ALTER TABLE
+# ont échoué silencieusement (contention, verrou). Ce bloc garantit que toutes
+# les colonnes nécessaires existent, quelle que soit l'historique des migrations.
+_COLONNES_PHASE3 = [
+    ("profil_principal",          "TEXT DEFAULT ''"),
+    ("profil_secondaire",         "TEXT DEFAULT ''"),
+    ("tags_detectes",             "TEXT DEFAULT '[]'"),
+    ("texte_b_vie_quotidienne",   "TEXT DEFAULT ''"),
+    ("texte_c_scolarite",         "TEXT DEFAULT ''"),
+    ("texte_d_situation_pro",     "TEXT DEFAULT ''"),
+    ("texte_e_projet_vie",        "TEXT DEFAULT ''"),
+    ("score_maturite_cerfa",      "INTEGER DEFAULT 0"),
+    ("niveau_maturite",           "TEXT DEFAULT ''"),
+    ("alertes_qualite_json",      "TEXT DEFAULT '[]'"),
+    ("rapport_qualite_json",      "TEXT DEFAULT '{}'"),
+    ("analyse_situation_json",    "TEXT DEFAULT '{}'"),
+    ("synthese_situation",        "TEXT DEFAULT ''"),
+    ("niveau_confiance_analyse",  "TEXT DEFAULT ''"),
+]
+try:
+    _startup_db = db_conn_module._get_raw_connection()
+    _cols_existantes = {r[1] for r in _startup_db.execute("PRAGMA table_info(dossiers)").fetchall()}
+    _ajoutees = []
+    for _col, _typedef in _COLONNES_PHASE3:
+        if _col not in _cols_existantes:
+            try:
+                _startup_db.execute(f"ALTER TABLE dossiers ADD COLUMN {_col} {_typedef}")
+                _startup_db.commit()
+                _ajoutees.append(_col)
+            except Exception as _ce:
+                logger.warning("[STARTUP] Colonne %s non ajoutée : %s", _col, _ce)
+    if _ajoutees:
+        logger.info("[STARTUP] Colonnes Phase 3+ ajoutées : %s", _ajoutees)
+    else:
+        logger.info("[STARTUP] Colonnes Phase 3+ : toutes présentes ✓")
+    _startup_db.close()
+except Exception as _col_err:
+    logger.warning("[STARTUP] Vérification colonnes non bloquante : %s", _col_err)
+
 # ── Client LLM ───────────────────────────────────────────────────────────────
 from openai import OpenAI
 _llm_client = OpenAI(api_key=settings.openai_api_key)
@@ -246,8 +297,37 @@ def _get_orchestrator(db=Depends(_get_db)) -> OrchestrationEngine:
 # ── Health ────────────────────────────────────────────────────────────────────
 
 @app.get("/health")
-def health():
-    return {"status": "ok", "version": "2.0.0", "env": settings.app_env}
+def health(db=Depends(_get_db)):
+    """
+    Endpoint de santé — utilisé par Railway et les outils de monitoring.
+    Vérifie les variables d'environnement et la base de données.
+    OpenAI non testé ici (évite le coût à chaque sonde).
+    """
+    from app.engines.health_check import health_check
+    report = health_check(db_conn=db, check_openai=False)
+    status_code = 200 if report.status in ("OK", "DEGRADED") else 503
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "status":    report.status,
+            "version":   "2.0.0",
+            "env":       settings.app_env,
+            "db":        report.db_ok,
+            "warnings":  report.warnings,
+            "errors":    report.errors,
+            "timestamp": report.timestamp,
+        },
+    )
+
+
+@app.get("/api/v1/health/full")
+def health_full(user=Depends(_get_current_user), db=Depends(_get_db)):
+    """
+    Rapport de santé complet avec test OpenAI — réservé aux administrateurs.
+    """
+    from app.engines.health_check import health_check
+    report = health_check(db_conn=db, check_openai=True)
+    return report.to_dict()
 
 
 # ── Webhook WhatsApp ──────────────────────────────────────────────────────────
@@ -617,6 +697,178 @@ def get_dossier(
     return d
 
 
+@app.get("/api/v1/dashboard/metriques")
+def get_metriques(user=Depends(_get_current_user), db=Depends(_get_db)):
+    """
+    Métriques de qualité et d'utilisation pour le pilotage de Facilim.
+
+    Trois catégories :
+      - qualite   : enrichissement, alertes, maturité, confiance
+      - utilisation : dossiers, durée, relances, abandons
+      - analyse   : risques, protections, acteurs
+    """
+    # ── Qualité ───────────────────────────────────────────────────────────────
+    # Requête résiliente : vérifie d'abord les colonnes disponibles pour éviter
+    # une erreur 500 si les colonnes Phase 3+ ne sont pas encore présentes.
+    try:
+        _cols_dossiers = {r[1] for r in db.execute("PRAGMA table_info(dossiers)").fetchall()}
+        _has_maturite  = "score_maturite_cerfa" in _cols_dossiers
+        _has_confiance = "niveau_confiance_analyse" in _cols_dossiers
+        _has_niveau    = "niveau_maturite" in _cols_dossiers
+
+        _select_maturite  = "AVG(score_maturite_cerfa)" if _has_maturite  else "0"
+        _select_nb_faible = "COUNT(CASE WHEN niveau_maturite = 'FAIBLE'    THEN 1 END)" if _has_niveau else "0"
+        _select_nb_moyen  = "COUNT(CASE WHEN niveau_maturite = 'MOYEN'     THEN 1 END)" if _has_niveau else "0"
+        _select_nb_solide = "COUNT(CASE WHEN niveau_maturite = 'SOLIDE'    THEN 1 END)" if _has_niveau else "0"
+        _select_nb_excel  = "COUNT(CASE WHEN niveau_maturite = 'EXCELLENT' THEN 1 END)" if _has_niveau else "0"
+        _select_conf_fort = "COUNT(CASE WHEN niveau_confiance_analyse = 'FORT'   THEN 1 END)" if _has_confiance else "0"
+        _select_conf_moy  = "COUNT(CASE WHEN niveau_confiance_analyse = 'MOYEN'  THEN 1 END)" if _has_confiance else "0"
+        _select_conf_fai  = "COUNT(CASE WHEN niveau_confiance_analyse = 'FAIBLE' THEN 1 END)" if _has_confiance else "0"
+
+        stats_qualite = db.execute(f"""
+            SELECT
+                COUNT(*) as nb_total,
+                {_select_maturite}  as maturite_moy,
+                {_select_nb_faible} as nb_faible,
+                {_select_nb_moyen}  as nb_moyen,
+                {_select_nb_solide} as nb_solide,
+                {_select_nb_excel}  as nb_excellent,
+                {_select_conf_fort} as nb_confiance_fort,
+                {_select_conf_moy}  as nb_confiance_moyen,
+                {_select_conf_fai}  as nb_confiance_faible
+            FROM dossiers WHERE deleted_at IS NULL
+        """).fetchone()
+    except Exception:
+        stats_qualite = None
+
+    # Taux d'enrichissement moyen (dans synthese_json)
+    enrichissements = db.execute("""
+        SELECT synthese_json FROM dossiers
+        WHERE synthese_json LIKE '%_taux_enrichissement_moyen%' AND deleted_at IS NULL
+        LIMIT 200
+    """).fetchall()
+    taux_enrichissement_list = []
+    for row in enrichissements:
+        try:
+            d = json.loads(row["synthese_json"] or "{}")
+            t = d.get("_taux_enrichissement_moyen")
+            if t and isinstance(t, (int, float)):
+                taux_enrichissement_list.append(t)
+        except Exception:
+            pass
+    taux_enrichissement_moy = (
+        round(sum(taux_enrichissement_list) / len(taux_enrichissement_list), 2)
+        if taux_enrichissement_list else None
+    )
+
+    # Alertes qualité récurrentes (top 5 messages)
+    alertes_rows = db.execute("""
+        SELECT alertes_qualite_json FROM dossiers
+        WHERE alertes_qualite_json != '[]' AND alertes_qualite_json IS NOT NULL
+        AND deleted_at IS NULL LIMIT 500
+    """).fetchall()
+    alertes_compteur: dict[str, int] = {}
+    for row in alertes_rows:
+        try:
+            alertes = json.loads(row["alertes_qualite_json"] or "[]")
+            for a in alertes:
+                cle = str(a)[:80]
+                alertes_compteur[cle] = alertes_compteur.get(cle, 0) + 1
+        except Exception:
+            pass
+    alertes_top = sorted(alertes_compteur.items(), key=lambda x: -x[1])[:5]
+
+    # ── Utilisation ───────────────────────────────────────────────────────────
+    stats_util = db.execute("""
+        SELECT
+            COUNT(*) as nb_total,
+            COUNT(CASE WHEN statut = 'EN_COLLECTE'  THEN 1 END) as nb_collecte,
+            COUNT(CASE WHEN statut = 'EN_ANALYSE'   THEN 1 END) as nb_analyse,
+            COUNT(CASE WHEN statut = 'COMPLET'      THEN 1 END) as nb_complet,
+            COUNT(CASE WHEN statut = 'INCOMPLET'    THEN 1 END) as nb_incomplet,
+            COUNT(CASE WHEN statut = 'SOUMIS'       THEN 1 END) as nb_soumis
+        FROM dossiers WHERE deleted_at IS NULL
+    """).fetchone()
+
+    # Relances (comptage dans synthese_json)
+    relances_rows = db.execute("""
+        SELECT synthese_json FROM dossiers
+        WHERE synthese_json LIKE '%_relances_faites%' AND deleted_at IS NULL
+        LIMIT 200
+    """).fetchall()
+    nb_relances_total = 0
+    nb_dossiers_avec_relance = 0
+    for row in relances_rows:
+        try:
+            d = json.loads(row["synthese_json"] or "{}")
+            rf = d.get("_relances_faites") or {}
+            if rf:
+                nb_dossiers_avec_relance += 1
+                nb_relances_total += len(rf)
+        except Exception:
+            pass
+
+    # ── Analyse ───────────────────────────────────────────────────────────────
+    analyse_rows = db.execute("""
+        SELECT analyse_situation_json FROM dossiers
+        WHERE analyse_situation_json != '{}' AND analyse_situation_json IS NOT NULL
+        AND deleted_at IS NULL LIMIT 200
+    """).fetchall()
+
+    risques_compteur: dict[str, int] = {}
+    protections_compteur: dict[str, int] = {}
+    acteurs_compteur: dict[str, int] = {}
+
+    for row in analyse_rows:
+        try:
+            a = json.loads(row["analyse_situation_json"] or "{}")
+            for r in a.get("facteurs_risque", []):
+                risques_compteur[str(r)[:60]] = risques_compteur.get(str(r)[:60], 0) + 1
+            for p in a.get("facteurs_protection", []):
+                protections_compteur[str(p)[:60]] = protections_compteur.get(str(p)[:60], 0) + 1
+            for act in a.get("acteurs_mobilisables", []):
+                nom = act.get("acteur", "")
+                if nom:
+                    acteurs_compteur[nom] = acteurs_compteur.get(nom, 0) + 1
+        except Exception:
+            pass
+
+    return {
+        "qualite": {
+            "nb_dossiers_total":       stats_qualite["nb_total"] if stats_qualite else 0,
+            "maturite_moyenne":        round(stats_qualite["maturite_moy"] or 0, 1) if stats_qualite else 0,
+            "repartition_maturite": {
+                "faible":    stats_qualite["nb_faible"]    if stats_qualite else 0,
+                "moyen":     stats_qualite["nb_moyen"]     if stats_qualite else 0,
+                "solide":    stats_qualite["nb_solide"]    if stats_qualite else 0,
+                "excellent": stats_qualite["nb_excellent"] if stats_qualite else 0,
+            },
+            "repartition_confiance": {
+                "fort":   stats_qualite["nb_confiance_fort"]   if stats_qualite else 0,
+                "moyen":  stats_qualite["nb_confiance_moyen"]  if stats_qualite else 0,
+                "faible": stats_qualite["nb_confiance_faible"] if stats_qualite else 0,
+            },
+            "taux_enrichissement_moyen": taux_enrichissement_moy,
+            "alertes_recurrentes":       [{"message": k, "occurrences": v} for k, v in alertes_top],
+        },
+        "utilisation": {
+            "nb_dossiers_total":        stats_util["nb_total"]     if stats_util else 0,
+            "en_collecte":              stats_util["nb_collecte"]  if stats_util else 0,
+            "complets":                 stats_util["nb_complet"]   if stats_util else 0,
+            "incomplets":               stats_util["nb_incomplet"] if stats_util else 0,
+            "soumis":                   stats_util["nb_soumis"]    if stats_util else 0,
+            "nb_dossiers_avec_relance": nb_dossiers_avec_relance,
+            "nb_relances_total":        nb_relances_total,
+        },
+        "analyse": {
+            "nb_dossiers_analyses": len(analyse_rows),
+            "risques_top5":        sorted(risques_compteur.items(),     key=lambda x: -x[1])[:5],
+            "protections_top5":    sorted(protections_compteur.items(), key=lambda x: -x[1])[:5],
+            "acteurs_top10":       sorted(acteurs_compteur.items(),     key=lambda x: -x[1])[:10],
+        },
+    }
+
+
 @app.get("/api/v1/dashboard/alertes")
 def get_alertes(user=Depends(_get_current_user), db=Depends(_get_db)):
     """Alertes et flags humains pour le Dashboard."""
@@ -641,6 +893,66 @@ def get_alertes(user=Depends(_get_current_user), db=Depends(_get_db)):
     return {
         "flags":    [dict(f) for f in flags],
         "relances": [dict(r) for r in relances],
+    }
+
+
+@app.get("/api/v1/dashboard/dossiers/{dossier_id}/appui-evaluation")
+def get_appui_evaluation(
+    dossier_id: str,
+    user=Depends(_get_current_user),
+    db=Depends(_get_db),
+):
+    """
+    Retourne l'analyse de situation et les données d'appui à l'évaluation.
+
+    Ce panneau éclaire la lecture professionnelle sans orienter automatiquement.
+    Il identifie des besoins, des risques, des protections et des acteurs mobilisables.
+
+    IMPORTANT : les acteurs listés sont des pistes, jamais une orientation automatique.
+    La décision appartient au professionnel.
+    """
+    row = db.execute(
+        """SELECT analyse_situation_json, synthese_situation, niveau_confiance_analyse,
+                  score_maturite_cerfa, niveau_maturite, alertes_qualite_json,
+                  rapport_qualite_json, profil_principal, profil_secondaire
+           FROM dossiers WHERE id = ?""",
+        (dossier_id,),
+    ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Dossier non trouvé")
+
+    analyse_dict = json.loads(row["analyse_situation_json"] or "{}")
+    rapport_dict = json.loads(row["rapport_qualite_json"]   or "{}")
+
+    return {
+        "dossier_id":            dossier_id,
+        "niveau_confiance":      row["niveau_confiance_analyse"] or "FAIBLE",
+        "score_maturite":        row["score_maturite_cerfa"] or 0,
+        "niveau_maturite":       row["niveau_maturite"] or "",
+        "profil_principal":      row["profil_principal"] or "",
+        "profil_secondaire":     row["profil_secondaire"] or "",
+        # Synthèse de situation
+        "synthese_situation":    row["synthese_situation"] or "",
+        "points_a_completer":    analyse_dict.get("points_a_completer", []),
+        # Facteurs
+        "facteurs_risque":       analyse_dict.get("facteurs_risque", []),
+        "facteurs_protection":   analyse_dict.get("facteurs_protection", []),
+        # Besoins
+        "besoins_compensation":  analyse_dict.get("besoins_compensation", []),
+        "besoins_accompagnement": analyse_dict.get("besoins_accompagnement", []),
+        # Vigilances
+        "points_vigilance":      analyse_dict.get("points_vigilance", []),
+        "alertes_qualite":       json.loads(row["alertes_qualite_json"] or "[]"),
+        # Acteurs (pistes, jamais orientations automatiques)
+        "acteurs_susceptibles":  analyse_dict.get("acteurs_mobilisables", []),
+        # Préconisations
+        "preconisations":        analyse_dict.get("preconisations", []),
+        # Méta
+        "avertissement":         (
+            "Ce panneau est un outil d'appui à la décision professionnelle. "
+            "Il ne constitue ni une orientation ni une décision. "
+            "Toute décision appartient au professionnel accompagnant."
+        ),
     }
 
 

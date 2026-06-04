@@ -139,6 +139,42 @@
     </div>
   </div>
 
+  <!-- ── Métriques Facilim ─────────────────────────────────────────────────── -->
+  <div id="section-metriques" class="bg-white rounded-xl border border-gray-100 p-5 mb-6 hidden">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="font-semibold text-gray-900 text-sm">Métriques Facilim</h2>
+      <span class="text-xs text-gray-400" id="metriques-date">–</span>
+    </div>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4" id="metriques-kpi">
+      <div class="text-center p-3 bg-gray-50 rounded-lg">
+        <div class="text-xl font-bold text-gray-900" id="met-total">–</div>
+        <div class="text-xs text-gray-500 mt-1">Dossiers total</div>
+      </div>
+      <div class="text-center p-3 bg-facilim-50 rounded-lg">
+        <div class="text-xl font-bold text-facilim-700" id="met-maturite">–</div>
+        <div class="text-xs text-gray-500 mt-1">Maturité moy.</div>
+      </div>
+      <div class="text-center p-3 bg-green-50 rounded-lg">
+        <div class="text-xl font-bold text-green-700" id="met-enrichissement">–</div>
+        <div class="text-xs text-gray-500 mt-1">Taux enrichissement</div>
+      </div>
+      <div class="text-center p-3 bg-orange-50 rounded-lg">
+        <div class="text-xl font-bold text-orange-700" id="met-relances">–</div>
+        <div class="text-xs text-gray-500 mt-1">Relances totales</div>
+      </div>
+    </div>
+    <div class="grid md:grid-cols-2 gap-4">
+      <div>
+        <div class="text-xs font-semibold text-gray-600 uppercase mb-2">Alertes qualité récurrentes</div>
+        <div id="met-alertes" class="space-y-1 text-sm text-gray-700">–</div>
+      </div>
+      <div>
+        <div class="text-xs font-semibold text-gray-600 uppercase mb-2">Acteurs les plus mobilisés</div>
+        <div id="met-acteurs" class="space-y-1 text-sm text-gray-700">–</div>
+      </div>
+    </div>
+  </div>
+
   <!-- Section Alertes + Flags humains -->
   <div class="grid md:grid-cols-2 gap-5 mb-6">
 
@@ -180,6 +216,79 @@
     </div>
     <div id="modal-content" class="flex-1 overflow-y-auto px-6 py-4 space-y-5">
       <!-- Contenu dynamique injecté par JS -->
+
+      <!-- ── Panneau Appui à l'évaluation (injecté dynamiquement) ─────────── -->
+      <div id="panel-appui" class="hidden">
+        <div class="border border-facilim-100 rounded-xl overflow-hidden">
+
+          <!-- En-tête -->
+          <div class="bg-facilim-50 px-5 py-3 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <svg class="w-4 h-4 text-facilim-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+              </svg>
+              <h4 class="font-semibold text-facilim-900 text-sm">Appui à l'évaluation</h4>
+            </div>
+            <span id="appui-confiance" class="text-xs font-semibold px-2.5 py-1 rounded-full">–</span>
+          </div>
+
+          <!-- Avertissement légal -->
+          <div class="bg-amber-50 border-b border-amber-100 px-5 py-2">
+            <p class="text-xs text-amber-800">
+              ⚠️ Ce panneau est un outil d'appui à la décision. Il identifie des pistes, pas des orientations.
+              Toute décision appartient au professionnel accompagnant.
+            </p>
+          </div>
+
+          <div class="divide-y divide-gray-50">
+
+            <!-- Bloc 1 : Synthèse de situation -->
+            <div class="px-5 py-4">
+              <div class="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">Synthèse de situation</div>
+              <div id="appui-synthese" class="text-sm text-gray-700 leading-relaxed">–</div>
+              <div id="appui-completer" class="mt-3 hidden">
+                <div class="text-xs font-semibold text-orange-600 uppercase mb-1">Points à compléter</div>
+                <ul id="appui-completer-list" class="text-xs text-orange-700 space-y-1 list-disc list-inside"></ul>
+              </div>
+            </div>
+
+            <!-- Bloc 2 : Facteurs de risque -->
+            <div class="px-5 py-4" id="bloc-risques-wrap">
+              <div class="text-xs font-semibold text-red-600 uppercase tracking-wide mb-2">Facteurs de risque</div>
+              <div id="appui-risques" class="space-y-1.5"></div>
+            </div>
+
+            <!-- Bloc 3 : Facteurs de protection -->
+            <div class="px-5 py-4" id="bloc-protections-wrap">
+              <div class="text-xs font-semibold text-green-600 uppercase tracking-wide mb-2">Facteurs de protection</div>
+              <div id="appui-protections" class="space-y-1.5"></div>
+            </div>
+
+            <!-- Bloc 4 : Besoins identifiés -->
+            <div class="px-5 py-4" id="bloc-besoins-wrap">
+              <div class="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">Besoins identifiés</div>
+              <div id="appui-besoins" class="space-y-2"></div>
+            </div>
+
+            <!-- Bloc 5 : Acteurs susceptibles d'être mobilisés -->
+            <div class="px-5 py-4" id="bloc-acteurs-wrap">
+              <div class="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">
+                Acteurs susceptibles d'être mobilisés
+              </div>
+              <p class="text-xs text-gray-400 mb-2 italic">Pistes non prescriptives — à évaluer selon le contexte local.</p>
+              <div id="appui-acteurs" class="space-y-1.5"></div>
+            </div>
+
+            <!-- Bloc 6 : Préconisations -->
+            <div class="px-5 py-4" id="bloc-preconisations-wrap">
+              <div class="text-xs font-semibold text-facilim-700 uppercase tracking-wide mb-2">Pistes d'action</div>
+              <div id="appui-preconisations" class="space-y-2"></div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
     </div>
 
     <!-- Zone pro : notes + upload document -->
@@ -270,7 +379,156 @@ let allDossiers = [];
 let currentDossierId = null;
 
 async function refreshData() {
-  await Promise.all([loadDossiers(), loadAlertes()]);
+  await Promise.all([loadDossiers(), loadAlertes(), loadMetriques()]);
+}
+
+async function loadMetriques() {
+  try {
+    const res = await fetch('/api/v1/dashboard/metriques', { credentials: 'include' });
+    if (!res.ok) return;
+    const m = await res.json();
+    const q = m.qualite || {}, u = m.utilisation || {}, a = m.analyse || {};
+
+    // Afficher la section seulement si des données existent
+    if ((q.nb_dossiers_total || 0) > 0) {
+      document.getElementById('section-metriques').classList.remove('hidden');
+    }
+
+    document.getElementById('met-total').textContent       = u.nb_dossiers_total ?? '–';
+    document.getElementById('met-maturite').textContent    = q.maturite_moyenne != null ? q.maturite_moyenne + '/100' : '–';
+    document.getElementById('met-enrichissement').textContent = q.taux_enrichissement_moyen != null ? '×' + q.taux_enrichissement_moyen : '–';
+    document.getElementById('met-relances').textContent    = u.nb_relances_total ?? '–';
+    document.getElementById('metriques-date').textContent  = new Date().toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'});
+
+    const alertesEl = document.getElementById('met-alertes');
+    if ((q.alertes_recurrentes || []).length) {
+      alertesEl.innerHTML = q.alertes_recurrentes.slice(0,3).map(a =>
+        `<div class="flex items-center justify-between text-xs py-1 border-b border-gray-50">
+           <span class="text-gray-600 truncate max-w-xs">${a.message}</span>
+           <span class="text-red-500 font-semibold ml-2">${a.occurrences}×</span>
+         </div>`
+      ).join('');
+    } else {
+      alertesEl.textContent = 'Aucune alerte récurrente';
+    }
+
+    const acteursEl = document.getElementById('met-acteurs');
+    if ((a.acteurs_top10 || []).length) {
+      acteursEl.innerHTML = a.acteurs_top10.slice(0,5).map(([nom, nb]) =>
+        `<div class="flex items-center justify-between text-xs py-1">
+           <span class="text-gray-700">${nom}</span>
+           <span class="text-facilim-600 font-medium">${nb}</span>
+         </div>`
+      ).join('');
+    } else {
+      acteursEl.textContent = 'Données insuffisantes';
+    }
+  } catch(e) { console.debug('Métriques non disponibles:', e); }
+}
+
+async function loadAppuiEvaluation(dossierId) {
+  try {
+    const res = await fetch(`/api/v1/dashboard/dossiers/${dossierId}/appui-evaluation`, { credentials: 'include' });
+    if (!res.ok) return;
+    const d = await res.json();
+    renderAppuiEvaluation(d);
+  } catch(e) { console.debug('Appui évaluation non disponible:', e); }
+}
+
+function renderAppuiEvaluation(d) {
+  const panel = document.getElementById('panel-appui');
+  if (!panel) return;
+
+  // Ne rien afficher si l'analyse n'existe pas encore
+  const hasAnalyse = d.synthese_situation || (d.facteurs_risque || []).length || (d.acteurs_susceptibles || []).length;
+  if (!hasAnalyse) return;
+
+  panel.classList.remove('hidden');
+
+  // Badge confiance
+  const conf = d.niveau_confiance || 'FAIBLE';
+  const confEl = document.getElementById('appui-confiance');
+  const confCls = conf === 'FORT' ? 'bg-green-100 text-green-700' : conf === 'MOYEN' ? 'bg-orange-100 text-orange-700' : 'bg-red-100 text-red-700';
+  confEl.className = `text-xs font-semibold px-2.5 py-1 rounded-full ${confCls}`;
+  confEl.textContent = `Confiance : ${conf}`;
+
+  // Synthèse
+  const synth = document.getElementById('appui-synthese');
+  synth.textContent = d.synthese_situation || 'Synthèse en cours de génération…';
+
+  // Points à compléter
+  const complEl = document.getElementById('appui-completer');
+  const complList = document.getElementById('appui-completer-list');
+  if ((d.points_a_completer || []).length) {
+    complEl.classList.remove('hidden');
+    complList.innerHTML = d.points_a_completer.map(p => `<li>${p}</li>`).join('');
+  }
+
+  // Facteurs de risque
+  const risquesEl = document.getElementById('appui-risques');
+  if ((d.facteurs_risque || []).length) {
+    risquesEl.innerHTML = d.facteurs_risque.map(r =>
+      `<div class="flex items-start gap-2 text-xs text-red-700 bg-red-50 rounded-lg px-3 py-2">
+         <span class="mt-0.5">⚠</span><span>${r}</span>
+       </div>`
+    ).join('');
+  } else {
+    document.getElementById('bloc-risques-wrap').classList.add('hidden');
+  }
+
+  // Facteurs de protection
+  const protEl = document.getElementById('appui-protections');
+  if ((d.facteurs_protection || []).length) {
+    protEl.innerHTML = d.facteurs_protection.map(p =>
+      `<div class="flex items-start gap-2 text-xs text-green-700 bg-green-50 rounded-lg px-3 py-2">
+         <span class="mt-0.5">✓</span><span>${p}</span>
+       </div>`
+    ).join('');
+  } else {
+    document.getElementById('bloc-protections-wrap').classList.add('hidden');
+  }
+
+  // Besoins
+  const besoinsEl = document.getElementById('appui-besoins');
+  const tousBesoins = [...(d.besoins_compensation || []), ...(d.besoins_accompagnement || []), ...(d.points_vigilance || []).map(v => ({type: 'Vigilance', description: v}))];
+  if (tousBesoins.length) {
+    besoinsEl.innerHTML = tousBesoins.map(b =>
+      `<div class="border border-gray-100 rounded-lg px-3 py-2">
+         <div class="text-xs font-semibold text-gray-700">${b.type}</div>
+         <div class="text-xs text-gray-500 mt-0.5">${b.description || ''}</div>
+         ${b.a_preciser ? `<div class="text-xs text-facilim-600 mt-1 italic">À préciser : ${b.a_preciser}</div>` : ''}
+       </div>`
+    ).join('');
+  } else {
+    document.getElementById('bloc-besoins-wrap').classList.add('hidden');
+  }
+
+  // Acteurs susceptibles
+  const acteursEl = document.getElementById('appui-acteurs');
+  if ((d.acteurs_susceptibles || []).length) {
+    acteursEl.innerHTML = d.acteurs_susceptibles.map(a =>
+      `<div class="flex items-start gap-2 text-xs py-1.5 border-b border-gray-50 last:border-0">
+         <span class="font-semibold text-gray-800 min-w-28">${a.acteur}</span>
+         <span class="text-gray-500">${a.role_possible}</span>
+       </div>`
+    ).join('');
+  } else {
+    document.getElementById('bloc-acteurs-wrap').classList.add('hidden');
+  }
+
+  // Préconisations
+  const precoEl = document.getElementById('appui-preconisations');
+  if ((d.preconisations || []).length) {
+    precoEl.innerHTML = d.preconisations.map(p =>
+      `<div class="border-l-2 border-facilim-400 pl-3 py-1">
+         <div class="text-xs font-semibold text-facilim-700">${p.piste}</div>
+         <div class="text-xs text-gray-500 mt-0.5">${p.justification || ''}</div>
+         ${p.prochaine_etape ? `<div class="text-xs text-gray-700 mt-1">→ ${p.prochaine_etape}</div>` : ''}
+       </div>`
+    ).join('');
+  } else {
+    document.getElementById('bloc-preconisations-wrap').classList.add('hidden');
+  }
 }
 
 async function loadDossiers() {
@@ -412,9 +670,24 @@ function renderRelances(relances) {
 async function openDossier(id) {
   currentDossierId = id;
   document.getElementById('modal-dossier').classList.remove('hidden');
-  document.getElementById('modal-content').innerHTML = '<div class="text-center text-gray-400 py-8">Chargement…</div>';
+
+  // Réinitialiser le panneau appui à l'évaluation
+  const panelAppui = document.getElementById('panel-appui');
+  if (panelAppui) {
+    panelAppui.classList.add('hidden');
+    ['bloc-risques-wrap','bloc-protections-wrap','bloc-besoins-wrap',
+     'bloc-acteurs-wrap','bloc-preconisations-wrap'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.classList.remove('hidden');
+    });
+  }
+
   try {
-    const res = await fetch(`/api/v1/dashboard/dossiers/${id}`, { credentials: 'include' });
+    // Chargement parallèle : données dossier + appui évaluation
+    const [res] = await Promise.all([
+      fetch(`/api/v1/dashboard/dossiers/${id}`, { credentials: 'include' }),
+      loadAppuiEvaluation(id),
+    ]);
     const d = await res.json();
     renderModalContent(d);
   } catch(e) {
