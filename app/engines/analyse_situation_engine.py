@@ -564,6 +564,7 @@ def analyser_situation(
     rapport_qualite: dict[str, Any],
     profil_mdph: str = "adulte",
     openai_client: Any = None,
+    infos_manquantes_inferees: list | None = None,  # list[InformationManquante] — optionnel
 ) -> AnalyseSituation:
     """
     Produit l'analyse de situation complète.
@@ -577,6 +578,13 @@ def analyser_situation(
         rapport_qualite=rapport_qualite,
         profil_mdph=profil_mdph,
     )
+
+    # Enrichissement depuis l'inférenceur (informations manquantes ciblées)
+    if infos_manquantes_inferees:
+        for info in infos_manquantes_inferees:
+            label = info.label if hasattr(info, "label") else str(info)
+            if label and label not in analyse.points_a_completer:
+                analyse.points_a_completer.append(label)
 
     if openai_client and not analyse.synthese_situation:
         analyse.synthese_situation = _generer_synthese_narrative(

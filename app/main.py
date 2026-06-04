@@ -953,6 +953,10 @@ def get_appui_evaluation(
             "Il ne constitue ni une orientation ni une décision. "
             "Toute décision appartient au professionnel accompagnant."
         ),
+        # Coverage de collecte (inférenceur)
+        "inference_coverage":    json.loads(
+            (db.execute("SELECT synthese_json FROM dossiers WHERE id=?", (dossier_id,)).fetchone() or {}).get("synthese_json") or "{}"
+        ).get("_inference_coverage") or {},
     }
 
 

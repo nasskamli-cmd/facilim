@@ -519,6 +519,58 @@ class OrchestrationEngine:
                 except Exception as _vb_err:
                     logger.debug("[VERBATIM] Non bloquant : %s", _vb_err)
 
+            # ── Inférenceur MDPH — relance ciblée si aucune relance Sprint 2 active ──
+            # L'inférenceur détecte les hypothèses non confirmées et propose
+            # une relance critique ciblée si aucune relance générique n'est déjà en attente.
+            # Aucune hypothèse n'est injectée dans le CERFA — uniquement dans les relances.
+            if not _relance_a_injecter and text.strip():
+                try:
+                    from app.engines.inferencer_mdph import (
+                        inferer_contexte_mdph,
+                        relance_critique_active,
+                    )
+                    _profil_h_inf = donnees.get("profil_principal", "")
+                    _profil_mdph_inf = service_type if service_type not in ("identification", "") else "adulte"
+                    _contexte_inf = inferer_contexte_mdph(donnees, _profil_h_inf, _profil_mdph_inf)
+
+                    # Stocker le coverage pour le dashboard
+                    donnees["_inference_coverage"] = {
+                        "total":       _contexte_inf.coverage.total_detectees,
+                        "taux":        _contexte_inf.coverage.taux_couverture,
+                        "nc_critiques": _contexte_inf.coverage.non_confirmees_critiques,
+                    }
+
+                    # Relance critique — uniquement si pas déjà posée
+                    _posees_inf: set = set(donnees.get("_relances_inferees_posees") or [])
+                    _relance_inf = relance_critique_active(_contexte_inf, _posees_inf)
+                    if _relance_inf:
+                        _posees_inf.add(_relance_inf.hypothese_id)
+                        donnees["_relances_inferees_posees"] = list(_posees_inf)
+                        _relance_a_injecter = (
+                            f"\n⚡ RELANCE CIBLÉE (priorité absolue) :\n"
+                            f"Une information importante n'a pas encore été abordée.\n"
+                            f"Pose cette question avant de continuer : "
+                            f"{_relance_inf.question}\n"
+                            f"Ton : chaleureux, jamais insistant. C'est la SEULE question à poser maintenant.\n"
+                        )
+                        logger.info(
+                            "[INFERENCER] Relance critique injectée : %s | section=%s",
+                            _relance_inf.hypothese_id, _relance_inf.section,
+                        )
+
+                    # Stocker les alertes inférées pour le rapport qualité
+                    donnees["_alertes_inferees"] = [
+                        {"message": a.message, "niveau": a.niveau, "section": a.section}
+                        for a in _contexte_inf.alertes_qualite
+                    ]
+                    # Stocker les informations manquantes pour l'analyse de situation
+                    donnees["_infos_manquantes_inferees"] = [
+                        {"label": i.label, "section": i.section, "priorite": i.priorite.value}
+                        for i in _contexte_inf.informations_manquantes
+                    ]
+                except Exception as _inf_err:
+                    logger.debug("[INFERENCER] Non bloquant : %s", _inf_err)
+
             # ── Navigation par onglets — chargement anticipé (requis par le bloc langue) ──
             nav_raw = json.loads(dossier.get("contexte_navigation_json", "{}") or "{}")
             nav = TabNavigationState(
@@ -751,10 +803,14 @@ class OrchestrationEngine:
                 model="gpt-4o",
             )
 
+            # Récupérer les alertes inférées stockées en cours de conversation
+            _alertes_inf_raw = donnees.get("_alertes_inferees") or []
+
             rapport = verifier_qualite_cerfa(
                 donnees=donnees,
                 textes_narratifs=textes,
                 profil_mdph=profil_mdph,
+                alertes_inferees=_alertes_inf_raw,
             )
 
             # Fusionner les textes narratifs dans donnees pour la persistance
@@ -815,12 +871,14 @@ class OrchestrationEngine:
                     "contradictions":        rapport.contradictions,
                     "score_maturite":        rapport.score_maturite,
                 }
+                _infos_man_raw = donnees.get("_infos_manquantes_inferees") or []
                 analyse = analyser_situation(
                     donnees=donnees,
                     textes_narratifs=textes,
                     rapport_qualite=rapport_dict,
                     profil_mdph=profil_mdph,
                     openai_client=self.llm,
+                    infos_manquantes_inferees=_infos_man_raw,
                 )
                 analyse_dict = analyse.to_dict()
                 self.db.execute(

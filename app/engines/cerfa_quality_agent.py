@@ -418,6 +418,7 @@ def verifier_qualite_cerfa(
     textes_narratifs: dict[str, str],
     profil_mdph: str = "adulte",
     sections_actives: set[str] | None = None,
+    alertes_inferees: list | None = None,   # list[AlerteQualiteInferee] — optionnel
 ) -> QualiteRapport:
     """
     Contrôle qualité complet avant validation finale.
@@ -495,6 +496,19 @@ def verifier_qualite_cerfa(
     elif "E" in sections_actives:
         rapport.projet_vie_incomplet = True
         rapport.alertes_rouges.append("Partie E — Projet de vie absente.")
+
+    # ── Alertes inférées (depuis inferencer_mdph) ─────────────────────────────
+    # Intégrées AVANT la cohérence pour qu'elles apparaissent dans le rapport global.
+    # Les alertes_inferees n'influencent pas le score numérique — séparation Coverage/Maturity.
+    if alertes_inferees:
+        for ai in alertes_inferees:
+            msg = f"[INFÉRENCE] {ai.message}"
+            if ai.niveau == "rouge":
+                if msg not in rapport.alertes_rouges:
+                    rapport.alertes_rouges.append(msg)
+            else:
+                if msg not in rapport.alertes_oranges:
+                    rapport.alertes_oranges.append(msg)
 
     # ── Sous-agent 3 : Cohérence CERFA ────────────────────────────────────────
     contradictions = _analyser_coherence(donnees, textes_narratifs)
