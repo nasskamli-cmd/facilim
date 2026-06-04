@@ -162,6 +162,57 @@ except Exception as _e:
 db_conn_module.configure(settings.database_url)
 db_conn_module.initialize_schema()
 
+# ── Migrations idempotentes — s'exécutent au démarrage ───────────────────────
+try:
+    from app.database.migrations import run_all as _run_migrations
+    _migration_result = _run_migrations(verbose=False)
+    if _migration_result.get("applied"):
+        logger.info("[STARTUP] Migrations appliquées : %s", _migration_result["applied"])
+    if _migration_result.get("errors"):
+        logger.error("[STARTUP] Erreurs migrations : %s", _migration_result["errors"])
+except Exception as _mig_err:
+    logger.warning("[STARTUP] Migrations non bloquantes : %s", _mig_err)
+
+# ── Vérification et correction des colonnes Phase 3+ ─────────────────────────
+# SQLite peut marquer une migration comme appliquée même si certaines ALTER TABLE
+# ont échoué silencieusement (contention, verrou). Ce bloc garantit que toutes
+# les colonnes nécessaires existent, quelle que soit l'historique des migrations.
+_COLONNES_PHASE3 = [
+    ("profil_principal",          "TEXT DEFAULT ''"),
+    ("profil_secondaire",         "TEXT DEFAULT ''"),
+    ("tags_detectes",             "TEXT DEFAULT '[]'"),
+    ("texte_b_vie_quotidienne",   "TEXT DEFAULT ''"),
+    ("texte_c_scolarite",         "TEXT DEFAULT ''"),
+    ("texte_d_situation_pro",     "TEXT DEFAULT ''"),
+    ("texte_e_projet_vie",        "TEXT DEFAULT ''"),
+    ("score_maturite_cerfa",      "INTEGER DEFAULT 0"),
+    ("niveau_maturite",           "TEXT DEFAULT ''"),
+    ("alertes_qualite_json",      "TEXT DEFAULT '[]'"),
+    ("rapport_qualite_json",      "TEXT DEFAULT '{}'"),
+    ("analyse_situation_json",    "TEXT DEFAULT '{}'"),
+    ("synthese_situation",        "TEXT DEFAULT ''"),
+    ("niveau_confiance_analyse",  "TEXT DEFAULT ''"),
+]
+try:
+    _startup_db = db_conn_module._get_raw_connection()
+    _cols_existantes = {r[1] for r in _startup_db.execute("PRAGMA table_info(dossiers)").fetchall()}
+    _ajoutees = []
+    for _col, _typedef in _COLONNES_PHASE3:
+        if _col not in _cols_existantes:
+            try:
+                _startup_db.execute(f"ALTER TABLE dossiers ADD COLUMN {_col} {_typedef}")
+                _startup_db.commit()
+                _ajoutees.append(_col)
+            except Exception as _ce:
+                logger.warning("[STARTUP] Colonne %s non ajoutée : %s", _col, _ce)
+    if _ajoutees:
+        logger.info("[STARTUP] Colonnes Phase 3+ ajoutées : %s", _ajoutees)
+    else:
+        logger.info("[STARTUP] Colonnes Phase 3+ : toutes présentes ✓")
+    _startup_db.close()
+except Exception as _col_err:
+    logger.warning("[STARTUP] Vérification colonnes non bloquante : %s", _col_err)
+
 # ── Client LLM ───────────────────────────────────────────────────────────────
 from openai import OpenAI
 _llm_client = OpenAI(api_key=settings.openai_api_key)
@@ -246,8 +297,37 @@ def _get_orchestrator(db=Depends(_get_db)) -> OrchestrationEngine:
 # ── Health ────────────────────────────────────────────────────────────────────
 
 @app.get("/health")
-def health():
-    return {"status": "ok", "version": "2.0.0", "env": settings.app_env}
+def health(db=Depends(_get_db)):
+    """
+    Endpoint de santé — utilisé par Railway et les outils de monitoring.
+    Vérifie les variables d'environnement et la base de données.
+    OpenAI non testé ici (évite le coût à chaque sonde).
+    """
+    from app.engines.health_check import health_check
+    report = health_check(db_conn=db, check_openai=False)
+    status_code = 200 if report.status in ("OK", "DEGRADED") else 503
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "status":    report.status,
+            "version":   "2.0.0",
+            "env":       settings.app_env,
+            "db":        report.db_ok,
+            "warnings":  report.warnings,
+            "errors":    report.errors,
+            "timestamp": report.timestamp,
+        },
+    )
+
+
+@app.get("/api/v1/health/full")
+def health_full(user=Depends(_get_current_user), db=Depends(_get_db)):
+    """
+    Rapport de santé complet avec test OpenAI — réservé aux administrateurs.
+    """
+    from app.engines.health_check import health_check
+    report = health_check(db_conn=db, check_openai=True)
+    return report.to_dict()
 
 
 # ── Webhook WhatsApp ──────────────────────────────────────────────────────────
@@ -617,6 +697,178 @@ def get_dossier(
     return d
 
 
+@app.get("/api/v1/dashboard/metriques")
+def get_metriques(user=Depends(_get_current_user), db=Depends(_get_db)):
+    """
+    Métriques de qualité et d'utilisation pour le pilotage de Facilim.
+
+    Trois catégories :
+      - qualite   : enrichissement, alertes, maturité, confiance
+      - utilisation : dossiers, durée, relances, abandons
+      - analyse   : risques, protections, acteurs
+    """
+    # ── Qualité ───────────────────────────────────────────────────────────────
+    # Requête résiliente : vérifie d'abord les colonnes disponibles pour éviter
+    # une erreur 500 si les colonnes Phase 3+ ne sont pas encore présentes.
+    try:
+        _cols_dossiers = {r[1] for r in db.execute("PRAGMA table_info(dossiers)").fetchall()}
+        _has_maturite  = "score_maturite_cerfa" in _cols_dossiers
+        _has_confiance = "niveau_confiance_analyse" in _cols_dossiers
+        _has_niveau    = "niveau_maturite" in _cols_dossiers
+
+        _select_maturite  = "AVG(score_maturite_cerfa)" if _has_maturite  else "0"
+        _select_nb_faible = "COUNT(CASE WHEN niveau_maturite = 'FAIBLE'    THEN 1 END)" if _has_niveau else "0"
+        _select_nb_moyen  = "COUNT(CASE WHEN niveau_maturite = 'MOYEN'     THEN 1 END)" if _has_niveau else "0"
+        _select_nb_solide = "COUNT(CASE WHEN niveau_maturite = 'SOLIDE'    THEN 1 END)" if _has_niveau else "0"
+        _select_nb_excel  = "COUNT(CASE WHEN niveau_maturite = 'EXCELLENT' THEN 1 END)" if _has_niveau else "0"
+        _select_conf_fort = "COUNT(CASE WHEN niveau_confiance_analyse = 'FORT'   THEN 1 END)" if _has_confiance else "0"
+        _select_conf_moy  = "COUNT(CASE WHEN niveau_confiance_analyse = 'MOYEN'  THEN 1 END)" if _has_confiance else "0"
+        _select_conf_fai  = "COUNT(CASE WHEN niveau_confiance_analyse = 'FAIBLE' THEN 1 END)" if _has_confiance else "0"
+
+        stats_qualite = db.execute(f"""
+            SELECT
+                COUNT(*) as nb_total,
+                {_select_maturite}  as maturite_moy,
+                {_select_nb_faible} as nb_faible,
+                {_select_nb_moyen}  as nb_moyen,
+                {_select_nb_solide} as nb_solide,
+                {_select_nb_excel}  as nb_excellent,
+                {_select_conf_fort} as nb_confiance_fort,
+                {_select_conf_moy}  as nb_confiance_moyen,
+                {_select_conf_fai}  as nb_confiance_faible
+            FROM dossiers WHERE deleted_at IS NULL
+        """).fetchone()
+    except Exception:
+        stats_qualite = None
+
+    # Taux d'enrichissement moyen (dans synthese_json)
+    enrichissements = db.execute("""
+        SELECT synthese_json FROM dossiers
+        WHERE synthese_json LIKE '%_taux_enrichissement_moyen%' AND deleted_at IS NULL
+        LIMIT 200
+    """).fetchall()
+    taux_enrichissement_list = []
+    for row in enrichissements:
+        try:
+            d = json.loads(row["synthese_json"] or "{}")
+            t = d.get("_taux_enrichissement_moyen")
+            if t and isinstance(t, (int, float)):
+                taux_enrichissement_list.append(t)
+        except Exception:
+            pass
+    taux_enrichissement_moy = (
+        round(sum(taux_enrichissement_list) / len(taux_enrichissement_list), 2)
+        if taux_enrichissement_list else None
+    )
+
+    # Alertes qualité récurrentes (top 5 messages)
+    alertes_rows = db.execute("""
+        SELECT alertes_qualite_json FROM dossiers
+        WHERE alertes_qualite_json != '[]' AND alertes_qualite_json IS NOT NULL
+        AND deleted_at IS NULL LIMIT 500
+    """).fetchall()
+    alertes_compteur: dict[str, int] = {}
+    for row in alertes_rows:
+        try:
+            alertes = json.loads(row["alertes_qualite_json"] or "[]")
+            for a in alertes:
+                cle = str(a)[:80]
+                alertes_compteur[cle] = alertes_compteur.get(cle, 0) + 1
+        except Exception:
+            pass
+    alertes_top = sorted(alertes_compteur.items(), key=lambda x: -x[1])[:5]
+
+    # ── Utilisation ───────────────────────────────────────────────────────────
+    stats_util = db.execute("""
+        SELECT
+            COUNT(*) as nb_total,
+            COUNT(CASE WHEN statut = 'EN_COLLECTE'  THEN 1 END) as nb_collecte,
+            COUNT(CASE WHEN statut = 'EN_ANALYSE'   THEN 1 END) as nb_analyse,
+            COUNT(CASE WHEN statut = 'COMPLET'      THEN 1 END) as nb_complet,
+            COUNT(CASE WHEN statut = 'INCOMPLET'    THEN 1 END) as nb_incomplet,
+            COUNT(CASE WHEN statut = 'SOUMIS'       THEN 1 END) as nb_soumis
+        FROM dossiers WHERE deleted_at IS NULL
+    """).fetchone()
+
+    # Relances (comptage dans synthese_json)
+    relances_rows = db.execute("""
+        SELECT synthese_json FROM dossiers
+        WHERE synthese_json LIKE '%_relances_faites%' AND deleted_at IS NULL
+        LIMIT 200
+    """).fetchall()
+    nb_relances_total = 0
+    nb_dossiers_avec_relance = 0
+    for row in relances_rows:
+        try:
+            d = json.loads(row["synthese_json"] or "{}")
+            rf = d.get("_relances_faites") or {}
+            if rf:
+                nb_dossiers_avec_relance += 1
+                nb_relances_total += len(rf)
+        except Exception:
+            pass
+
+    # ── Analyse ───────────────────────────────────────────────────────────────
+    analyse_rows = db.execute("""
+        SELECT analyse_situation_json FROM dossiers
+        WHERE analyse_situation_json != '{}' AND analyse_situation_json IS NOT NULL
+        AND deleted_at IS NULL LIMIT 200
+    """).fetchall()
+
+    risques_compteur: dict[str, int] = {}
+    protections_compteur: dict[str, int] = {}
+    acteurs_compteur: dict[str, int] = {}
+
+    for row in analyse_rows:
+        try:
+            a = json.loads(row["analyse_situation_json"] or "{}")
+            for r in a.get("facteurs_risque", []):
+                risques_compteur[str(r)[:60]] = risques_compteur.get(str(r)[:60], 0) + 1
+            for p in a.get("facteurs_protection", []):
+                protections_compteur[str(p)[:60]] = protections_compteur.get(str(p)[:60], 0) + 1
+            for act in a.get("acteurs_mobilisables", []):
+                nom = act.get("acteur", "")
+                if nom:
+                    acteurs_compteur[nom] = acteurs_compteur.get(nom, 0) + 1
+        except Exception:
+            pass
+
+    return {
+        "qualite": {
+            "nb_dossiers_total":       stats_qualite["nb_total"] if stats_qualite else 0,
+            "maturite_moyenne":        round(stats_qualite["maturite_moy"] or 0, 1) if stats_qualite else 0,
+            "repartition_maturite": {
+                "faible":    stats_qualite["nb_faible"]    if stats_qualite else 0,
+                "moyen":     stats_qualite["nb_moyen"]     if stats_qualite else 0,
+                "solide":    stats_qualite["nb_solide"]    if stats_qualite else 0,
+                "excellent": stats_qualite["nb_excellent"] if stats_qualite else 0,
+            },
+            "repartition_confiance": {
+                "fort":   stats_qualite["nb_confiance_fort"]   if stats_qualite else 0,
+                "moyen":  stats_qualite["nb_confiance_moyen"]  if stats_qualite else 0,
+                "faible": stats_qualite["nb_confiance_faible"] if stats_qualite else 0,
+            },
+            "taux_enrichissement_moyen": taux_enrichissement_moy,
+            "alertes_recurrentes":       [{"message": k, "occurrences": v} for k, v in alertes_top],
+        },
+        "utilisation": {
+            "nb_dossiers_total":        stats_util["nb_total"]     if stats_util else 0,
+            "en_collecte":              stats_util["nb_collecte"]  if stats_util else 0,
+            "complets":                 stats_util["nb_complet"]   if stats_util else 0,
+            "incomplets":               stats_util["nb_incomplet"] if stats_util else 0,
+            "soumis":                   stats_util["nb_soumis"]    if stats_util else 0,
+            "nb_dossiers_avec_relance": nb_dossiers_avec_relance,
+            "nb_relances_total":        nb_relances_total,
+        },
+        "analyse": {
+            "nb_dossiers_analyses": len(analyse_rows),
+            "risques_top5":        sorted(risques_compteur.items(),     key=lambda x: -x[1])[:5],
+            "protections_top5":    sorted(protections_compteur.items(), key=lambda x: -x[1])[:5],
+            "acteurs_top10":       sorted(acteurs_compteur.items(),     key=lambda x: -x[1])[:10],
+        },
+    }
+
+
 @app.get("/api/v1/dashboard/alertes")
 def get_alertes(user=Depends(_get_current_user), db=Depends(_get_db)):
     """Alertes et flags humains pour le Dashboard."""
@@ -641,6 +893,70 @@ def get_alertes(user=Depends(_get_current_user), db=Depends(_get_db)):
     return {
         "flags":    [dict(f) for f in flags],
         "relances": [dict(r) for r in relances],
+    }
+
+
+@app.get("/api/v1/dashboard/dossiers/{dossier_id}/appui-evaluation")
+def get_appui_evaluation(
+    dossier_id: str,
+    user=Depends(_get_current_user),
+    db=Depends(_get_db),
+):
+    """
+    Retourne l'analyse de situation et les données d'appui à l'évaluation.
+
+    Ce panneau éclaire la lecture professionnelle sans orienter automatiquement.
+    Il identifie des besoins, des risques, des protections et des acteurs mobilisables.
+
+    IMPORTANT : les acteurs listés sont des pistes, jamais une orientation automatique.
+    La décision appartient au professionnel.
+    """
+    row = db.execute(
+        """SELECT analyse_situation_json, synthese_situation, niveau_confiance_analyse,
+                  score_maturite_cerfa, niveau_maturite, alertes_qualite_json,
+                  rapport_qualite_json, profil_principal, profil_secondaire
+           FROM dossiers WHERE id = ?""",
+        (dossier_id,),
+    ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Dossier non trouvé")
+
+    analyse_dict = json.loads(row["analyse_situation_json"] or "{}")
+    rapport_dict = json.loads(row["rapport_qualite_json"]   or "{}")
+
+    return {
+        "dossier_id":            dossier_id,
+        "niveau_confiance":      row["niveau_confiance_analyse"] or "FAIBLE",
+        "score_maturite":        row["score_maturite_cerfa"] or 0,
+        "niveau_maturite":       row["niveau_maturite"] or "",
+        "profil_principal":      row["profil_principal"] or "",
+        "profil_secondaire":     row["profil_secondaire"] or "",
+        # Synthèse de situation
+        "synthese_situation":    row["synthese_situation"] or "",
+        "points_a_completer":    analyse_dict.get("points_a_completer", []),
+        # Facteurs
+        "facteurs_risque":       analyse_dict.get("facteurs_risque", []),
+        "facteurs_protection":   analyse_dict.get("facteurs_protection", []),
+        # Besoins
+        "besoins_compensation":  analyse_dict.get("besoins_compensation", []),
+        "besoins_accompagnement": analyse_dict.get("besoins_accompagnement", []),
+        # Vigilances
+        "points_vigilance":      analyse_dict.get("points_vigilance", []),
+        "alertes_qualite":       json.loads(row["alertes_qualite_json"] or "[]"),
+        # Acteurs (pistes, jamais orientations automatiques)
+        "acteurs_susceptibles":  analyse_dict.get("acteurs_mobilisables", []),
+        # Préconisations
+        "preconisations":        analyse_dict.get("preconisations", []),
+        # Méta
+        "avertissement":         (
+            "Ce panneau est un outil d'appui à la décision professionnelle. "
+            "Il ne constitue ni une orientation ni une décision. "
+            "Toute décision appartient au professionnel accompagnant."
+        ),
+        # Coverage de collecte (inférenceur)
+        "inference_coverage":    json.loads(
+            (db.execute("SELECT synthese_json FROM dossiers WHERE id=?", (dossier_id,)).fetchone() or {}).get("synthese_json") or "{}"
+        ).get("_inference_coverage") or {},
     }
 
 
@@ -1469,6 +1785,329 @@ def valider_droits(
     return {"success": True, "statut": "COMPLET"}
 
 
+# ── Fonctions utilitaires de traçabilité CERFA — Point 3 ─────────────────────
+
+def _anonymiser_email_audit(email: str) -> dict:
+    """
+    Minimisation RGPD : retourne hash SHA256 + domaine uniquement.
+    L'email complet n'est jamais stocké dans cerfa_audit_log.
+
+    Exemples :
+      "nassim@facilim.fr"  → {"email_hash": "abc...", "email_domaine": "@facilim.fr"}
+      ""                   → {"email_hash": "",         "email_domaine": ""}
+    """
+    import hashlib
+    email = (email or "").strip().lower()
+    if not email:
+        return {"email_hash": "", "email_domaine": ""}
+    h = hashlib.sha256(email.encode("utf-8")).hexdigest()
+    domaine = "@" + email.split("@")[-1] if "@" in email else "@inconnu"
+    return {"email_hash": h, "email_domaine": domaine}
+
+
+def _log_cerfa_audit(
+    db,
+    dossier_id: str,
+    event_type: str,
+    canal: str | None,
+    acteur_id: str | None,
+    acteur_type: str,
+    details: dict,
+) -> None:
+    """
+    Insère une ligne dans cerfa_audit_log.
+    Silencieux en cas d'erreur : le journal ne doit jamais bloquer le flux principal.
+    """
+    import uuid as _uuid
+    import json as _json
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        db.execute(
+            """INSERT INTO cerfa_audit_log
+               (id, dossier_id, event_type, event_at, canal, acteur_id, acteur_type,
+                details_json, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                str(_uuid.uuid4()),
+                dossier_id,
+                event_type,
+                now,
+                canal,
+                acteur_id,
+                acteur_type,
+                _json.dumps(details, ensure_ascii=False) if details else None,
+                now,
+            ),
+        )
+    except Exception as e:
+        logger.warning("[AUDIT_CERFA] Journalisation ignorée (%s) — %s", event_type, e)
+
+
+# ── Constantes Point 2 ───────────────────────────────────────────────────────
+
+_TEXTE_VALIDATION_PROFESSIONNEL = (
+    "Je confirme avoir vérifié le dossier, l'avoir remis au bénéficiaire "
+    "ou à son représentant légal pour relecture, et l'avoir informé que "
+    "la validation finale lui appartient."
+)
+
+
+# ── Routes Point 2 ────────────────────────────────────────────────────────────
+
+@app.post("/api/v1/dossiers/{dossier_id}/valider-transmission")
+def valider_transmission(
+    dossier_id: str,
+    user=Depends(_get_current_user),
+    db=Depends(_get_db),
+):
+    """
+    Validation professionnelle avant envoi.
+    Vérifie les alertes bloquantes (B1-B3) du comité d'agents.
+    N'exige PAS encore la validation usager ici — vérifiée à l'envoi.
+    INSERT dans cerfa_validations (type=professionnel).
+    """
+    import hashlib as _hl
+    from app.engines.comite_agents import executer_comite_agents
+
+    dossier_row = db.execute("SELECT * FROM dossiers WHERE id = ?", (dossier_id,)).fetchone()
+    if not dossier_row:
+        raise HTTPException(status_code=404, detail="Dossier non trouvé")
+
+    donnees = json.loads(dossier_row.get("synthese_json", "{}") or "{}")
+
+    # Exécuter le comité en mode pré-validation
+    session_row = db.execute(
+        "SELECT persona_actif FROM sessions_whatsapp WHERE dossier_id = ? LIMIT 1",
+        (dossier_id,)
+    ).fetchone()
+    profil = (session_row["persona_actif"] if session_row else "adulte") or "adulte"
+
+    rapport = executer_comite_agents(
+        donnees=donnees, profil=profil,
+        dossier_id=dossier_id, db=db, mode="pre_validation"
+    )
+
+    # Journaliser le rapport
+    _log_cerfa_audit(
+        db=db, dossier_id=dossier_id,
+        event_type="analyse_agents", canal="dashboard",
+        acteur_id=user.get("sub"), acteur_type="professionnel",
+        details={
+            "score":              rapport.score,
+            "alertes_bloquantes": [a.message for a in rapport.alertes_bloquantes],
+            "alertes_mineures":   [a.message for a in rapport.alertes_mineures],
+            "pieces_manquantes":  rapport.pieces_manquantes,
+            "droits_potentiels":  rapport.droits_potentiels,
+            "agents_actives":     rapport.agents_actives,
+            "bloquant":           rapport.bloquant,
+        },
+    )
+
+    if rapport.bloquant:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "Des alertes bloquantes empêchent la validation.",
+                "alertes_bloquantes": [a.message for a in rapport.alertes_bloquantes],
+                "score": rapport.score,
+            }
+        )
+
+    # INSERT cerfa_validations
+    import uuid as _uuid
+    now = datetime.now(timezone.utc).isoformat()
+    synthese_hash = _hl.sha256(
+        json.dumps(donnees, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+    version = dossier_row.get("version") or 1
+
+    db.execute(
+        """INSERT INTO cerfa_validations
+           (id, dossier_id, validated_by, canal, type_validation, validated_at,
+            synthese_hash, cerfa_pdf_hash, dossier_version, confirmation_texte,
+            reponse_usager, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            str(_uuid.uuid4()), dossier_id, user.get("sub"), "dashboard",
+            "professionnel", now, synthese_hash, None, version,
+            _TEXTE_VALIDATION_PROFESSIONNEL, "OUI", now,
+        )
+    )
+    _log_cerfa_audit(
+        db=db, dossier_id=dossier_id,
+        event_type="validation_professionnel", canal="dashboard",
+        acteur_id=user.get("sub"), acteur_type="professionnel",
+        details={"synthese_hash": synthese_hash, "version": version},
+    )
+    db.commit()
+
+    return {
+        "success": True,
+        "score":              rapport.score,
+        "alertes_mineures":   [a.message for a in rapport.alertes_mineures],
+        "droits_potentiels":  rapport.droits_potentiels,
+        "recommandations":    rapport.recommandations,
+    }
+
+
+@app.get("/api/v1/dossiers/{dossier_id}/rapport-comite")
+def get_rapport_comite(
+    dossier_id: str,
+    user=Depends(_get_current_user),
+    db=Depends(_get_db),
+):
+    """Retourne le dernier rapport comité depuis cerfa_audit_log. Lecture seule."""
+    row = db.execute(
+        """SELECT details_json, event_at FROM cerfa_audit_log
+           WHERE dossier_id = ? AND event_type = 'analyse_agents'
+           ORDER BY event_at DESC LIMIT 1""",
+        (dossier_id,)
+    ).fetchone()
+    if not row:
+        return {"rapport": None, "message": "Aucun rapport disponible pour ce dossier."}
+    return {"rapport": json.loads(row["details_json"] or "{}"), "date": row["event_at"]}
+
+
+def _ajouter_page_couverture(cerfa_bytes: bytes, donnees: dict) -> bytes:
+    """
+    Génère une page de couverture avec reportlab et la fusionne AVANT le CERFA avec pypdf.
+    Le CERFA officiel et ses champs ne sont pas modifiés.
+    En cas d'erreur, lève une exception — l'appelant décide du fallback.
+    """
+    import io
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors
+    from reportlab.lib.units import cm
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
+    from pypdf import PdfReader, PdfWriter
+
+    # ── Génération de la page de couverture avec reportlab ───────────────────
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        topMargin=3 * cm,
+        bottomMargin=2.5 * cm,
+        leftMargin=2.5 * cm,
+        rightMargin=2.5 * cm,
+    )
+    styles = getSampleStyleSheet()
+
+    style_titre = ParagraphStyle(
+        "titre",
+        parent=styles["Heading1"],
+        fontSize=14,
+        textColor=colors.HexColor("#1a3a6b"),
+        spaceAfter=0.3 * cm,
+        alignment=TA_CENTER,
+        fontName="Helvetica-Bold",
+    )
+    style_sous_titre = ParagraphStyle(
+        "sous_titre",
+        parent=styles["Normal"],
+        fontSize=11,
+        textColor=colors.HexColor("#1a3a6b"),
+        spaceAfter=0.8 * cm,
+        alignment=TA_CENTER,
+        fontName="Helvetica",
+    )
+    style_corps = ParagraphStyle(
+        "corps",
+        parent=styles["Normal"],
+        fontSize=10,
+        leading=16,
+        spaceAfter=0.5 * cm,
+        alignment=TA_JUSTIFY,
+        fontName="Helvetica",
+    )
+    style_important = ParagraphStyle(
+        "important",
+        parent=styles["Normal"],
+        fontSize=10,
+        leading=16,
+        spaceAfter=0.5 * cm,
+        alignment=TA_JUSTIFY,
+        fontName="Helvetica-Bold",
+        textColor=colors.HexColor("#1a3a6b"),
+    )
+    style_pied = ParagraphStyle(
+        "pied",
+        parent=styles["Normal"],
+        fontSize=8,
+        textColor=colors.HexColor("#666666"),
+        alignment=TA_CENTER,
+        fontName="Helvetica",
+    )
+
+    # Informations de contexte
+    nom_prenom = donnees.get("nom_prenom", "").strip()
+    reference  = donnees.get("reference", "")
+    dept       = donnees.get("departement", "")
+    mention_ref = f"Dossier : {reference} — Département {dept}" if reference else ""
+
+    elements = [
+        Spacer(1, 1.5 * cm),
+        Paragraph("FACILIM", style_titre),
+        Paragraph("Aide à la préparation du dossier MDPH", style_sous_titre),
+        HRFlowable(width="100%", thickness=1, color=colors.HexColor("#1a3a6b")),
+        Spacer(1, 1 * cm),
+        Paragraph("INFORMATIONS IMPORTANTES", style_important),
+        Spacer(1, 0.5 * cm),
+        Paragraph(
+            "Ce dossier a été préparé avec l'assistance de Facilim à partir des informations "
+            "déclarées par le demandeur et des documents transmis.",
+            style_corps,
+        ),
+        Paragraph(
+            "Le contenu du dossier doit être <b>relu, vérifié et validé</b> par le demandeur "
+            "ou son représentant légal avant signature et transmission à la MDPH.",
+            style_corps,
+        ),
+        Paragraph(
+            "<b>La responsabilité de l'exactitude des informations appartient au signataire "
+            "du dossier.</b>",
+            style_important,
+        ),
+        Spacer(1, 0.5 * cm),
+        HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#cccccc")),
+        Spacer(1, 0.5 * cm),
+        Paragraph(
+            "Facilim est un outil numérique d'aide à la constitution de dossiers MDPH. "
+            "Il ne se substitue pas à l'accompagnement professionnel ni à la responsabilité "
+            "du demandeur ou de son représentant légal.",
+            style_corps,
+        ),
+    ]
+
+    if nom_prenom:
+        elements.insert(3, Paragraph(f"Dossier préparé pour : <b>{nom_prenom}</b>", style_sous_titre))
+    if mention_ref:
+        elements.append(Spacer(1, 0.5 * cm))
+        elements.append(Paragraph(mention_ref, style_pied))
+
+    doc.build(elements)
+    couverture_bytes = buf.getvalue()
+
+    # ── Fusion : couverture AVANT le CERFA ───────────────────────────────────
+    writer = PdfWriter()
+
+    # Page 1 : couverture
+    couverture_reader = PdfReader(io.BytesIO(couverture_bytes))
+    for page in couverture_reader.pages:
+        writer.add_page(page)
+
+    # Pages 2-N : CERFA officiel (inchangé)
+    cerfa_reader = PdfReader(io.BytesIO(cerfa_bytes))
+    for page in cerfa_reader.pages:
+        writer.add_page(page)
+
+    out = io.BytesIO()
+    writer.write(out)
+    return out.getvalue()
+
+
 def _generer_cerfa_pdf(dossier_id: str, db) -> tuple[str, bytes]:
     """
     Génère le PDF CERFA pour un dossier et retourne (pdf_path, pdf_bytes).
@@ -1556,10 +2195,55 @@ def _generer_cerfa_pdf(dossier_id: str, db) -> tuple[str, bytes]:
     try:
         from app.engines.pdf.v2_bridge import generer_cerfa_depuis_synthese
         pdf_bytes = generer_cerfa_depuis_synthese(donnees, service_type, num_mdph)
+
+        # ── Calcul des hashes avant page de couverture (Point 3) ─────────────
+        import hashlib as _hl, json as _j_hash
+        _synthese_hash = _hl.sha256(
+            _j_hash.dumps(donnees, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
+        _cerfa_pdf_hash = _hl.sha256(pdf_bytes).hexdigest()
+
+        # ── Page de couverture (Point 5) ──────────────────────────────────────
+        # Générée séparément avec reportlab, fusionnée AVANT le CERFA avec pypdf.
+        # Ne modifie pas le CERFA officiel ni ses champs.
+        _nb_pages = 0
+        try:
+            from pypdf import PdfReader as _PR
+            _nb_pages = len(_PR(io.BytesIO(pdf_bytes)).pages)
+        except Exception:
+            pass
+        try:
+            pdf_bytes = _ajouter_page_couverture(pdf_bytes, donnees)
+            logger.info("[CERFA] Page de couverture ajoutée | dossier=%s", dossier_id[:8])
+        except Exception as e_cov:
+            logger.warning("[CERFA] Page de couverture ignorée (%s) — PDF CERFA seul transmis", e_cov)
+
+        # ── Journalisation audit (Point 3) ────────────────────────────────────
+        # Hash calculé sur le CERFA officiel (avant couverture) pour cohérence
+        # avec la validation Point 2 qui portera sur le même contenu.
+        _dossier_version = db.execute(
+            "SELECT version FROM dossiers WHERE id = ?", (dossier_id,)
+        ).fetchone()
+        _version_val = (_dossier_version["version"] if _dossier_version and _dossier_version["version"] else 1)
+        _log_cerfa_audit(
+            db=db,
+            dossier_id=dossier_id,
+            event_type="generation_cerfa",
+            canal="dashboard",
+            acteur_id=None,
+            acteur_type="systeme",
+            details={
+                "synthese_hash": _synthese_hash,
+                "pdf_hash":      _cerfa_pdf_hash,
+                "version":       _version_val,
+                "nb_pages":      _nb_pages,
+            },
+        )
+
         with open(output_path, "wb") as f:
             f.write(pdf_bytes)
-        logger.info("[CERFA V2] PDF généré via moteur V2 | dossier=%s | %d bytes",
-                    dossier_id[:8], len(pdf_bytes))
+        logger.info("[CERFA V2] PDF généré via moteur V2 | dossier=%s | %d bytes | hash=%s…",
+                    dossier_id[:8], len(pdf_bytes), _synthese_hash[:8])
         return output_path, pdf_bytes
 
     except Exception as e_v2:
@@ -1656,6 +2340,38 @@ def envoyer_cerfa(
             detail="Aucun email trouvé pour cet usager. Ajoutez l'email dans le dossier avant d'envoyer.",
         )
 
+    # ── B4 : Validation usager requise avant envoi ────────────────────────────
+    _val_usager = db.execute(
+        """SELECT id FROM cerfa_validations
+           WHERE dossier_id = ? AND type_validation = 'usager' AND reponse_usager = 'OUI'
+           ORDER BY validated_at DESC LIMIT 1""",
+        (dossier_id,)
+    ).fetchone()
+    if not _val_usager:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Validation usager requise avant envoi. "
+                "Le bénéficiaire doit confirmer la relecture du dossier via WhatsApp."
+            ),
+        )
+
+    # ── B5 : Validation professionnelle requise avant envoi ───────────────────
+    _val_pro = db.execute(
+        """SELECT id FROM cerfa_validations
+           WHERE dossier_id = ? AND type_validation = 'professionnel' AND reponse_usager = 'OUI'
+           ORDER BY validated_at DESC LIMIT 1""",
+        (dossier_id,)
+    ).fetchone()
+    if not _val_pro:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Validation professionnelle requise avant envoi. "
+                "Utilisez le bouton 'Valider la remise' dans le dossier."
+            ),
+        )
+
     # Générer le PDF
     try:
         _, pdf_bytes = _generer_cerfa_pdf(dossier_id, db)
@@ -1676,11 +2392,16 @@ def envoyer_cerfa(
         "subject":     f"[Facilim] Votre formulaire MDPH — Dossier {reference}",
         "htmlContent": f"""
             <p>{civilite},</p>
-            <p>Votre dossier MDPH est prêt. Veuillez trouver en pièce jointe le formulaire CERFA 15692*01
-            pré-rempli avec les informations que vous nous avez transmises.</p>
-            <p><strong>À faire :</strong> vérifiez les informations, signez le formulaire et déposez-le
-            à votre MDPH (département {donnees.get('departement', '')}).</p>
-            <p>En cas de question, contactez votre professionnel accompagnant.</p>
+            <p>Vous trouverez ci-joint votre dossier MDPH préparé à partir des informations
+            déclarées et des documents transmis dans le cadre de votre accompagnement.</p>
+            <p>Nous vous invitons à <strong>relire attentivement l'ensemble du dossier</strong>
+            avant toute signature ou transmission à la MDPH afin de vérifier l'exactitude,
+            l'exhaustivité et l'actualité des informations figurant dans le document.</p>
+            <p>Facilim est un outil d'aide à la préparation du dossier.<br/>
+            La validation finale des informations et la signature du CERFA relèvent
+            exclusivement du demandeur ou de son représentant légal.</p>
+            <p>En cas d'erreur, d'information manquante ou de modification à apporter,
+            merci de nous en informer avant toute transmission à la MDPH.</p>
             <p>Cordialement,<br/>L'équipe Facilim</p>
         """,
         "attachment":  [{"content": pdf_b64, "name": f"CERFA_MDPH_{reference}.pdf"}],

@@ -401,18 +401,22 @@ def _mapper_droits(
     # Distincte de CMI stationnement (PMR / périmètre de marche < 200 m)
     has_cmi_generic = any(t in droits_str for t in ("CMI", "CARTE MOBILITE", "CARTE INVALIDITE"))
 
-    if cmi_priorite or (has_cmi_generic and not cmi_stationnement):
-        # CMI invalidité / priorité
+    # CMI priorité : coché uniquement si explicitement déclaré.
+    if cmi_priorite:
         cases.append("Case à cocher P17 3" if is_enfant else "Case à cocher P17 13")
 
-    if cmi_stationnement or (has_cmi_generic and not cmi_priorite):
-        # CMI stationnement
+    # CMI stationnement : coché uniquement si explicitement déclaré.
+    # Suppression de la déduction par élimination (has_cmi_generic and not cmi_priorite).
+    # "CMI" sans précision du type → aucune case cochée + signalement à l'éducateur.
+    if cmi_stationnement:
         cases.append("Case à cocher P17 4" if is_enfant else "Case à cocher P17 14")
 
-    # Si les deux flags sont True → on coche les deux cases (personne cumule les deux situations)
-    if cmi_priorite and cmi_stationnement:
-        # S'assurer que les deux sont cochées (les ajouts conditionnels ci-dessus les ont déjà ajoutées)
-        pass
+    # Si has_cmi_generic mais aucun type précisé → log pour relecture manuelle
+    if has_cmi_generic and not cmi_priorite and not cmi_stationnement:
+        logger.info(
+            "[CERFA P17] CMI demandée sans précision du type (priorité/stationnement). "
+            "Aucune case cochée — à qualifier par l'éducateur avant signature."
+        )
 
     # AAH : Allocation aux Adultes Handicapés (≥ 20 ans)
     if "AAH" in droits_str:
@@ -949,52 +953,47 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     duree_hebdo            = ds.get("duree_hebdomadaire") or ""
     en_recherche_emploi    = ds.get("en_recherche_emploi", False)
 
-    # Règle 6 — France Travail = Pôle Emploi (toutes sources)
-    _pe_sources = " ".join([
-        str(ds.get("inscrit_pole_emploi", "")),
-        str(cerfa_rep.get("inscrit_pole_emploi", "")),
-        str(dossier.get("inscrit_pole_emploi", "")),
-        str(ds.get("france_travail", "")),
-        str(cerfa_rep.get("france_travail", "")),
-    ]).lower()
+    # inscrit_pole_emploi / France Travail
+    # Règle : uniquement depuis clés booléennes structurées.
+    # Suppression de la concaténation multi-sources et des recherches de sous-chaînes
+    # ("ft ", "oui", "true" dans chaîne assemblée → trop de faux positifs).
     inscrit_pole_emploi = bool(
-        ds.get("inscrit_pole_emploi") or cerfa_rep.get("inscrit_pole_emploi")
+        ds.get("inscrit_pole_emploi")
+        or cerfa_rep.get("inscrit_pole_emploi")
         or dossier.get("inscrit_pole_emploi")
-        or "france travail" in _pe_sources or "pôle emploi" in _pe_sources
-        or "pole emploi" in _pe_sources or "ft " in _pe_sources
-        or "true" in _pe_sources or "oui" in _pe_sources
+        or ds.get("france_travail")
+        or cerfa_rep.get("france_travail")
     )
 
     date_inscription_pe    = ds.get("date_inscription_pole_emploi") or ""
 
-    # Règle 8 — Formation : toutes sources, nom de l'établissement
+    # en_formation : clé structurée ou réponse explicite "oui" à la question dédiée.
+    # Suppression de "formation" in situation_pro — le mot seul ne suffit pas.
     en_formation           = bool(
         ds.get("en_formation") or cerfa_rep.get("en_formation")
         or dossier.get("en_formation")
         or ds.get("qualification_section_c") == "oui"
-        or "formation" in situation_pro
     )
     nom_formation          = (ds.get("nom_formation") or cerfa_rep.get("formation_actuelle")
                                or dossier.get("type_formation_pro") or "")
     organisme_formation    = (ds.get("organisme_formation") or cerfa_rep.get("etablissement_formation")
                                or ds.get("etablissement_formation") or "")
 
-    # Règle 7 — Accident AT → a déjà travaillé
-    # Règle 2 — a_deja_travaille depuis toutes les sources
+    # a_deja_travaille : clé structurée ou déduction métier forte (AT confirmé).
+    # Suppression de la liste de sous-chaînes dans situation_pro.
+    # Règle : "cdd" dans un texte ne prouve pas une expérience passée.
     _a_deja_travaille_raw = (
         ds.get("a_deja_travaille") or cerfa_rep.get("a_deja_travaille")
         or dossier.get("a_deja_travaille")
     )
-    # Si booléen explicite False → respecter ; sinon déduire
     if _a_deja_travaille_raw is False:
-        _a_deja_travaille = False
+        _a_deja_travaille = False   # déclaration explicite "jamais travaillé" → respecter
+    elif _a_deja_travaille_raw:
+        _a_deja_travaille = True    # déclaration explicite "a travaillé" → respecter
+    elif accident_travail:
+        _a_deja_travaille = True    # déduction métier forte : AT confirmé = a travaillé
     else:
-        _a_deja_travaille = bool(
-            _a_deja_travaille_raw or accident_travail
-            or any(w in situation_pro for w in
-                   ["en emploi", "esat", "cdi", "cdd", "contrat", "licencié", "inaptitude",
-                    "travaillé", "reconversion", "arrêt de travail", "arret de travail"])
-        )
+        _a_deja_travaille = False   # inconnu → ne pas cocher
 
     # Enrichissement depuis la réponse WhatsApp "qualification_parcours" (D1/D2)
     _qual_rep = (cerfa_rep.get("qualification_parcours") or "").lower()
@@ -1539,13 +1538,31 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
 
     # "Avec qui vivez-vous ?" (P5 1-5)
     tl = type_logement_detail
-    _en_etablissement = any(x in tl for x in [
-        "établissement", "institution", "medico", "ehpad", "esat", "foyer d'hébergement",
+    # _en_etablissement : uniquement formulations précises du lieu de résidence.
+    # Suppression : "établissement", "medico", "institution", "esat" seuls (trop larges).
+    import unicodedata as _ucd
+    _tl_sa = "".join(
+        c for c in _ucd.normalize("NFD", tl.lower())
+        if _ucd.category(c) != "Mn"
+    )  # version sans accents pour comparaison robuste
+    _en_etablissement = any(x in _tl_sa for x in [
+        "foyer d hebergement", "foyer hebergement",
+        "ehpad", "mas ", "maison d accueil specialisee",
+        "fam ", "foyer d accueil medicalise",
+        "ime residentiel", "esms",
+        "heberge en etablissement", "residence en etablissement",
+        "vit en etablissement",
     ])
-    _heberge_parents  = any(x in tl for x in [
-        "chez parents", "hébergé parents", "chez ses parents", "domicile parental",
-        "parents", "mère", "père", "famille",
-    ]) or _est_mineur_strict  # ← enfant < 16 → toujours chez ses parents par défaut
+
+    # _heberge_parents : uniquement formulations précises du domicile parental.
+    # Suppression : "parents", "mère", "père", "famille" seuls (trop larges — faux positifs).
+    # Mineur < 16 → chez ses parents SAUF si hébergé en établissement (détecté ci-dessus).
+    _heberge_parents = any(x in _tl_sa for x in [
+        "chez ses parents", "chez parents",
+        "domicile parental", "domicile de ses parents",
+        "heberge par ses parents", "heberge par ses parents",
+        "chez sa mere", "chez son pere",
+    ]) or (_est_mineur_strict and not _en_etablissement)
     _heberge_enfants  = any(x in tl for x in ["chez enfants", "hébergé enfants"])
     _heberge_ami      = any(x in tl for x in ["chez ami", "hébergé ami"])
     _heberge_famille  = any(x in tl for x in ["chez famille", "hébergé famille"])

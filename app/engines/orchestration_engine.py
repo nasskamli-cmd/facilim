@@ -434,6 +434,143 @@ class OrchestrationEngine:
                 elif k not in _champs_admin_pro:
                     donnees[k] = v  # champ nouveau → ajouter
 
+            # ── Verbatim significatif + chronologie + évaluation relance ─────────
+            _relance_a_injecter: str = ""   # instruction de relance pour le contexte, si nécessaire
+            if text.strip():
+                try:
+                    from app.engines.verbatim_engine import (
+                        accumuler_verbatim,
+                        enregistrer_enrichissement,
+                        evaluer_richesse_reponse,
+                        extraire_chronologie,
+                        section_depuis_onglet,
+                        section_eligible_relance,
+                    )
+                    # Chargement anticipé de l'onglet courant depuis nav_raw
+                    _nav_raw_pre = json.loads(dossier.get("contexte_navigation_json", "{}") or "{}")
+                    _onglet_pour_verbatim = _nav_raw_pre.get("onglet_courant", 2)
+
+                    donnees = accumuler_verbatim(donnees, text, _onglet_pour_verbatim)
+                    _chrono_existante = donnees.get("chronologie") or {}
+                    _chrono_maj = extraire_chronologie(text, _chrono_existante)
+                    if _chrono_maj:
+                        donnees["chronologie"] = _chrono_maj
+
+                    # ── Taux d'enrichissement — mesure post-relance ──────────────
+                    # Si une relance était active au tour précédent, ce message est
+                    # la réponse post-relance : on calcule et enregistre le taux.
+                    _texte_avant_relance = donnees.pop("_texte_avant_relance", None)
+                    _section_relance_mesure = donnees.pop("_section_relance_mesure", None)
+                    if _texte_avant_relance and _section_relance_mesure:
+                        donnees = enregistrer_enrichissement(
+                            donnees, _section_relance_mesure, _texte_avant_relance, text
+                        )
+                        taux = donnees.get("_taux_enrichissement_moyen", 0)
+                        logger.info(
+                            "[ENRICHISSEMENT] section=%s avant=%d mots après=%d mots taux=%.2f",
+                            _section_relance_mesure,
+                            len(_texte_avant_relance.split()),
+                            len(text.split()),
+                            taux,
+                        )
+
+                    # ── Logique de relance ────────────────────────────────────────
+                    # Règles strictes :
+                    #   1. Une seule relance max par section (pas par champ)
+                    #   2. Sections B/D/E uniquement (B/C/E si enfant)
+                    #   3. Si déjà relancé sur cette section → avancer sans insister
+                    _section_courante = section_depuis_onglet(_onglet_pour_verbatim)
+                    _profil_pour_relance = service_type if service_type not in ("identification", "") else "adulte"
+                    _eligible = section_eligible_relance(_section_courante, _profil_pour_relance)
+
+                    if _eligible:
+                        _est_pauvre, _raison_pauvrete = evaluer_richesse_reponse(text)
+                        if _est_pauvre:
+                            # Vérifier si une relance a déjà eu lieu sur cette section
+                            _relances_faites: dict = donnees.get("_relances_faites") or {}
+                            _cle_relance = f"relance_{_section_courante}"
+                            if not _relances_faites.get(_cle_relance):
+                                # Première réponse pauvre → préparer la relance
+                                # Mémoriser le texte pauvre pour mesure post-relance
+                                donnees["_texte_avant_relance"]   = text
+                                donnees["_section_relance_mesure"] = _section_courante
+                                _relances_faites[_cle_relance] = True
+                                donnees["_relances_faites"] = _relances_faites
+                                _relance_a_injecter = (
+                                    f"\n⚡ INSTRUCTION RELANCE (priorité absolue) :\n"
+                                    f"La réponse précédente est trop courte ou manque de détails "
+                                    f"({_raison_pauvrete}).\n"
+                                    f"Avant de passer à la question suivante, pose UNE question de "
+                                    f"précision sur ce qui vient d'être dit.\n"
+                                    f"Exemple : 'Pouvez-vous me dire depuis quand ?' ou "
+                                    f"'Qu'est-ce que ça change concrètement dans votre quotidien ?'\n"
+                                    f"Ton : chaleureux, jamais insistant. C'est la SEULE relance possible.\n"
+                                    f"Après cette relance, quelle que soit la réponse, passer à la suite.\n"
+                                )
+                                logger.info(
+                                    "[RELANCE] Section %s — réponse pauvre détectée, relance injectée",
+                                    _section_courante,
+                                )
+                            else:
+                                logger.info(
+                                    "[RELANCE] Section %s — relance déjà effectuée, avancer",
+                                    _section_courante,
+                                )
+                except Exception as _vb_err:
+                    logger.debug("[VERBATIM] Non bloquant : %s", _vb_err)
+
+            # ── Inférenceur MDPH — relance ciblée si aucune relance Sprint 2 active ──
+            # L'inférenceur détecte les hypothèses non confirmées et propose
+            # une relance critique ciblée si aucune relance générique n'est déjà en attente.
+            # Aucune hypothèse n'est injectée dans le CERFA — uniquement dans les relances.
+            if not _relance_a_injecter and text.strip():
+                try:
+                    from app.engines.inferencer_mdph import (
+                        inferer_contexte_mdph,
+                        relance_critique_active,
+                    )
+                    _profil_h_inf = donnees.get("profil_principal", "")
+                    _profil_mdph_inf = service_type if service_type not in ("identification", "") else "adulte"
+                    _contexte_inf = inferer_contexte_mdph(donnees, _profil_h_inf, _profil_mdph_inf)
+
+                    # Stocker le coverage pour le dashboard
+                    donnees["_inference_coverage"] = {
+                        "total":       _contexte_inf.coverage.total_detectees,
+                        "taux":        _contexte_inf.coverage.taux_couverture,
+                        "nc_critiques": _contexte_inf.coverage.non_confirmees_critiques,
+                    }
+
+                    # Relance critique — uniquement si pas déjà posée
+                    _posees_inf: set = set(donnees.get("_relances_inferees_posees") or [])
+                    _relance_inf = relance_critique_active(_contexte_inf, _posees_inf)
+                    if _relance_inf:
+                        _posees_inf.add(_relance_inf.hypothese_id)
+                        donnees["_relances_inferees_posees"] = list(_posees_inf)
+                        _relance_a_injecter = (
+                            f"\n⚡ RELANCE CIBLÉE (priorité absolue) :\n"
+                            f"Une information importante n'a pas encore été abordée.\n"
+                            f"Pose cette question avant de continuer : "
+                            f"{_relance_inf.question}\n"
+                            f"Ton : chaleureux, jamais insistant. C'est la SEULE question à poser maintenant.\n"
+                        )
+                        logger.info(
+                            "[INFERENCER] Relance critique injectée : %s | section=%s",
+                            _relance_inf.hypothese_id, _relance_inf.section,
+                        )
+
+                    # Stocker les alertes inférées pour le rapport qualité
+                    donnees["_alertes_inferees"] = [
+                        {"message": a.message, "niveau": a.niveau, "section": a.section}
+                        for a in _contexte_inf.alertes_qualite
+                    ]
+                    # Stocker les informations manquantes pour l'analyse de situation
+                    donnees["_infos_manquantes_inferees"] = [
+                        {"label": i.label, "section": i.section, "priorite": i.priorite.value}
+                        for i in _contexte_inf.informations_manquantes
+                    ]
+                except Exception as _inf_err:
+                    logger.debug("[INFERENCER] Non bloquant : %s", _inf_err)
+
             # ── Navigation par onglets — chargement anticipé (requis par le bloc langue) ──
             nav_raw = json.loads(dossier.get("contexte_navigation_json", "{}") or "{}")
             nav = TabNavigationState(
@@ -522,6 +659,27 @@ class OrchestrationEngine:
                         service_type, usager["id"][:8],
                     )
 
+            # ── Profilage multi-handicap (recalcul si diagnostics mis à jour) ──
+            # Uniquement si diagnostics ou traitements viennent d'être enrichis
+            if nouvelles_donnees.get("diagnostics") or nouvelles_donnees.get("traitements"):
+                try:
+                    from app.engines.profil_handicap_engine import (
+                        detecter_profil_handicap,
+                        persister_profil_handicap,
+                    )
+                    profil_h = detecter_profil_handicap(donnees)
+                    if profil_h.profil_principal:
+                        donnees["profil_principal"]  = profil_h.profil_principal
+                        donnees["profil_secondaire"] = profil_h.profil_secondaire
+                        donnees["tags_detectes"]     = profil_h.tags_detectes
+                        persister_profil_handicap(self.db, dossier_id, profil_h)
+                        logger.info(
+                            "[PROFIL_H] dossier=%s principal=%s secondaire=%s",
+                            dossier_id[:8], profil_h.profil_principal, profil_h.profil_secondaire,
+                        )
+                except Exception as _ph_err:
+                    logger.warning("[PROFIL_H] Détection échouée (non bloquant) : %s", _ph_err)
+
             # ── Nettoyage des champs interdits selon le service ───────────────
             if service_type == "enfant":
                 donnees = appliquer_contraintes_profil(
@@ -570,6 +728,13 @@ class OrchestrationEngine:
                                 nav.onglet_courant - 1, nav.onglet_courant)
 
             # ── Réponse via le service dédié ──────────────────────────────────
+            # Injection relance dans les données si nécessaire
+            if _relance_a_injecter:
+                donnees["_instruction_relance_active"] = _relance_a_injecter
+            elif donnees.get("_instruction_relance_active"):
+                # Nettoyer l'instruction après utilisation (évite persistance indéfinie)
+                del donnees["_instruction_relance_active"]
+
             reponse = agent.respond(
                 message=text,
                 history=historique,
@@ -587,9 +752,20 @@ class OrchestrationEngine:
             historique = self._appliquer_fenetre_memoire(historique)
             _sauvegarder_nav(self.db, dossier_id, nav, historique, donnees)
 
-            # Analyse si collecte complète
-            if agent.is_complete(donnees):
-                self._trigger_analysis(dossier_id, usager, donnees)
+            # ── Point 2 : collecte complète → narratif + qualité + validation ──
+            if agent.is_complete(donnees) and service_type != "validation_en_attente":
+                self._generer_narratif_et_qualite(dossier_id, donnees, service_type)
+                self._demander_validation_usager(
+                    dossier_id, usager, donnees, phone_wa, session["id"]
+                )
+                _sauvegarder_nav(self.db, dossier_id, nav, historique, donnees)
+                return {"success": True, "action": "validation_demandee", "dossier_id": dossier_id}
+
+            # ── Point 2 : traitement réponse validation usager ───────────────────
+            if service_type == "validation_en_attente":
+                return self._traiter_reponse_validation_usager(
+                    text, dossier_id, usager, donnees, phone_wa, session["id"]
+                )
 
             self.wa.send_text(phone_wa, reponse, dossier_id=dossier_id, db_conn=self.db)
             self._handle_structure_search(text, donnees, phone_wa, dossier_id)
@@ -598,6 +774,151 @@ class OrchestrationEngine:
             step.metadata["manquants"]    = len(agent.missing_fields(donnees))
 
         return {"success": True, "action": "response_sent", "dossier_id": dossier_id}
+
+    # ── Génération narrative + rapport qualité ───────────────────────────────
+
+    def _generer_narratif_et_qualite(
+        self,
+        dossier_id: str,
+        donnees: dict[str, Any],
+        profil_mdph: str,
+    ) -> None:
+        """
+        Déclenché quand la collecte est complète.
+        1. Génère les textes narratifs CERFA (sections B/C/D/E)
+        2. Calcule le rapport qualité + score de maturité
+        3. Persiste le tout en base
+        Non bloquant : les erreurs sont loggées sans interrompre le pipeline.
+        """
+        try:
+            from app.engines.cerfa_narrative_engine import generer_textes_narratifs
+            from app.engines.cerfa_quality_agent import verifier_qualite_cerfa
+
+            profil_h = donnees.get("profil_principal", "")
+            textes = generer_textes_narratifs(
+                donnees=donnees,
+                profil_mdph=profil_mdph,
+                openai_client=self.llm,
+                profil_handicap=profil_h,
+                model="gpt-4o",
+            )
+
+            # Récupérer les alertes inférées stockées en cours de conversation
+            _alertes_inf_raw = donnees.get("_alertes_inferees") or []
+
+            rapport = verifier_qualite_cerfa(
+                donnees=donnees,
+                textes_narratifs=textes,
+                profil_mdph=profil_mdph,
+                alertes_inferees=_alertes_inf_raw,
+            )
+
+            # Fusionner les textes narratifs dans donnees pour la persistance
+            donnees.update(textes)
+
+            alertes = rapport.alertes_rouges + rapport.alertes_oranges
+            self.db.execute(
+                """
+                UPDATE dossiers SET
+                    texte_b_vie_quotidienne = ?,
+                    texte_c_scolarite       = ?,
+                    texte_d_situation_pro   = ?,
+                    texte_e_projet_vie      = ?,
+                    score_maturite_cerfa    = ?,
+                    niveau_maturite         = ?,
+                    alertes_qualite_json    = ?,
+                    rapport_qualite_json    = ?
+                WHERE id = ?
+                """,
+                (
+                    textes.get("texte_b_vie_quotidienne", ""),
+                    textes.get("texte_c_scolarite", ""),
+                    textes.get("texte_d_situation_pro", ""),
+                    textes.get("texte_e_projet_vie", ""),
+                    rapport.score_maturite,
+                    rapport.niveau_maturite,
+                    json.dumps(alertes, ensure_ascii=False),
+                    json.dumps({
+                        "alertes_rouges":        rapport.alertes_rouges,
+                        "alertes_oranges":       rapport.alertes_oranges,
+                        "zones_pauvres":         rapport.zones_pauvres,
+                        "contradictions":        rapport.contradictions,
+                        "dimensions_manquantes": rapport.dimensions_manquantes_E,
+                        "score_maturite":        rapport.score_maturite,
+                        "niveau_maturite":       rapport.niveau_maturite,
+                        "retentissement_absent": rapport.retentissement_absent,
+                        "projet_vie_incomplet":  rapport.projet_vie_incomplet,
+                    }, ensure_ascii=False),
+                    dossier_id,
+                ),
+            )
+            self.db.commit()
+
+            logger.info(
+                "[NARRATIF] dossier=%s score_maturite=%d niveau=%s alertes_rouges=%d",
+                dossier_id[:8], rapport.score_maturite, rapport.niveau_maturite,
+                len(rapport.alertes_rouges),
+            )
+
+            # ── Analyse de situation (Sprint 5) ──────────────────────────────
+            try:
+                from app.engines.analyse_situation_engine import analyser_situation
+                rapport_dict = {
+                    "alertes_rouges":        rapport.alertes_rouges,
+                    "retentissement_absent": rapport.retentissement_absent,
+                    "projet_vie_incomplet":  rapport.projet_vie_incomplet,
+                    "zones_pauvres":         rapport.zones_pauvres,
+                    "contradictions":        rapport.contradictions,
+                    "score_maturite":        rapport.score_maturite,
+                }
+                _infos_man_raw = donnees.get("_infos_manquantes_inferees") or []
+                analyse = analyser_situation(
+                    donnees=donnees,
+                    textes_narratifs=textes,
+                    rapport_qualite=rapport_dict,
+                    profil_mdph=profil_mdph,
+                    openai_client=self.llm,
+                    infos_manquantes_inferees=_infos_man_raw,
+                )
+                analyse_dict = analyse.to_dict()
+                self.db.execute(
+                    """
+                    UPDATE dossiers SET
+                        analyse_situation_json   = ?,
+                        synthese_situation       = ?,
+                        niveau_confiance_analyse = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        json.dumps(analyse_dict, ensure_ascii=False),
+                        analyse.synthese_situation,
+                        analyse.niveau_confiance,
+                        dossier_id,
+                    ),
+                )
+                self.db.commit()
+                logger.info(
+                    "[ANALYSE] dossier=%s confiance=%s acteurs=%d preconisations=%d",
+                    dossier_id[:8], analyse.niveau_confiance,
+                    len(analyse.acteurs_mobilisables),
+                    len(analyse.preconisations),
+                )
+            except Exception as _ae:
+                logger.warning("[ANALYSE] Non bloquant : %s", _ae)
+
+            # Notification dashboard si alertes rouges
+            if rapport.alertes_rouges:
+                try:
+                    self.notif.send_quality_alert(
+                        dossier_id=dossier_id,
+                        alertes=rapport.alertes_rouges,
+                        score_maturite=rapport.score_maturite,
+                    )
+                except Exception:
+                    pass  # notification non bloquante
+
+        except Exception as e:
+            logger.error("[NARRATIF] Échec génération narratif (non bloquant) : %s", e, exc_info=True)
 
     # ── Gestion du consentement ──────────────────────────────────────────────
 
@@ -663,6 +984,24 @@ class OrchestrationEngine:
                 f"Votre accompagnant(e) m'a déjà transmis {_nb} information(s) — "
                 f"je ne vous poserai pas les questions correspondantes.\n\n"
             ) if _nb > 0 else ""
+
+            # ── Message d'information post-consentement (Point 1) ─────────────
+            # Envoyé UNE SEULE FOIS, uniquement quand result == "accepted".
+            # Protection naturelle : ce bloc n'est jamais atteint si :
+            #   - consentement déjà présent → retour "accepted_already" ligne 614
+            #   - reprise de conversation → _handle_consent_flow non appelée
+            #   - relance dashboard → _handle_consent_flow non appelée
+            _MSG_INFO_FACILIM = (
+                "ℹ️ Facilim prépare votre dossier MDPH à partir des informations "
+                "que vous nous communiquez et des documents transmis.\n\n"
+                "Avant toute signature ou transmission à la MDPH, il est important "
+                "de relire l'ensemble du dossier et de vérifier l'exactitude des informations.\n\n"
+                "Vous restez libre de modifier, compléter ou corriger tout élément "
+                "avant validation finale."
+            )
+            self.wa.send_text(phone_wa, _MSG_INFO_FACILIM)
+            logger.info("[CONSENT] Message information post-consentement envoyé | usager=%s",
+                        usager["id"][:8])
 
             # Vérifier si la langue est déjà choisie (ne pas renvoyer le menu en boucle)
             _langue_deja_choisie = _donnees_connues.get("_langue_choisie")
@@ -913,6 +1252,157 @@ Document :
             return {"success": True, "action": "image_analyzed", "piece_id": piece_id}
 
     # ── Déclenchement de l'analyse ───────────────────────────────────────────
+
+    # ── Point 2 : Validation finale usager ──────────────────────────────────
+
+    _TEXTE_VALIDATION_USAGER = (
+        "📋 Votre dossier MDPH est prêt.\n\n"
+        "Avant de finaliser :\n\n"
+        "✅ Je confirme avoir pris connaissance du contenu du dossier "
+        "préparé en mon nom et l'avoir relu attentivement.\n\n"
+        "✅ Je confirme avoir eu la possibilité de corriger les informations "
+        "si nécessaire.\n\n"
+        "✅ Je comprends que Facilim est un outil d'aide à la préparation "
+        "du dossier.\n\n"
+        "✅ Je comprends que la validation finale des informations et la "
+        "signature du dossier relèvent de ma responsabilité ou de celle "
+        "de mon représentant légal.\n\n"
+        "Répondez OUI pour confirmer\n"
+        "ou NON pour revenir à votre dossier."
+    )
+
+    def _demander_validation_usager(
+        self,
+        dossier_id: str,
+        usager: dict,
+        donnees: dict,
+        phone_wa: str,
+        session_id: str,
+    ) -> None:
+        """
+        Bascule l'état en 'validation_en_attente' et envoie le texte de validation.
+        Appelé quand is_complete() est True.
+        """
+        # Basculer l'état de session
+        self.db.execute(
+            "UPDATE sessions_whatsapp SET persona_actif = 'validation_en_attente' WHERE id = ?",
+            (session_id,)
+        )
+        self.db.commit()
+        # Envoyer le texte de validation
+        self.wa.send_text(phone_wa, self._TEXTE_VALIDATION_USAGER,
+                          dossier_id=dossier_id, db_conn=self.db)
+        logger.info("[VALIDATION] Texte validation envoyé | dossier=%s | usager=%s",
+                    dossier_id[:8], usager["id"][:8])
+
+    def _traiter_reponse_validation_usager(
+        self,
+        text: str,
+        dossier_id: str,
+        usager: dict,
+        donnees: dict,
+        phone_wa: str,
+        session_id: str,
+    ) -> dict:
+        """
+        Traite la réponse OUI/NON de l'usager à la validation finale.
+        OUI → INSERT cerfa_validations + _trigger_analysis
+        NON → INSERT cerfa_validations (refus tracé) + retour collecte
+        Autre → renvoi du texte de validation
+        """
+        import hashlib as _hl, json as _j, uuid as _uuid
+        from datetime import datetime, timezone
+
+        texte_norm = text.strip().lower()
+        _MOTS_OUI = {"oui", "yes", "ok", "d'accord", "dacord", "j'accepte", "accepte"}
+        _MOTS_NON = {"non", "no", "refus", "refuse", "annuler", "retour"}
+
+        if texte_norm not in _MOTS_OUI and texte_norm not in _MOTS_NON:
+            # Réponse non reconnue → rappel du texte
+            self.wa.send_text(phone_wa, self._TEXTE_VALIDATION_USAGER,
+                              dossier_id=dossier_id, db_conn=self.db)
+            return {"success": True, "action": "validation_rappel", "dossier_id": dossier_id}
+
+        reponse = "OUI" if texte_norm in _MOTS_OUI else "NON"
+        now = datetime.now(timezone.utc).isoformat()
+
+        # Hash du contenu au moment de la validation
+        synthese_hash = _hl.sha256(
+            _j.dumps(donnees, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
+
+        # Récupérer le hash du dernier PDF généré depuis cerfa_audit_log
+        _audit_row = self.db.execute(
+            """SELECT details_json FROM cerfa_audit_log
+               WHERE dossier_id = ? AND event_type = 'generation_cerfa'
+               ORDER BY event_at DESC LIMIT 1""",
+            (dossier_id,)
+        ).fetchone()
+        cerfa_pdf_hash = None
+        if _audit_row:
+            try:
+                _d = _j.loads(_audit_row["details_json"] or "{}")
+                cerfa_pdf_hash = _d.get("pdf_hash")
+            except Exception:
+                pass
+
+        # Récupérer la version du dossier
+        _dossier_row = self.db.execute(
+            "SELECT version FROM dossiers WHERE id = ?", (dossier_id,)
+        ).fetchone()
+        version = (_dossier_row["version"] if _dossier_row and _dossier_row["version"] else 1)
+
+        # INSERT cerfa_validations
+        self.db.execute(
+            """INSERT INTO cerfa_validations
+               (id, dossier_id, validated_by, canal, type_validation, validated_at,
+                synthese_hash, cerfa_pdf_hash, dossier_version, confirmation_texte,
+                reponse_usager, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                str(_uuid.uuid4()), dossier_id, usager["id"], "whatsapp", "usager",
+                now, synthese_hash, cerfa_pdf_hash, version,
+                self._TEXTE_VALIDATION_USAGER, reponse, now
+            )
+        )
+
+        # INSERT cerfa_audit_log
+        from app.main import _log_cerfa_audit
+        _log_cerfa_audit(
+            db=self.db, dossier_id=dossier_id,
+            event_type="validation_usager", canal="whatsapp",
+            acteur_id=usager["id"], acteur_type="usager",
+            details={"reponse": reponse, "synthese_hash": synthese_hash,
+                     "pdf_hash": cerfa_pdf_hash, "version": version},
+        )
+        self.db.commit()
+
+        if reponse == "OUI":
+            self.wa.send_text(
+                phone_wa,
+                "✅ Merci ! Votre confirmation a bien été enregistrée.\n\n"
+                "Votre professionnel accompagnant va finaliser l'envoi de votre dossier.\n"
+                "Vous recevrez le formulaire par email pour vérification avant signature.",
+                dossier_id=dossier_id, db_conn=self.db,
+            )
+            logger.info("[VALIDATION] OUI enregistré | dossier=%s", dossier_id[:8])
+            self._trigger_analysis(dossier_id, usager, donnees)
+            return {"success": True, "action": "validation_acceptee", "dossier_id": dossier_id}
+        else:
+            # Remettre l'état en collecte
+            self.db.execute(
+                "UPDATE sessions_whatsapp SET persona_actif = 'adulte' WHERE id = ?",
+                (session_id,)
+            )
+            self.db.commit()
+            self.wa.send_text(
+                phone_wa,
+                "Votre dossier est conservé. Vous pouvez le compléter ou le corriger.\n"
+                "Contactez votre professionnel accompagnant si vous avez des questions.",
+                dossier_id=dossier_id, db_conn=self.db,
+            )
+            logger.info("[VALIDATION] NON enregistré | dossier=%s", dossier_id[:8])
+            return {"success": True, "action": "validation_refusee", "dossier_id": dossier_id}
 
     def _trigger_analysis(
         self,

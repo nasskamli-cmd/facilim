@@ -24,6 +24,8 @@ logger = logging.getLogger("facilim.pdf.section_b")
 def mapper_section_b(dossier_cerfa: DossierCERFA, cases_cerfa: dict[str, Any]) -> dict[str, Any]:
     """
     Retourne les champs PDF des Onglets 4, 5 et 6 (vie quotidienne → besoins).
+    Utilise le texte narratif Phase 3 si disponible (qualité supérieure).
+    Fallback sur les données brutes si absent.
     """
     fields: dict[str, Any] = {}
     c = dossier_cerfa.section_c  # section_c = Vie Quotidienne dans le schéma Facilim
@@ -41,7 +43,14 @@ def mapper_section_b(dossier_cerfa: DossierCERFA, cases_cerfa: dict[str, Any]) -
         if key in cases_cerfa:
             fields[key] = cases_cerfa[key]
 
-    _set(fields, "Texte P5 difficultes_quotidiennes", c.difficultes_quotidiennes)
+    # Texte narratif Phase 3 (prioritaire si présent et suffisant)
+    _texte_narratif_b = getattr(dossier_cerfa, "texte_b_vie_quotidienne", None) or ""
+    if _texte_narratif_b and len(_texte_narratif_b) >= 100:
+        _set(fields, "Texte P5 difficultes_quotidiennes", _texte_narratif_b)
+        logger.debug("[PDF/section_b] Texte narratif Phase 3 utilisé (%d chars)", len(_texte_narratif_b))
+    else:
+        _set(fields, "Texte P5 difficultes_quotidiennes", c.difficultes_quotidiennes)
+
     _set(fields, "Texte P5 type_logement",            c.type_logement)
     _set(fields, "Texte P5 ressources_mensuelles",    c.ressources_mensuelles)
     _set(fields, "Texte P5 allocations_percues",      c.allocations_percues)

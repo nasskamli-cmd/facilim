@@ -325,6 +325,40 @@ CREATE_TABLES_SQL: list[str] = [
     )
     """,
 
+    # ── Traçabilité CERFA — Point 3 ──────────────────────────────────────────
+    # cerfa_validations : preuve formelle immuable de chaque validation
+    # cerfa_audit_log   : journal append-only de tous les événements CERFA
+    # RGPD : emails non stockés en clair dans cerfa_audit_log
+    """
+    CREATE TABLE IF NOT EXISTS cerfa_validations (
+        id                  TEXT    PRIMARY KEY,
+        dossier_id          TEXT    NOT NULL,
+        validated_by        TEXT    NOT NULL,
+        canal               TEXT    NOT NULL,
+        type_validation     TEXT    NOT NULL,
+        validated_at        TEXT    NOT NULL,
+        synthese_hash       TEXT    NOT NULL,
+        cerfa_pdf_hash      TEXT,
+        dossier_version     INTEGER NOT NULL DEFAULT 1,
+        confirmation_texte  TEXT    NOT NULL,
+        reponse_usager      TEXT    NOT NULL,
+        created_at          TEXT    NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS cerfa_audit_log (
+        id              TEXT    PRIMARY KEY,
+        dossier_id      TEXT    NOT NULL,
+        event_type      TEXT    NOT NULL,
+        event_at        TEXT    NOT NULL,
+        canal           TEXT,
+        acteur_id       TEXT,
+        acteur_type     TEXT,
+        details_json    TEXT,
+        created_at      TEXT    NOT NULL
+    )
+    """,
+
     # ─── Index de performance ────────────────────────────────────────────────
     "CREATE INDEX IF NOT EXISTS idx_dossiers_usager ON dossiers (usager_id)",
     "CREATE INDEX IF NOT EXISTS idx_dossiers_statut ON dossiers (statut, updated_at)",
@@ -335,4 +369,9 @@ CREATE_TABLES_SQL: list[str] = [
     "CREATE INDEX IF NOT EXISTS idx_alertes_destinataire ON alertes (destinataire_id, acquittee)",
     "CREATE INDEX IF NOT EXISTS idx_pieces_dossier ON pieces_justificatives (dossier_id)",
     "CREATE INDEX IF NOT EXISTS idx_sessions_wa_tel ON sessions_whatsapp (telephone)",
+    # Index traçabilité CERFA
+    "CREATE INDEX IF NOT EXISTS idx_cerfa_validations_dossier ON cerfa_validations (dossier_id)",
+    "CREATE INDEX IF NOT EXISTS idx_cerfa_validations_date ON cerfa_validations (validated_at)",
+    "CREATE INDEX IF NOT EXISTS idx_cerfa_validations_type ON cerfa_validations (type_validation, dossier_id)",
+    "CREATE INDEX IF NOT EXISTS idx_cerfa_audit_dossier ON cerfa_audit_log (dossier_id, event_at)",
 ]

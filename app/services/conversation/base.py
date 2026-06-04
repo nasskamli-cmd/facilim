@@ -69,7 +69,7 @@ class ConversationAgent(ABC):
             response = openai_client.chat.completions.create(
                 model=model,
                 messages=messages,
-                max_tokens=250,
+                max_tokens=400,
                 temperature=0.4,
             )
             reponse = response.choices[0].message.content.strip()
@@ -131,6 +131,40 @@ class ConversationAgent(ABC):
             pass
 
         ctx = f"\n\n--- CONTEXTE SESSION ---\nOnglet en cours : {onglet_courant} — {titre}"
+
+        # Signal profil handicap — adapte le nombre de questions par message
+        _profil_principal  = donnees.get("profil_principal", "")
+        _profil_secondaire = donnees.get("profil_secondaire", "")
+        _sous_profil       = donnees.get("sous_profil", "")
+        _tags              = donnees.get("tags_detectes", [])
+        _PROFILS_COGNITIFS = {"tsa", "di", "cognitif"}
+        _PROFILS_FRAGILES  = {"psychique", "psychique_humeur", "psychique_psychotique",
+                               "maladie_chronique", "parcours_esms"}
+        if _profil_principal in _PROFILS_COGNITIFS or _profil_secondaire in _PROFILS_COGNITIFS:
+            ctx += "\n⚠️ PROFIL COGNITIF détecté (TSA/DI/cognitif) → MAXIMUM 1 question par message. Formulation très concrète."
+        elif _profil_principal in _PROFILS_FRAGILES or _profil_secondaire in _PROFILS_FRAGILES:
+            ctx += "\n⚠️ PROFIL FRAGILE détecté → maximum 2 questions par message. Ton particulièrement doux et patient."
+        elif _profil_principal:
+            ctx += f"\n📋 Profil handicap : {_profil_principal}" + (f" + {_profil_secondaire}" if _profil_secondaire else "") + " → 2 à 3 questions par message autorisées si thème cohérent."
+        if _tags:
+            ctx += f"\n🏷️ Tags : {', '.join(_tags)}"
+
+        # Questions spécifiques au profil — injectées selon l'onglet courant
+        if _profil_principal:
+            try:
+                from app.engines.profil_specifique_engine import (
+                    formater_questions_specifiques_pour_contexte,
+                )
+                from app.engines.verbatim_engine import section_depuis_onglet as _sdo
+                _section_courante = _sdo(onglet_courant)
+                if _section_courante:
+                    _qs = formater_questions_specifiques_pour_contexte(
+                        _profil_principal, _sous_profil or _profil_principal, _section_courante
+                    )
+                    if _qs:
+                        ctx += _qs
+            except Exception:
+                pass
         # Langue choisie explicitement prioritaire sur détection automatique
         _langue_choisie_code = donnees.get("_langue_choisie", "")
         _CODES = {"fr": "français", "en": "anglais", "es": "espagnol",
@@ -147,6 +181,14 @@ class ConversationAgent(ABC):
                 f"\n⚠️  Validation en attente sur l'onglet {onglet_courant}."
                 " Rappelle poliment de répondre OUI ou de corriger."
             )
+
+        # ── Instruction de relance (Sprint 2) ────────────────────────────────
+        # Injectée par l'orchestrateur quand la réponse précédente était pauvre.
+        # Elle prend la priorité absolue sur les questions normales.
+        _instruction_relance = donnees.get("_instruction_relance_active", "")
+        if _instruction_relance:
+            ctx += _instruction_relance
+            return ctx   # Retour immédiat — la relance est la seule instruction
 
         manquants = self.missing_fields(donnees)
         if manquants:

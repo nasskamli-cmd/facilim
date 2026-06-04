@@ -164,7 +164,8 @@ def _apply(conn: Any, version: str, filepath: Path, dialect: str) -> list[str]:
             benign = (
                 "duplicate column" in msg      # SQLite  : colonne déjà présente
                 or "already exists" in msg     # Postgres : table/index déjà présent
-                or (is_index and "no such column" in msg)  # index sur colonne absente = ignoré
+                or (is_index and "no such column" in msg)   # index sur colonne absente = ignoré
+                or (is_index and "no such table" in msg)    # index sur table absente = ignoré
             )
             if benign:
                 logger.warning("[MIGRATE] Ignore (deja applique) : %s...", stmt[:70])
