@@ -190,7 +190,23 @@ class ConversationAgent(ABC):
             ctx += _instruction_relance
             return ctx   # Retour immédiat — la relance est la seule instruction
 
-        manquants = self.missing_fields(donnees)
+        manquants_ids = [
+            item["id"] for item in self.CHECKLIST
+            if item.get("requis", True) and not donnees.get(item["id"])
+        ]
+        # Filtrer les champs déjà couverts par l'extraction documentaire
+        _knowledge = donnees.get("_document_knowledge") or {}
+        if _knowledge:
+            try:
+                from app.engines.document_functional_extractor import filtrer_couverts_par_document
+                manquants_ids = filtrer_couverts_par_document(manquants_ids, _knowledge)
+            except Exception:
+                pass
+
+        # Reconvertir en labels pour l'affichage
+        _id_to_label = {item["id"]: item["label"] for item in self.CHECKLIST}
+        manquants = [_id_to_label[mid] for mid in manquants_ids if mid in _id_to_label]
+
         if manquants:
             # Maximum 2 questions par message pour ne pas surcharger.
             # Le LLM les formule de façon naturelle et conversationnelle.

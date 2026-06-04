@@ -1143,17 +1143,83 @@ Document :
                             for k, v in extraits.items():
                                 if v and k not in synthese:
                                     synthese[k] = v
+
+                            # ── Extraction fonctionnelle Sprint P0.1 ────────────────
+                            # Complète l'extraction administrative existante avec les
+                            # connaissances métier (limitations, restrictions, freins…)
+                            try:
+                                from app.engines.document_functional_extractor import (
+                                    extraire_connaissance_document,
+                                    fusionner_dans_donnees,
+                                    calculer_audit,
+                                    log_audit,
+                                    detecter_type_document,
+                                )
+                                _nom_doc = f"document{ext}"
+                                _type_doc = detecter_type_document(texte)
+                                if _type_doc != "autre":
+                                    # Uniquement sur les bilans reconnus (PCR, ESRP, ESPO, UEROS, bilan)
+                                    knowledge = extraire_connaissance_document(
+                                        texte=texte,
+                                        nom_fichier=_nom_doc,
+                                        openai_client=self.llm,
+                                        model="gpt-4o",
+                                    )
+                                    if knowledge.nb_items_total > 0:
+                                        synthese = fusionner_dans_donnees(synthese, knowledge)
+                                        # Audit et ROI
+                                        from app.services.conversation import get_agent, service_type_from_persona
+                                        _session_doc = self.db.execute(
+                                            "SELECT persona_actif FROM sessions_whatsapp WHERE dossier_id = ? LIMIT 1",
+                                            (dossier_id,),
+                                        ).fetchone()
+                                        _stype = service_type_from_persona(
+                                            (_session_doc or {}).get("persona_actif", "adulte")
+                                        ) if _session_doc else "adulte"
+                                        _agent = get_agent(_stype)
+                                        audit = calculer_audit(knowledge, _agent.CHECKLIST)
+                                        log_audit(audit)
+                                        # Stocker l'audit pour le dashboard
+                                        synthese["_extraction_audit"] = {
+                                            "total_items":    audit.total_items,
+                                            "champs_alimentes": audit.champs_alimentes,
+                                            "gain_questions": audit.gain_questions,
+                                            "questions_supprimees": [
+                                                {"question": qs.question_label,
+                                                 "source_knowledge": qs.source_knowledge,
+                                                 "nb_items": qs.nb_items_source}
+                                                for qs in audit.questions_supprimees
+                                            ],
+                                            "type_document":  knowledge.type_document,
+                                        }
+                                        logger.info(
+                                            "[ORCH/DOC] Extraction P0.1 : %d items | %d questions évitées",
+                                            audit.total_items, audit.gain_questions,
+                                        )
+                            except Exception as _fe:
+                                logger.warning("[ORCH/DOC] Extracteur fonctionnel non bloquant : %s", _fe)
+
                             self.db.execute(
                                 "UPDATE dossiers SET synthese_json = ?, updated_at = ? WHERE id = ?",
                                 (_json.dumps(synthese, ensure_ascii=False), now, dossier_id),
                             )
+                            self.db.commit()
                             nb = len(extraits)
-                            self.wa.send_text(
-                                phone_wa,
-                                f"✅ J'ai analysé votre document et prérempli {nb} information(s) "
-                                f"dans votre dossier. Continuons !",
-                                dossier_id=dossier_id, db_conn=self.db,
-                            )
+                            nb_fonc = synthese.get("_extraction_audit", {}).get("total_items", 0)
+                            if nb_fonc > 0:
+                                self.wa.send_text(
+                                    phone_wa,
+                                    f"✅ Document analysé : {nb} donnée(s) administrative(s) et "
+                                    f"{nb_fonc} élément(s) fonctionnel(s) récupérés. Continuons !",
+                                    dossier_id=dossier_id, db_conn=self.db,
+                                )
+                            else:
+                                self.wa.send_text(
+                                    phone_wa,
+                                    f"✅ J'ai analysé votre document et prérempli {nb} information(s) "
+                                    f"dans votre dossier. Continuons !",
+                                    dossier_id=dossier_id, db_conn=self.db,
+                                )
                         else:
                             self.wa.send_text(
                                 phone_wa,
