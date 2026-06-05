@@ -1266,6 +1266,96 @@ def get_audit_events(
 
 
 # ── Compatibilité avec l'ancien main.py (route legacy) ───────────────────────
+# ── Analytics V2.2 — Mesure · Analyse · Pilotage ─────────────────────────────
+# Module totalement indépendant du pipeline CERFA.
+# Aucune modification du moteur métier.
+
+class EvaluationInput(BaseModel):
+    """Données saisies par le professionnel après correction d'un dossier."""
+    dossier_id:               str | None = None
+    date_evaluation:          str        = ""
+    evaluateur:               str        = "nassim"
+    version_facilim:          str        = ""
+    essms_source:             str        = ""
+    profil_mdph:              str        = ""
+    type_handicap:            str        = ""
+    type_dossier:             str        = ""
+    document_present:         bool       = False
+    type_document:            str        = ""
+    niveau_documentation:     int        = 0      # 0–3
+    score_b:                  float      = -1
+    score_c:                  float      = -1
+    score_d:                  float      = -1
+    score_e:                  float      = -1
+    score_maturite:           int        = 0
+    temps_correction:         float      = 0
+    temps_correction_b:       float      = 0
+    temps_correction_c:       float      = 0
+    temps_correction_d:       float      = 0
+    temps_correction_e:       float      = 0
+    temps_estime_sans_facilim: float     = 0
+    temps_reel_avec_facilim:  float      = 0
+    taux_reecriture_b:        float      = 0
+    taux_reecriture_c:        float      = 0
+    taux_reecriture_d:        float      = 0
+    taux_reecriture_e:        float      = 0
+    questions_supprimees:     int        = 0
+    items_extraits:           int        = 0
+    erreurs_detectees:        list[str]  = []
+    commentaire:              str        = ""
+
+
+@app.post("/api/v1/analytics/evaluations")
+def post_evaluation(
+    body: EvaluationInput,
+    user=Depends(_get_current_user),
+    db=Depends(_get_db),
+):
+    """
+    Enregistre une évaluation terrain.
+    Calcule automatiquement score_global, gain_temps et niveau_validation.
+    """
+    from app.analytics.quality_dashboard import enregistrer_evaluation
+    eval_id = enregistrer_evaluation(db, body.model_dump())
+    return {"success": True, "evaluation_id": eval_id}
+
+
+@app.get("/api/v1/analytics/dashboard")
+def get_analytics_dashboard(
+    debut: str = "",
+    fin:   str = "",
+    user=Depends(_get_current_user),
+    db=Depends(_get_db),
+):
+    """
+    Tableau de bord JSON complet — tous les KPI analytiques.
+    Paramètres optionnels : debut=YYYY-MM-DD, fin=YYYY-MM-DD
+    """
+    from app.analytics.quality_dashboard import generer_tableau_bord
+    try:
+        return generer_tableau_bord(db, periode_debut=debut, periode_fin=fin)
+    except Exception as e:
+        logger.error("[ANALYTICS] Dashboard error : %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/analytics/rapport")
+def get_analytics_rapport(
+    debut: str = "",
+    fin:   str = "",
+    user=Depends(_get_current_user),
+    db=Depends(_get_db),
+):
+    """Rapport exécutif texte — réponse aux 3 questions stratégiques."""
+    from app.analytics.quality_dashboard import generer_rapport_executif
+    try:
+        texte = generer_rapport_executif(db, periode_debut=debut, periode_fin=fin)
+        return {"rapport": texte}
+    except Exception as e:
+        logger.error("[ANALYTICS] Rapport error : %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Conservée pour ne pas casser les intégrations existantes
 
 @app.get("/api/v1/dashboard/nouveau-dossier")
