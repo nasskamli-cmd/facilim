@@ -82,9 +82,12 @@ def build_field_map(donnees: dict[str, Any], service_type: str = "adulte") -> di
     fields["Case à cocher P1 2"] = _check(
         type_dos in ("SITUATION_CHANGEE", "CHANGEMENT") or "changé" in hist or "change" in hist
     )
+    # Sprint P0.6 — Normalisation case-insensitive + accents pour réévaluation
+    _type_dos_norm = type_dos.lower().replace("é", "e").replace("è", "e")
     fields["Case à cocher P1 3"] = _check(
-        type_dos in ("REEVALUATION", "REVISION") or
-        "réévaluation" in hist or "reevaluation" in hist or "révision" in hist
+        type_dos in ("REEVALUATION", "REVISION", "RÉÉVALUATION", "RÉVISION")
+        or _type_dos_norm in ("reevaluation", "revision")
+        or any(k in hist for k in ("réévaluation", "reevaluation", "révision", "revision"))
     )
     fields["Case à cocher P1 A"] = _check(
         type_dos in ("RENOUVELLEMENT",) or "renouvell" in hist
@@ -135,7 +138,13 @@ def build_field_map(donnees: dict[str, Any], service_type: str = "adulte") -> di
     elif adresse:
         fields["Champ de texte P2 8"] = adresse
 
-    fields["Champ de texte P 2 9"] = _trunc(donnees.get("telephone", ""), 20)
+    # Sprint P0.6 — Correction mapping téléphone/commune
+    # Preuve CERFA Nassim : Champ de texte 24 = téléphone, P 2 9 = commune
+    fields["Champ de texte 24"]    = _trunc(donnees.get("telephone", ""), 20)
+    # Champ de texte P 2 9 = commune (déjà renseigné par le parsing adresse → Champ de texte 18)
+    # Assurer la cohérence en le renseignant aussi
+    if cp_m:
+        fields["Champ de texte P 2 9"] = adresse[cp_m.end():].strip().lstrip(",").strip()
     fields["Champ de texte 19"]    = "France"
 
     # NIR

@@ -403,9 +403,21 @@ def _verifier_themes_profil(
                     max_tokens=5,
                     temperature=0.0,
                 )
-                return "OUI" in rep.choices[0].message.content.upper()
+                # Sprint P0.6 — robustesse : gérer objet OpenAI ET dict
+                try:
+                    # Accès objet standard (OpenAI SDK)
+                    content = rep.choices[0].message.content
+                except AttributeError:
+                    # Fallback dict (réponse d'erreur ou SDK alternatif)
+                    try:
+                        choice = rep.choices[0] if hasattr(rep, 'choices') else rep['choices'][0]
+                        msg = choice.get('message', {}) if isinstance(choice, dict) else choice
+                        content = msg.get('content', '') if isinstance(msg, dict) else getattr(msg, 'content', '')
+                    except Exception:
+                        return True   # Impossible à lire → ne pas bloquer
+                return "OUI" in str(content).upper()
             except Exception:
-                return True   # En cas d'erreur → ne pas bloquer
+                return True   # En cas d'erreur réseau/API → ne pas bloquer
 
         # Vérification section B
         for theme in ps.themes_qualite_b:

@@ -2227,6 +2227,17 @@ def _generer_cerfa_pdf(dossier_id: str, db) -> tuple[str, bytes]:
     if type_dos:
         donnees["type_dossier"] = type_dos
 
+    # Sprint P0.6 — Enrichir donnees depuis colonnes DB si absentes de synthese_json
+    # Ces champs peuvent être stockés en colonne DB mais pas dans synthese_json.
+    if not donnees.get("numero_dossier_mdph"):
+        _ndm = dossier.get("numero_dossier_mdph", "")
+        if _ndm:
+            donnees["numero_dossier_mdph"] = _ndm
+    if not donnees.get("type_dossier") or donnees.get("type_dossier") == "INITIAL":
+        _td = dossier.get("type_dossier", "")
+        if _td and _td != "INITIAL":
+            donnees["type_dossier"] = _td
+
     # ── Contrôle qualité métier avant génération ────────────────────────────────
     _alertes_cerfa = []
 

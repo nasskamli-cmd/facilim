@@ -94,7 +94,17 @@ def _dossier_narratif_exploitable(donnees: dict) -> bool:
     # Ne pas regénérer si les textes existent déjà
     narratif_deja_genere = bool(donnees.get("texte_b_vie_quotidienne"))
 
-    return a_contenu_fonctionnel and a_identite_minimale and not narratif_deja_genere
+    # Sprint P0.6 — Anti-boucle : ne plus retenter si l'échec a été marqué
+    # (_narratif_echec est posé quand le moteur narratif a échoué et que
+    #  la collecte a été relancée pour éviter une boucle infinie de validation)
+    narratif_deja_tente_et_echoue = bool(donnees.get("_narratif_echec"))
+
+    return (
+        a_contenu_fonctionnel
+        and a_identite_minimale
+        and not narratif_deja_genere
+        and not narratif_deja_tente_et_echoue
+    )
 
 
 def _calculer_completude_live(donnees: dict) -> int:
@@ -672,6 +682,25 @@ class OrchestrationEngine:
             if service_type == "identification":
                 from app.services.conversation.identification import identification_agent as _id_agent
                 next_service = _id_agent.determine_next_service(donnees)
+
+                # Sprint P0.6 — Vérification de cohérence profil enfant :
+                # Si le dossier contient des indicateurs clairs d'un enfant
+                # (représentant légal, situation scolaire) mais que le profil calculé
+                # n'est pas "enfant", loguer un avertissement pour diagnostic.
+                if next_service and next_service not in ("enfant", "mixte"):
+                    _indic_enfant = any([
+                        donnees.get("representant_legal_nom"),
+                        donnees.get("representant_legal_lien"),
+                        donnees.get("situation_scolaire"),
+                        donnees.get("etablissement_scolaire"),
+                    ])
+                    if _indic_enfant:
+                        logger.warning(
+                            "[P0.6] Indicateurs enfant présents mais profil=%s — "
+                            "vérifier date_naissance='%s'",
+                            next_service, donnees.get("date_naissance", "?"),
+                        )
+
                 if next_service:
                     # Profil déterminé → verrouiller le service définitivement
                     self._switch_service(session["id"], next_service, usager, donnees)
@@ -799,11 +828,32 @@ class OrchestrationEngine:
             )
             if _declencher_narratif:
                 self._generer_narratif_et_qualite(dossier_id, donnees, service_type)
-                self._demander_validation_usager(
-                    dossier_id, usager, donnees, phone_wa, session["id"]
-                )
-                _sauvegarder_nav(self.db, dossier_id, nav, historique, donnees)
-                return {"success": True, "action": "validation_demandee", "dossier_id": dossier_id}
+
+                # Sprint P0.6 — Priorité 1 : vérifier que le narratif a réellement été généré.
+                # La validation finale NE DOIT PAS être envoyée si le moteur narratif a échoué.
+                # Un narratif absent = dossier non exploitable = pas de validation = collecte continue.
+                _narratif_ok = any([
+                    donnees.get("texte_b_vie_quotidienne"),
+                    donnees.get("texte_c_scolarite"),
+                    donnees.get("texte_d_situation_pro"),
+                    donnees.get("texte_e_projet_vie"),
+                ])
+                if _narratif_ok:
+                    self._demander_validation_usager(
+                        dossier_id, usager, donnees, phone_wa, session["id"]
+                    )
+                    _sauvegarder_nav(self.db, dossier_id, nav, historique, donnees)
+                    return {"success": True, "action": "validation_demandee", "dossier_id": dossier_id}
+                else:
+                    # Sprint P0.6 — Anti-boucle : marquer l'échec pour ne plus retenter
+                    # indéfiniment et ne pas renvoyer une fausse validation.
+                    donnees["_narratif_echec"] = True
+                    _sauvegarder_nav(self.db, dossier_id, nav, historique, donnees)
+                    logger.error(
+                        "[P0.6] Narratif non généré pour dossier=%s — validation bloquée, collecte continuée",
+                        dossier_id[:8],
+                    )
+                    # Ne pas return → continue vers send_text(reponse) ci-dessous
 
             # ── Point 2 : traitement réponse validation usager ───────────────────
             if service_type == "validation_en_attente":
