@@ -63,6 +63,38 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _dossier_narratif_exploitable(donnees: dict) -> bool:
+    """
+    Sprint P0.2 — H3.
+    Détermine si un dossier contient suffisamment de substance fonctionnelle
+    pour que le moteur narratif produise un texte exploitable.
+
+    Condition : au moins un contenu fonctionnel ET au moins une identité minimale.
+
+    Intentionnellement large : mieux vaut générer un texte partiel que rien.
+    Ne remplace pas is_complete() — s'y ajoute comme déclencheur alternatif.
+    """
+    # Contenu fonctionnel minimum (au moins un champ)
+    a_contenu_fonctionnel = any([
+        donnees.get("diagnostics"),
+        donnees.get("impact_quotidien"),
+        donnees.get("_verbatim_b"),
+        (donnees.get("_document_knowledge") or {}).get("limitations_fonctionnelles"),
+        (donnees.get("_document_knowledge") or {}).get("restrictions_medicales"),
+    ])
+
+    # Identité minimale (au moins nom ou date)
+    a_identite_minimale = any([
+        donnees.get("nom_prenom"),
+        donnees.get("date_naissance"),
+    ])
+
+    # Ne pas regénérer si les textes existent déjà
+    narratif_deja_genere = bool(donnees.get("texte_b_vie_quotidienne"))
+
+    return a_contenu_fonctionnel and a_identite_minimale and not narratif_deja_genere
+
+
 def _calculer_completude_live(donnees: dict) -> int:
     """
     Calcule un score de complétude (0-100) basé sur les champs clés remplis.
@@ -753,7 +785,14 @@ class OrchestrationEngine:
             _sauvegarder_nav(self.db, dossier_id, nav, historique, donnees)
 
             # ── Point 2 : collecte complète → narratif + qualité + validation ──
-            if agent.is_complete(donnees) and service_type != "validation_en_attente":
+            # Déclencheur 1 (original) : checklist 100 % complète
+            # Déclencheur 2 (P0.2-H3) : contenu fonctionnel suffisant même si
+            #   quelques champs administratifs secondaires manquent encore
+            _declencher_narratif = (
+                (agent.is_complete(donnees) or _dossier_narratif_exploitable(donnees))
+                and service_type != "validation_en_attente"
+            )
+            if _declencher_narratif:
                 self._generer_narratif_et_qualite(dossier_id, donnees, service_type)
                 self._demander_validation_usager(
                     dossier_id, usager, donnees, phone_wa, session["id"]

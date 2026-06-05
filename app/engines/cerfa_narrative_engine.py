@@ -28,6 +28,50 @@ from app.engines.verbatim_engine import (
 )
 from app.engines.profil_specifique_engine import formater_axes_retentissement
 
+
+def _formater_document_knowledge(donnees: dict, champs: list[str]) -> str:
+    """
+    Sprint P0.2 — H2.
+    Formate les informations extraites des documents pour injection dans les prompts.
+    Aucune inférence — uniquement les données réellement extraites.
+    Chaque item conserve sa valeur telle qu'extraite.
+    """
+    dk = donnees.get("_document_knowledge") or {}
+    if not dk:
+        return ""
+
+    _LABELS = {
+        "limitations_fonctionnelles": "LIMITATIONS FONCTIONNELLES",
+        "restrictions_medicales":     "RESTRICTIONS MÉDICALES",
+        "freins":                     "FREINS IDENTIFIÉS",
+        "projets":                    "PROJETS ET ORIENTATIONS",
+        "verbatim":                   "PAROLES DE LA PERSONNE",
+        "chronologie":                "CHRONOLOGIE",
+        "besoins":                    "BESOINS IDENTIFIÉS",
+        "ressources":                 "RESSOURCES ET CAPACITÉS",
+    }
+
+    lignes: list[str] = []
+    for champ in champs:
+        items = dk.get(champ, [])
+        if not items:
+            continue
+        lignes.append(f"\n{_LABELS.get(champ, champ.upper())} (depuis le bilan transmis) :")
+        for item in items[:10]:
+            valeur = item.get("valeur", "") if isinstance(item, dict) else str(item)
+            if valeur:
+                lignes.append(f"  - {valeur}")
+
+    if not lignes:
+        return ""
+
+    return (
+        "\n\nINFORMATIONS DOCUMENTAIRES"
+        " (extraites du bilan professionnel transmis — à utiliser prioritairement) :"
+        + "".join(lignes)
+        + "\n"
+    )
+
 logger = logging.getLogger("facilim.engines.cerfa_narrative")
 
 # ── Pronoms par profil ────────────────────────────────────────────────────────
@@ -151,6 +195,11 @@ def _prompt_section_b(donnees: dict, pronoms: dict, profil_handicap: str) -> str
     verbatim_b    = formater_verbatim_pour_prompt(donnees, "b")
     chronologie   = formater_chronologie_pour_prompt(donnees)
     axes_specifiques_b = formater_axes_retentissement(donnees, "b")
+    # Sprint P0.2 — H2 : données documentaires (limitations, restrictions, freins)
+    doc_knowledge_b = _formater_document_knowledge(donnees, [
+        "limitations_fonctionnelles", "restrictions_medicales",
+        "freins", "chronologie", "verbatim",
+    ])
     domaines_str  = "\n".join(f"  - {d}" for d in _DOMAINES_B)
     sujet    = pronoms["sujet"]
     ex_diff  = pronoms["exemple_diff"]
@@ -161,7 +210,7 @@ def _prompt_section_b(donnees: dict, pronoms: dict, profil_handicap: str) -> str
 RÈGLE ABSOLUE : utilise UNIQUEMENT les informations ci-dessous.
 Si une information est absente, écris exactement : [INFO MANQUANTE : nom_du_domaine]
 N'invente rien. N'infère rien. Ne suppose rien.
-{verbatim_b}{chronologie}
+{doc_knowledge_b}{verbatim_b}{chronologie}
 INFORMATIONS STRUCTURÉES DÉCLARÉES :
 - Diagnostic(s) : {diags or "[INFO MANQUANTE : diagnostics]"}
 - Impact quotidien déclaré : {impact or "[INFO MANQUANTE : impact_quotidien]"}
@@ -240,13 +289,17 @@ def _prompt_section_d(donnees: dict, pronoms: dict) -> str:
     chronologie = formater_chronologie_pour_prompt(donnees)
     domaines_str = "\n".join(f"  - {d}" for d in _DOMAINES_D)
     sujet = pronoms["sujet"]
+    # Sprint P0.2 — H2 : projets, orientations, restrictions pro depuis les documents
+    doc_knowledge_d = _formater_document_knowledge(donnees, [
+        "projets", "freins", "restrictions_medicales", "chronologie",
+    ])
 
     return f"""Tu es un rédacteur expert en dossiers MDPH. Tu dois rédiger la PARTIE D — Situation professionnelle.
 
 RÈGLE ABSOLUE : utilise UNIQUEMENT les informations ci-dessous.
 Si une information est absente → [INFO MANQUANTE : nom_du_domaine]
 N'invente rien. N'infère rien.
-{verbatim_d}{chronologie}
+{doc_knowledge_d}{verbatim_d}{chronologie}
 INFORMATIONS STRUCTURÉES DÉCLARÉES :
 - Statut professionnel : {statut or "[INFO MANQUANTE : statut_emploi]"}
 - Projet professionnel : {projet or "non renseigné"}
@@ -286,6 +339,10 @@ def _prompt_section_e(donnees: dict, pronoms: dict, profil_mdph: str) -> str:
     verbatim_e  = formater_verbatim_pour_prompt(donnees, "e")
     chronologie = formater_chronologie_pour_prompt(donnees)
     axes_specifiques_e = formater_axes_retentissement(donnees, "e")
+    # Sprint P0.2 — H2 : besoins, projets, verbatim depuis les documents
+    doc_knowledge_e = _formater_document_knowledge(donnees, [
+        "besoins", "projets", "verbatim", "ressources",
+    ])
     domaines_str = "\n".join(f"  - {d}" for d in _DOMAINES_E)
     sujet      = pronoms["sujet"]
     ex_attente = pronoms["exemple_attente"]
@@ -305,7 +362,7 @@ def _prompt_section_e(donnees: dict, pronoms: dict, profil_mdph: str) -> str:
 C'est la PARTIE LA PLUS IMPORTANTE du dossier.
 Elle doit permettre à l'équipe pluridisciplinaire de comprendre qui est la personne,
 ce qu'elle vit, ce qu'elle souhaite, et ce dont elle a besoin.
-{_bloc_expression}{verbatim_e}{chronologie}
+{_bloc_expression}{doc_knowledge_e}{verbatim_e}{chronologie}
 RÈGLE ABSOLUE : utilise UNIQUEMENT les informations ci-dessous et ci-dessus.
 Si une information est absente → [INFO MANQUANTE : nom_du_domaine]
 N'invente rien. N'infère rien.

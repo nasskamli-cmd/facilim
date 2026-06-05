@@ -242,19 +242,25 @@ def build_field_map(donnees: dict[str, Any], service_type: str = "adulte") -> di
 
     # ════════════════════════════════════════════════════════════════════════
     # PAGE 8 — B texte libre : informations importantes vie quotidienne
+    # Sprint P0.2-H1 : priorité au texte narratif Phase 3
     # ════════════════════════════════════════════════════════════════════════
-    # Synthèse de toutes les infos cliniques disponibles
-    texte_p8_parts = []
-    if donnees.get("diagnostics"):
-        texte_p8_parts.append(f"Diagnostics : {donnees['diagnostics']}")
-    if donnees.get("traitements"):
-        texte_p8_parts.append(f"Traitements : {donnees['traitements']}")
-    if donnees.get("restrictions_emploi"):
-        texte_p8_parts.append(f"Restrictions : {donnees['restrictions_emploi']}")
-    if donnees.get("accident_travail"):
-        texte_p8_parts.append(f"Accident de travail : {donnees['accident_travail']}")
-    if texte_p8_parts:
-        fields["Champ de texte P8 1"] = _trunc(" | ".join(texte_p8_parts), 500)
+    texte_narratif_b = donnees.get("texte_b_vie_quotidienne", "") or ""
+    if texte_narratif_b.strip():
+        # Texte narratif Phase 3 disponible → l'utiliser en priorité
+        fields["Champ de texte P8 1"] = _trunc(texte_narratif_b, 2000)
+    else:
+        # Fallback : dump médical brut (comportement antérieur)
+        texte_p8_parts = []
+        if donnees.get("diagnostics"):
+            texte_p8_parts.append(f"Diagnostics : {donnees['diagnostics']}")
+        if donnees.get("traitements"):
+            texte_p8_parts.append(f"Traitements : {donnees['traitements']}")
+        if donnees.get("restrictions_emploi"):
+            texte_p8_parts.append(f"Restrictions : {donnees['restrictions_emploi']}")
+        if donnees.get("accident_travail"):
+            texte_p8_parts.append(f"Accident de travail : {donnees['accident_travail']}")
+        if texte_p8_parts:
+            fields["Champ de texte P8 1"] = _trunc(" | ".join(texte_p8_parts), 500)
 
     # ════════════════════════════════════════════════════════════════════════
     # PAGE 9 — C Scolarité (enfant / mixte)
@@ -310,6 +316,7 @@ def build_field_map(donnees: dict[str, Any], service_type: str = "adulte") -> di
 
     # ════════════════════════════════════════════════════════════════════════
     # PAGE 14 — D situation sans emploi / recherche
+    # Sprint P0.2-H1 : priorité au texte narratif Phase 3 pour les difficultés pro
     # ════════════════════════════════════════════════════════════════════════
     if service_type in ("adulte", "mixte", "protege"):
         statut_e = str(donnees.get("statut_emploi", "")).lower()
@@ -318,11 +325,25 @@ def build_field_map(donnees: dict[str, Any], service_type: str = "adulte") -> di
             if "pôle emploi" in statut_e or "france travail" in statut_e:
                 fields["Case à cocher P14 4"] = "/Yes"
 
+        # Texte narratif Section D (difficultés professionnelles)
+        texte_narratif_d = donnees.get("texte_d_situation_pro", "") or ""
+        if texte_narratif_d.strip():
+            fields["Champ de texte P14 1"] = _trunc(texte_narratif_d, 2000)
+
     # ════════════════════════════════════════════════════════════════════════
     # PAGE 15 — D2 Parcours professionnel
     # ════════════════════════════════════════════════════════════════════════
     if service_type in ("adulte", "mixte", "protege") and donnees.get("nom_employeur"):
         fields["P15 Tableau A 1 "] = _trunc(donnees.get("nom_employeur", ""), 50)
+
+    # ════════════════════════════════════════════════════════════════════════
+    # PAGE 16 — D3 Projet professionnel
+    # Sprint P0.2-H1 : texte narratif projet de vie (section E) + projet pro
+    # ════════════════════════════════════════════════════════════════════════
+    if service_type in ("adulte", "mixte", "protege"):
+        texte_narratif_e = donnees.get("texte_e_projet_vie", "") or ""
+        if texte_narratif_e.strip():
+            fields["Champ de texte P16 1"] = _trunc(texte_narratif_e, 2000)
 
     # ════════════════════════════════════════════════════════════════════════
     # PAGE 17 — E1/E2/E3 Droits et prestations demandés
