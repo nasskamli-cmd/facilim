@@ -337,13 +337,13 @@ def build_field_map(donnees: dict[str, Any], service_type: str = "adulte") -> di
         fields["P15 Tableau A 1 "] = _trunc(donnees.get("nom_employeur", ""), 50)
 
     # ════════════════════════════════════════════════════════════════════════
-    # PAGE 16 — D3 Projet professionnel
-    # Sprint P0.2-H1 : texte narratif projet de vie (section E) + projet pro
+    # PAGE 16 — D3 / C3 Projet professionnel / Projet de vie
+    # Sprint P0.2-H1 : texte narratif projet de vie (section E)
+    # Sprint P0.4 : étendu au profil enfant (P16 1 = attentes scolaires/vie)
     # ════════════════════════════════════════════════════════════════════════
-    if service_type in ("adulte", "mixte", "protege"):
-        texte_narratif_e = donnees.get("texte_e_projet_vie", "") or ""
-        if texte_narratif_e.strip():
-            fields["Champ de texte P16 1"] = _trunc(texte_narratif_e, 2000)
+    texte_narratif_e = donnees.get("texte_e_projet_vie", "") or ""
+    if texte_narratif_e.strip():
+        fields["Champ de texte P16 1"] = _trunc(texte_narratif_e, 2000)
 
     # ════════════════════════════════════════════════════════════════════════
     # PAGE 17 — E1/E2/E3 Droits et prestations demandés

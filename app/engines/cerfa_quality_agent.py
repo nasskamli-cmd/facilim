@@ -34,10 +34,27 @@ SEUILS_LONGUEUR = {
 # ── Dimensions de qualité — évaluation principale ────────────────────────────
 
 _PATTERNS_LIMITATIONS = [
+    # ── Adulte / général ─────────────────────────────────────────────────────
     r"ne peut (pas|plus)", r"ne parvient (pas|plus)", r"difficilement",
     r"avec aide", r"avec (l.aide|l'assistance)", r"impossible",
     r"limité(e)?", r"restreint(e)?", r"incapable", r"ne fait plus",
     r"nécessite (une aide|un accompagnement|une assistance)",
+    # ── Sprint P0.4 — TSA / Enfant / TND ────────────────────────────────────
+    # Comportements d'évitement et de refus
+    r"s.isole(r)?", r"se réfugie", r"évite (de|les|la|le)",
+    r"refuse (de|les|la|le)", r"n.y participe pas",
+    # Difficultés exprimées à la 3ème personne
+    r"n.arrive pas à", r"difficulté(s)? (à|de)", r"a du mal (à|avec)",
+    r"ne participe pas",
+    # Surcharge et épuisement TSA
+    r"surcharge (sensorielle|cognitive)", r"hypersensibilité",
+    r"épuis[eé](\w+)? (après|lors)", r"épuisement (post|après)",
+    # Anxiété situationnelle
+    r"l.angoisse", r"angoisse (lors|pendant|face)", r"transitions?.{0,15}difficile",
+    r"difficulté(s)? de transition",
+    # Besoins de soutien (formulation 3ème personne)
+    r"besoin (de repères|d.un adulte|d.un accompagnement|d.une supervision)",
+    r"a besoin (de|d.un|d.une)",
 ]
 
 _PATTERNS_CONSEQUENCES = [
