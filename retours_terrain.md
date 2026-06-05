@@ -101,6 +101,46 @@ Premier test de bout-en-bout après enregistrement du webhook Meta.
 
 ---
 
+## Campagne terrain V1 — Tableau de suivi
+
+### Objectifs cibles
+- Score moyen ≥ 65/100
+- Niveaux A+B ≥ 70 %
+- Temps correction ≤ 15 min
+- Gain moyen ≥ 30 min
+
+### Tableau des évaluations
+
+| # | Profil | Handicap | Doc | B | C | D | E | Score | Temps | Gain | Niveau | Erreurs principales |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| A1 | adulte | | | | | | | | | | | |
+| A2 | adulte | | | | | | | | | | | |
+| A3 | adulte | | | | | | | | | | | |
+| A4 | adulte | | | | | | | | | | | |
+| A5 | adulte | | | | | | | | | | | |
+| E1 | enfant | | | | | | | | | | | |
+| E2 | enfant | | | | | | | | | | | |
+| E3 | enfant | | | | | | | | | | | |
+| E4 | enfant | | | | | | | | | | | |
+| E5 | enfant | | | | | | | | | | | |
+| P1 | protégé | | | | | | | | | | | |
+| P2 | protégé | | | | | | | | | | | |
+| P3 | protégé | | | | | | | | | | | |
+| P4 | protégé | | | | | | | | | | | |
+| P5 | protégé | | | | | | | | | | | |
+| **MOY** | | | | | | | | | | | | |
+
+### Bilan cumulé
+
+| Indicateur | Valeur | Objectif | Statut |
+|---|---|---|---|
+| Dossiers traités | 0 / 15 | 15 | ⏳ |
+| Score moyen | — | ≥ 65 | ⏳ |
+| Temps moyen | — | ≤ 15 min | ⏳ |
+| Gain moyen | — | ≥ 30 min | ⏳ |
+| Taux A+B | — | ≥ 70 % | ⏳ |
+| Décision | — | PILOTE | ⏳ |
+
 ## Bilan cumulé Sprint 7
 
 | Indicateur | Valeur |
