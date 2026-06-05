@@ -245,9 +245,14 @@ def build_field_map(donnees: dict[str, Any], service_type: str = "adulte") -> di
     # Sprint P0.2-H1 : priorité au texte narratif Phase 3
     # ════════════════════════════════════════════════════════════════════════
     texte_narratif_b = donnees.get("texte_b_vie_quotidienne", "") or ""
+    notes_pro        = donnees.get("notes_pro", "") or ""
     if texte_narratif_b.strip():
-        # Texte narratif Phase 3 disponible → l'utiliser en priorité
+        # Priorité 1 : texte narratif Phase 3
         fields["Champ de texte P8 1"] = _trunc(texte_narratif_b, 2000)
+    elif notes_pro.strip():
+        # Priorité 2 — Sprint P0.5-C : texte collé par le professionnel (notes_pro)
+        # Le professionnel a saisi une description complète → l'utiliser directement
+        fields["Champ de texte P8 1"] = _trunc(notes_pro, 2000)
     else:
         # Fallback : dump médical brut (comportement antérieur)
         texte_p8_parts = []

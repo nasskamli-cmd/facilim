@@ -214,13 +214,24 @@ def synthese_to_v2_dossier(
         "synthese_agents":      syntheses_agents,
     }
 
-    # ── cerfa_reponses (données WhatsApp) ────────────────────────────────────────
-    # Ces champs comblent les trous de l'analyse IA
+    # ── cerfa_reponses (données WhatsApp + textes narratifs Phase 3) ────────────
+    # Sprint P0.5-B : priorité aux textes narratifs si présents
+    _texte_b = synthese.get("texte_b_vie_quotidienne", "") or ""
+    _texte_c = synthese.get("texte_c_scolarite", "") or ""
+    _texte_d = synthese.get("texte_d_situation_pro", "") or ""
+    _texte_e = synthese.get("texte_e_projet_vie", "") or ""
+
     dossier["cerfa_reponses"] = {
-        "difficultes_quotidiennes":   synthese.get("impact_quotidien", ""),
+        # Vie quotidienne : texte narratif B en priorité
+        "difficultes_quotidiennes":   _texte_b[:2000] if _texte_b else synthese.get("impact_quotidien", ""),
+        # Scolarité : texte narratif C
+        "situation_scolaire_narrative": _texte_c[:1500] if _texte_c else synthese.get("situation_scolaire", ""),
+        # Emploi : texte narratif D
+        "projet_professionnel_narratif": _texte_d[:1500] if _texte_d else synthese.get("projet_professionnel", ""),
+        # Projet de vie : texte narratif E
+        "projet_de_vie":              _texte_e[:2000] if _texte_e else synthese.get("projet_professionnel", ""),
         "besoins_aide":               synthese.get("aides_humaines", ""),
         "souhait_orientation_usager": synthese.get("souhait_orientation_usager", ""),
-        "projet_de_vie":              synthese.get("projet_professionnel", ""),
         "restrictions_emploi":        synthese.get("restrictions_emploi", ""),
         "situation_scolaire":         synthese.get("situation_scolaire", ""),
         "souhait_scolarisation":      synthese.get("situation_scolaire", ""),
@@ -314,19 +325,35 @@ def _split_adresse(adresse: str) -> tuple[str, str, str]:
 
 
 def _composer_geva_pro(synthese: dict) -> str:
-    """Compose le texte GEVA-Pro pour la page 8 depuis toutes les sources disponibles."""
+    """
+    Compose le texte GEVA-Pro pour la page 8 depuis toutes les sources disponibles.
+    Sprint P0.5-B : priorité aux textes narratifs Phase 3 (texte_b, texte_d, texte_e).
+    """
     parts = []
-    if synthese.get("impact_quotidien"):
+
+    # Priorité 1 — texte narratif Section B (Phase 3)
+    texte_b = synthese.get("texte_b_vie_quotidienne", "") or ""
+    if texte_b.strip():
+        parts.append(texte_b[:1500])
+    elif synthese.get("impact_quotidien"):
+        # Fallback sur données brutes si narratif absent
         parts.append(synthese["impact_quotidien"])
-    if synthese.get("restrictions_emploi"):
+
+    # Texte narratif Section D (Phase 3)
+    texte_d = synthese.get("texte_d_situation_pro", "") or ""
+    if texte_d.strip():
+        parts.append(texte_d[:800])
+    elif synthese.get("restrictions_emploi"):
         parts.append(f"Restrictions professionnelles : {synthese['restrictions_emploi']}")
+
+    # Autres sources
     if synthese.get("accident_travail"):
         parts.append(f"Antécédent : {synthese['accident_travail']}")
     if synthese.get("notes_pro"):
         parts.append(synthese["notes_pro"])
-    if synthese.get("documents_texte"):
-        # Limiter à 1000 chars pour ne pas saturer la page 8
+    if synthese.get("documents_texte") and not texte_b:
         parts.append(str(synthese["documents_texte"])[:1000])
+
     return "\n\n".join(p for p in parts if p)
 
 

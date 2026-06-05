@@ -79,6 +79,8 @@ def _dossier_narratif_exploitable(donnees: dict) -> bool:
         donnees.get("diagnostics"),
         donnees.get("impact_quotidien"),
         donnees.get("_verbatim_b"),
+        donnees.get("notes_pro"),           # texte collé par le professionnel
+        donnees.get("documents_texte"),     # texte extrait de documents uploadés
         (donnees.get("_document_knowledge") or {}).get("limitations_fonctionnelles"),
         (donnees.get("_document_knowledge") or {}).get("restrictions_medicales"),
     ])
@@ -404,7 +406,10 @@ class OrchestrationEngine:
                 result = self._handle_consent_flow(usager, text, phone_wa)
                 step.metadata["consent_result"] = result
                 logger.info("[CONSENT] result=%s", result)
-                if result == "accepted_already":
+                if result in ("accepted_already", "accepted_continue"):
+                    # accepted_already  : consentement déjà présent (race condition évitée)
+                    # accepted_continue : premier consentement, langue déjà connue
+                    #                     → générer la première question immédiatement
                     pass  # continuer le pipeline
                 else:
                     return {"success": True, "action": f"consent_{result}"}
@@ -1059,6 +1064,17 @@ class OrchestrationEngine:
                     f"📎 Ou des *photos de documents*"
                 )
                 self.wa.send_text(phone_wa, _msg_consent_ok)
+                # Langue non encore choisie → on attend la réponse au menu
+                # La valeur de retour reste "accepted" → pipeline s'arrête ici
+            else:
+                # Langue déjà connue (dossier pré-créé par le pro via dashboard)
+                # → signaler à _process_whatsapp de continuer le pipeline
+                # → la première question sera générée immédiatement
+                logger.info(
+                    "[CONSENT] Langue déjà connue (%s) → continuer le pipeline",
+                    _langue_deja_choisie,
+                )
+                result = "accepted_continue"   # ← valeur spéciale : continue le pipeline
         elif result == "refused":
             self.wa.send_text(
                 phone_wa,
