@@ -112,6 +112,27 @@ def _dossier_narratif_exploitable(donnees: dict) -> bool:
     )
 
 
+def _collecte_presque_complete(agent: Any, donnees: dict, seuil_manquants: int = 3) -> bool:
+    """
+    FIX-TEST4-COLLECTE — La collecte est-elle PRESQUE terminée ?
+
+    Renvoie True si au plus `seuil_manquants` champs REQUIS de la checklist restent
+    à collecter. Sert à gater le raccourci `_dossier_narratif_exploitable` (P0.2-H3),
+    dont l'intention d'origine était « quelques champs administratifs secondaires
+    manquent encore » — et NON « presque tout manque ».
+
+    Un dossier enrichi uniquement par du contenu pré-collecte (bilan uploadé, notes
+    de création) a BEAUCOUP de champs requis manquants (genre, num_secu, situation
+    familiale, traitements, etc.) → ce raccourci ne s'applique pas → la collecte se
+    poursuit jusqu'à la Section E. `is_complete` reste un déclencheur de fin valable
+    sans cette condition (collecte réellement terminée).
+    """
+    try:
+        return len(agent.missing_fields(donnees)) <= seuil_manquants
+    except Exception:
+        return False
+
+
 def _calculer_completude_live(donnees: dict) -> int:
     """
     Calcule un score de complétude (0-100) basé sur les champs clés remplis.
@@ -824,11 +845,19 @@ class OrchestrationEngine:
             _sauvegarder_nav(self.db, dossier_id, nav, historique, donnees)
 
             # ── Point 2 : collecte complète → narratif + qualité + validation ──
-            # Déclencheur 1 (original) : checklist 100 % complète
-            # Déclencheur 2 (P0.2-H3) : contenu fonctionnel suffisant même si
-            #   quelques champs administratifs secondaires manquent encore
+            # Déclencheur 1 (original) : checklist 100 % complète (is_complete).
+            # Déclencheur 2 (P0.2-H3) : contenu fonctionnel suffisant — MAIS, depuis
+            #   FIX-TEST4-COLLECTE, ce raccourci n'est autorisé que si la collecte est
+            #   PRESQUE complète (≤ 3 champs requis manquants), conformément à son
+            #   intention d'origine. Sinon un dossier enrichi uniquement par un bilan
+            #   uploadé / des notes de création (donc avec beaucoup de champs requis
+            #   manquants) clôturait la collecte dès le 1ᵉʳ message (« oui »), sautant
+            #   les questions et la Section E (droits_demandes).
             _declencher_narratif = (
-                (agent.is_complete(donnees) or _dossier_narratif_exploitable(donnees))
+                (
+                    agent.is_complete(donnees)
+                    or (_dossier_narratif_exploitable(donnees) and _collecte_presque_complete(agent, donnees))
+                )
                 and service_type != "validation_en_attente"
             )
             if _declencher_narratif:
