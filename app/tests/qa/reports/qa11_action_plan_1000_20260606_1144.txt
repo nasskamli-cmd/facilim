@@ -1,0 +1,5 @@
+QA-11 Action Plan & Parcours
+N=1000 seed=42 durée=0.2s
+PASS=1000 FAIL=0 WARN=0
+actions_moy=7.2 roi_max=34.6
+stabilité=100.0% décision=✅ PASS

@@ -1,0 +1,87 @@
+════════════════════════════════════════════════════════════════════════
+  FACILIM QA-2 — AUDIT TERRAIN CERFA 15692*01
+  Généré le : 2026-06-05 18:46 UTC
+  Sprint : QA-2
+  Profils testés : 17
+════════════════════════════════════════════════════════════════════════
+
+  INVENTAIRE CERFA
+  Champs AcroForm totaux    : 612
+  Champs texte (/Tx)        : 320
+  Cases à cocher (/Btn)     : 290
+  Signatures (/Sig)         : 2
+  Champs hors signatures    : 610
+
+  COUVERTURE RÉELLE (MOYENNE TOUS PROFILS)
+  Taux global (/ 612)       : 3.9%
+  Taux applicable           : 5.8%
+
+  COUVERTURE PAR NIVEAU DE CRITICITÉ
+  Niveau 1 — Critique       : 21.5%
+  Niveau 2 — Important      : 1.2%
+  Niveau 3 — Secondaire     : 3.6%
+
+  COUVERTURE PAR SECTION MÉTIER
+  Page de garde                  : █░░░░░░░░░  14.0%
+  Identité (A1/A2)               : █░░░░░░░░░  17.6%
+  Protection juridique (A4)      : ░░░░░░░░░░   6.8%
+  Aides humaines (A5)            : ░░░░░░░░░░   0.0%
+  Vie quotidienne B1             : ░░░░░░░░░░   0.5%
+  Besoins AVQ (B2/B3)            : ░░░░░░░░░░   0.5%
+  Texte libre B                  : █████████░  94.1%
+  Scolarité (C)                  : ░░░░░░░░░░   0.5%
+  Emploi D1                      : ░░░░░░░░░░   6.7%
+  Emploi D2                      : ░░░░░░░░░░   1.7%
+  Parcours professionnel (D2)    : ░░░░░░░░░░   0.0%
+  Projet de vie (E)              : ░░░░░░░░░░   2.2%
+  Droits E1/E2                   : █░░░░░░░░░  13.8%
+  Droits E3                      : █░░░░░░░░░  12.7%
+  Aidant F                       : ░░░░░░░░░░   6.2%
+  Aidant F2                      : ░░░░░░░░░░   3.0%
+  Autre                          : ░░░░░░░░░░   6.9%
+
+  DÉTAIL PAR PROFIL
+  ID                               Global   Applic  Critiques  JAMAIS
+  ──────────────────────────────────────────────────────────────────────
+  DOSSIER_COMPLET_ADULTE             7.7%    12.0%      40.8%     344
+  ADULTE_ACCIDENT_TRAVAIL            6.7%    10.5%      36.8%     350
+  ENFANT_TSA_SEVERE                  5.1%     7.5%      32.9%     381
+  ENFANT_POLYHANDICAP                5.1%     7.5%      35.5%     381
+  ENFANT_TSA_LEGER                   4.9%     7.3%      32.9%     382
+  ENFANT_TDAH_DYS                    4.6%     6.8%      32.9%     384
+  AIDANT_PARENT_TSA                  5.2%     6.7%      26.5%     445
+  ADULTE_MOTEUR_SEP                  3.4%     5.4%      18.4%     370
+  INSERTION_RQTH_ESPO                2.9%     4.6%      13.2%     373
+  ADULTE_MALADIE_CHRONIQUE           2.8%     4.3%      13.2%     374
+  INSERTION_ESAT_DI                  2.9%     4.2%      12.5%     412
+  PROTECTION_TUTELLE                 3.8%     4.2%      17.7%     522
+  ADULTE_PSYCHIQUE_BIPOLAIRE         2.6%     4.1%      13.2%     375
+  ADULTE_SCHIZOPHRENIE_ESAT          2.6%     4.1%      13.2%     375
+  DOSSIER_WA_SEUL                    2.6%     4.1%      13.2%     375
+  PROTECTION_HABILITATION            3.4%     3.9%      15.6%     524
+  DOSSIER_VIDE                       0.5%     0.8%       1.3%     388
+
+  TOP 20 CHAMPS CRITIQUES JAMAIS COUVERTS
+  ──────────────────────────────────────────────────────────────────────
+  P 0 | Case à cocher OPTION P2 1                | Case à cocher OPTION P2 1
+  P 0 | Case à cocher OPTION P2 2                | Case à cocher OPTION P2 2
+  P 0 | Case à cocher OPTION P2 3                | Case à cocher OPTION P2 3
+  P 1 | Case à cocher P1 2                       | Situation changée
+  P 1 | Case à cocher P1 3                       | Réévaluation
+  P 1 | Case à cocher P1 A                       | Renouvellement
+  P 1 | Champ de texte P 1 2                     | N° dossier existant
+  P 2 | Champ de texte P2 10                     | N° allocataire
+  P 2 | Champ de texte P2 11                     | Champ de texte P2 11
+  P 2 | Champ de texte P2 12                     | Champ de texte P2 12
+  P 2 | Champ de texte P2 13                     | Champ de texte P2 13
+  P 2 | Champ de texte P2 14                     | Champ de texte P2 14
+  P 2 | Champ de texte P2 2                      | Nom d'usage
+  P17 | Case à cocher P17 10                     | Foyer d'hébergement
+  P17 | Case à cocher P17 12                     | Accueil de jour
+  P17 | Case à cocher P17 14                     | CMI priorité
+  P17 | Case à cocher P17 15                     | ACTP
+  P17 | Case à cocher P17 16                     | Autre prestation vie quotidien
+  P17 | Case à cocher P17 8                      | Orientation ESMS (MAS/FAM)
+  P17 | Case à cocher P17 9                      | Foyer de vie
+
+════════════════════════════════════════════════════════════════════════

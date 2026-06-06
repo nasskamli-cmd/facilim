@@ -192,6 +192,8 @@ _COLONNES_PHASE3 = [
     ("analyse_situation_json",    "TEXT DEFAULT '{}'"),
     ("synthese_situation",        "TEXT DEFAULT ''"),
     ("niveau_confiance_analyse",  "TEXT DEFAULT ''"),
+    ("cockpit_pro_json",          "TEXT DEFAULT '{}'"),  # FACILIM PROD-1 : cockpit consolidé
+    ("version",                   "INTEGER DEFAULT 1"),  # FIX-TEST4 : ALTER migration 008 avalé par le découpeur
 ]
 try:
     _startup_db = db_conn_module._get_raw_connection()
@@ -1265,6 +1267,70 @@ def get_audit_events(
     return {"events": [dict(r) for r in rows]}
 
 
+@app.get("/api/v1/dossiers/{dossier_id}/historique")
+def get_historique_dossier(
+    dossier_id: str,
+    limit: int = 200,
+    user=Depends(_get_current_user),
+    db=Depends(_get_db),
+):
+    """
+    Historique complet et chronologique d'un dossier (traçabilité PROD-4).
+
+    Fusionne en LECTURE SEULE les deux journaux DÉJÀ persistés — `audit_events`
+    (event_logger) et `cerfa_audit_log` (_log_cerfa_audit) — sans rien recalculer
+    ni appeler aucun moteur. Permet de reconstruire « qui a fait quoi, quand, sur
+    quel dossier, avec quel résultat ».
+    """
+    evenements: list[dict] = []
+
+    # 1) Journal général — audit_events
+    try:
+        for r in db.execute(
+            "SELECT type_evenement, created_at, canal, utilisateur_id, payload_json "
+            "FROM audit_events WHERE dossier_id = ? ORDER BY created_at",
+            (dossier_id,),
+        ).fetchall():
+            d = dict(r)
+            evenements.append({
+                "source":  "audit_events",
+                "type":    d.get("type_evenement"),
+                "date":    d.get("created_at"),
+                "canal":   d.get("canal"),
+                "acteur":  d.get("utilisateur_id"),
+                "details": json.loads(d.get("payload_json") or "{}"),
+            })
+    except Exception as e:
+        logger.warning("[HISTORIQUE] audit_events indisponible : %s", e)
+
+    # 2) Journal CERFA — cerfa_audit_log (cockpit absent ici ; gate/export y figurent)
+    try:
+        for r in db.execute(
+            "SELECT event_type, event_at, canal, acteur_id, acteur_type, details_json "
+            "FROM cerfa_audit_log WHERE dossier_id = ? ORDER BY event_at",
+            (dossier_id,),
+        ).fetchall():
+            d = dict(r)
+            evenements.append({
+                "source":  "cerfa_audit_log",
+                "type":    d.get("event_type"),
+                "date":    d.get("event_at"),
+                "canal":   d.get("canal"),
+                "acteur":  d.get("acteur_id"),
+                "details": json.loads(d.get("details_json") or "{}"),
+            })
+    except Exception as e:
+        logger.warning("[HISTORIQUE] cerfa_audit_log indisponible : %s", e)
+
+    # Tri chronologique croissant (ordre des événements)
+    evenements.sort(key=lambda ev: ev.get("date") or "")
+    return {
+        "dossier_id":    dossier_id,
+        "nb_evenements": len(evenements),
+        "evenements":    evenements[:limit],
+    }
+
+
 # ── Compatibilité avec l'ancien main.py (route legacy) ───────────────────────
 # ── Analytics V2.2 — Mesure · Analyse · Pilotage ─────────────────────────────
 # Module totalement indépendant du pipeline CERFA.
@@ -2198,6 +2264,60 @@ def _ajouter_page_couverture(cerfa_bytes: bytes, donnees: dict) -> bytes:
     return out.getvalue()
 
 
+def _verrou_export_cerfa(dossier_id: str, db, user, action: str = "export") -> dict:
+    """
+    VERROU CENTRALISÉ d'export CERFA (FACILIM PROD-3).
+
+    Lit le gate DÉJÀ calculé dans `dossiers.cockpit_pro_json` (aucun recalcul,
+    aucune nouvelle évaluation, aucun moteur appelé), journalise la décision dans
+    `cerfa_audit_log`, et lève HTTP 403 si le gate est en BLOCK.
+
+      - PASS / WARNING / UNKNOWN(absent) → autorise (retourne le statut)
+      - BLOCK                            → refuse (403, aucun PDF généré)
+
+    Retour : dict du statut du gate (cf. export_gate.lire_gate_export).
+    """
+    from app.services.export_gate import lire_gate_export
+
+    row = db.execute("SELECT cockpit_pro_json FROM dossiers WHERE id = ?", (dossier_id,)).fetchone()
+    cockpit_json = row["cockpit_pro_json"] if row else None
+    g = lire_gate_export(cockpit_json)
+
+    acteur = None
+    try:
+        acteur = (user or {}).get("sub")
+    except Exception:
+        acteur = None
+
+    _log_cerfa_audit(
+        db, dossier_id,
+        event_type="gate_export_check",
+        canal="dashboard",
+        acteur_id=acteur,
+        acteur_type="professionnel",
+        details={
+            "action":          action,
+            "gate_statut":     g["statut"],
+            "gate_present":    g["present"],
+            "export_autorise": g["autorise_export"],
+            "raison":          g["message"] if not g["autorise_export"] else "",
+        },
+    )
+    try:
+        db.commit()
+    except Exception:
+        pass
+
+    if not g["autorise_export"]:
+        raise HTTPException(
+            status_code=403,
+            detail=(g["message"] or
+                    "Export bloqué par FACILIM (gate BLOCK). Corrigez les points critiques "
+                    "signalés dans le cockpit avant d'exporter ou de transmettre le CERFA."),
+        )
+    return g
+
+
 def _generer_cerfa_pdf(dossier_id: str, db) -> tuple[str, bytes]:
     """
     Génère le PDF CERFA pour un dossier et retourne (pdf_path, pdf_bytes).
@@ -2293,64 +2413,73 @@ def _generer_cerfa_pdf(dossier_id: str, db) -> tuple[str, bytes]:
     output_path = os.path.join(storage_path, output_filename)
 
     # ── Moteur V2 (priorité) ──────────────────────────────────────────────────
+    # CORRECTION FIX-TEST4 : SEULE la génération V2 peut déclencher le fallback V3.
+    # L'audit (hash, SELECT version, journalisation) et la persistance sont
+    # désormais NON BLOQUANTS — une erreur d'audit (ex. « no such column: version »
+    # observée sur le dossier TEST4) ne doit JAMAIS détruire un PDF V2 déjà généré.
+    pdf_bytes = None
     try:
         from app.engines.pdf.v2_bridge import generer_cerfa_depuis_synthese
         pdf_bytes = generer_cerfa_depuis_synthese(donnees, service_type, num_mdph)
+    except Exception as e_v2:
+        logger.warning("[CERFA V2] Génération V2 échouée (%s) — fallback V3", e_v2)
+        pdf_bytes = None
 
-        # ── Calcul des hashes avant page de couverture (Point 3) ─────────────
-        import hashlib as _hl, json as _j_hash
-        _synthese_hash = _hl.sha256(
-            _j_hash.dumps(donnees, sort_keys=True, ensure_ascii=False).encode("utf-8")
-        ).hexdigest()
-        _cerfa_pdf_hash = _hl.sha256(pdf_bytes).hexdigest()
-
-        # ── Page de couverture (Point 5) ──────────────────────────────────────
-        # Générée séparément avec reportlab, fusionnée AVANT le CERFA avec pypdf.
-        # Ne modifie pas le CERFA officiel ni ses champs.
+    if pdf_bytes is not None:
+        # ── Hashes audit (sur le CERFA officiel, AVANT couverture) — non bloquant ─
+        _synthese_hash = _cerfa_pdf_hash = ""
         _nb_pages = 0
         try:
+            import hashlib as _hl, json as _j_hash
+            _synthese_hash  = _hl.sha256(
+                _j_hash.dumps(donnees, sort_keys=True, ensure_ascii=False).encode("utf-8")
+            ).hexdigest()
+            _cerfa_pdf_hash = _hl.sha256(pdf_bytes).hexdigest()
             from pypdf import PdfReader as _PR
             _nb_pages = len(_PR(io.BytesIO(pdf_bytes)).pages)
-        except Exception:
-            pass
+        except Exception as e_hash:
+            logger.debug("[CERFA V2] Hash/pagination audit ignoré : %s", e_hash)
+
+        # ── Page de couverture (mise en forme) — non bloquant ─────────────────
         try:
             pdf_bytes = _ajouter_page_couverture(pdf_bytes, donnees)
             logger.info("[CERFA] Page de couverture ajoutée | dossier=%s", dossier_id[:8])
         except Exception as e_cov:
             logger.warning("[CERFA] Page de couverture ignorée (%s) — PDF CERFA seul transmis", e_cov)
 
-        # ── Journalisation audit (Point 3) ────────────────────────────────────
-        # Hash calculé sur le CERFA officiel (avant couverture) pour cohérence
-        # avec la validation Point 2 qui portera sur le même contenu.
-        _dossier_version = db.execute(
-            "SELECT version FROM dossiers WHERE id = ?", (dossier_id,)
-        ).fetchone()
-        _version_val = (_dossier_version["version"] if _dossier_version and _dossier_version["version"] else 1)
-        _log_cerfa_audit(
-            db=db,
-            dossier_id=dossier_id,
-            event_type="generation_cerfa",
-            canal="dashboard",
-            acteur_id=None,
-            acteur_type="systeme",
-            details={
-                "synthese_hash": _synthese_hash,
-                "pdf_hash":      _cerfa_pdf_hash,
-                "version":       _version_val,
-                "nb_pages":      _nb_pages,
-            },
-        )
+        # ── Journalisation audit (Point 3) — NON BLOQUANTE ────────────────────
+        # Une erreur SQL / audit / version ici ne doit JAMAIS détruire le PDF V2.
+        try:
+            _dossier_version = db.execute(
+                "SELECT version FROM dossiers WHERE id = ?", (dossier_id,)
+            ).fetchone()
+            _version_val = (_dossier_version["version"] if _dossier_version and _dossier_version["version"] else 1)
+            _log_cerfa_audit(
+                db=db,
+                dossier_id=dossier_id,
+                event_type="generation_cerfa",
+                canal="dashboard",
+                acteur_id=None,
+                acteur_type="systeme",
+                details={
+                    "synthese_hash": _synthese_hash,
+                    "pdf_hash":      _cerfa_pdf_hash,
+                    "version":       _version_val,
+                    "nb_pages":      _nb_pages,
+                },
+            )
+        except Exception as e_audit:
+            logger.warning("[CERFA V2] Audit non bloquant ignoré (%s) — PDF V2 conservé", e_audit)
 
+        # ── Persistance du PDF V2 ─────────────────────────────────────────────
         with open(output_path, "wb") as f:
             f.write(pdf_bytes)
         logger.info("[CERFA V2] PDF généré via moteur V2 | dossier=%s | %d bytes | hash=%s…",
-                    dossier_id[:8], len(pdf_bytes), _synthese_hash[:8])
+                    dossier_id[:8], len(pdf_bytes), (_synthese_hash[:8] or "—"))
         return output_path, pdf_bytes
 
-    except Exception as e_v2:
-        logger.warning("[CERFA V2] Moteur V2 indisponible (%s) — fallback V3", e_v2)
-
-    # ── Fallback V3 ───────────────────────────────────────────────────────────
+    # ── Fallback V3 (UNIQUEMENT si la génération V2 a réellement échoué) ───────
+    logger.warning("[CERFA V2] Fallback V3 activé pour dossier=%s (génération V2 indisponible)", dossier_id[:8])
     from app.engines.pdf.cerfa_filler import CerfaFiller
     from app.database.schemas import DossierCERFA
     filler = CerfaFiller(db_conn=db, storage_path=storage_path)
@@ -2369,15 +2498,23 @@ def _generer_cerfa_pdf(dossier_id: str, db) -> tuple[str, bytes]:
 @app.get("/api/v1/dossiers/{dossier_id}/cerfa.pdf")
 def telecharger_cerfa(
     dossier_id: str,
+    export: bool = False,
     user=Depends(_get_current_user),
     db=Depends(_get_db),
 ):
     """
-    Génère et sert le PDF CERFA directement dans le navigateur.
-    Le pro clique → le PDF s'ouvre dans un nouvel onglet.
+    Sert le PDF CERFA.
+
+    - `export=false` (défaut) → PRÉVISUALISATION / consultation : TOUJOURS disponible,
+      jamais bloquée par le gate (le PDF s'ouvre inline dans le navigateur).
+    - `export=true` → EXPORT DÉFINITIF : passe par le verrou PROD-3 ; refusé (403)
+      si le gate est en BLOCK (aucun PDF généré).
     """
     from fastapi.responses import Response as RawResponse
     try:
+        # Verrou uniquement pour l'export définitif — la prévisualisation reste libre.
+        if export:
+            _verrou_export_cerfa(dossier_id, db, user, action="telechargement")
         _, pdf_bytes = _generer_cerfa_pdf(dossier_id, db)
         nom_usager  = "dossier"
         row = db.execute("SELECT synthese_json FROM dossiers WHERE id = ?", (dossier_id,)).fetchone()
@@ -2430,6 +2567,10 @@ def envoyer_cerfa(
     row = db.execute("SELECT synthese_json, reference FROM dossiers WHERE id = ?", (dossier_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Dossier non trouvé")
+
+    # ── VERROU PROD-3 : gate d'export (lit le gate DÉJÀ calculé, aucun recalcul) ──
+    # BLOCK → 403 ici : aucun PDF n'est généré, aucun email n'est envoyé.
+    gate = _verrou_export_cerfa(dossier_id, db, user, action="envoi")
 
     donnees    = json.loads(row["synthese_json"] or "{}")
     email_dest = donnees.get("email", "").strip()
@@ -2526,7 +2667,13 @@ def envoyer_cerfa(
     event_logger.log_event("CERFA_ENVOYE_USAGER", dossier_id=dossier_id,
                            utilisateur_id=user.get("sub"), canal="dashboard",
                            payload={"email": email_dest[-10:]}, db_conn=db)
-    return {"success": True, "email_dest": email_dest, "soumis_le": now}
+    return {
+        "success": True,
+        "email_dest": email_dest,
+        "soumis_le": now,
+        "gate_statut": gate["statut"],
+        "gate_avertissement": gate["message"] if gate["statut"] == "WARNING" else "",
+    }
 
 
 class CerfaChampRequest(BaseModel):

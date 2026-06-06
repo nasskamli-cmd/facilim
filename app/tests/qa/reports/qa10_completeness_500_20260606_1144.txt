@@ -1,0 +1,5 @@
+QA-10 Completeness & Pre-Submission
+N=500 seed=42 durée=0.2s
+PASS=500 FAIL=0 WARN=0
+Score_moy=45.4 GO=0 RISQUES=484 NOGO=16
+Stabilité=100.0% Décision=✅ PASS

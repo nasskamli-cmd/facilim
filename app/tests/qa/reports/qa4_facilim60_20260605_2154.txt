@@ -1,0 +1,150 @@
+════════════════════════════════════════════════════════════════════════
+  QA-4 — VALIDATION FACILIM 60 EN ENVIRONNEMENT RÉEL
+  Généré le : 2026-06-05 19:54 UTC
+  Profils testés : 5
+════════════════════════════════════════════════════════════════════════
+
+  RÉSUMÉ GLOBAL
+  Profils PASS          : 0/5
+  Profils WARN          : 0/5
+  Profils FAIL          : 5/5
+  Robustesse moy (avec narratif) : 50.6/100
+  Score maturité moyen  : 85.2/100
+
+  VALIDATION SEUILS QA-4
+  ✅ Score QA via QA principal                : → Se référer au rapport QA-FACILIM-60-FINAL
+  ❌ 0 FAIL bloquant                          : ÉCHEC : 5 profil(s) en FAIL
+  ❌ Robustesse moy ≥ 70                      : 50.6/100
+  ✅ Aucun profil < 85 (QA global)            : → Se référer au rapport QA précédent
+  ✅ Droits oubliés cohérents                 : Vérification profil par profil ci-dessous
+  ✅ Aucune proposition absurde               : Vérification profil par profil ci-dessous
+
+  ── ANALYSE DÉTAILLÉE PAR PROFIL ──
+
+  ❌ ENFANT_TSA_LEGER — Lucas DURAND — TSA léger, 10 ans
+  ────────────────────────────────────────────────────────────────────
+  Narratifs générés : B_VIE_QUOTIDIENNE (3,531 chars) | C_SCOLARITE (2,090 chars) | E_PROJET_VIE (1,420 chars)
+  Robustesse globale : 47/100  ████░░░░░░
+  Robustesse/droit   : AEEH:49 | SESSAD:51 | IME:47 | EEAP:47 | PCH:43
+  Score maturité     : 91/100 (seuil 60)
+  Droits détectés    : AEEH, SESSAD
+  Droits oubliés (1) :
+    🟡 Affiliation Vieillesse Parent au Foyer (AVPF) score=60/100 [moyenne]
+       Justification : Éléments compatibles détectés : Réduction ou cessation d'activité parentale
+       Action        : Vérifier avec la personne : L'un des parents a-t-il réduit ou cessé son act
+  Scores éligibilité : PCH:0 | AEEH:80 | CMI_STATIONNEMENT:0 | SESSAD:75
+  Orientations       : SESSAD spécialisé TND — maintien en milieu scolaire ordinaire avec sou
+  Questions levier (2) :
+    [Urgence P3 1        ] ROI=40.0 — Un de vos droits (AAH, PCH, AEEH, RQTH) arrive-t-il à échéance da...
+    [Consentement échange] ROI=20.0 — Acceptez-vous que la MDPH contacte vos médecins, votre école ou v...
+  Force principale   : Texte B (vie quotidienne) bien documenté (72/100) — impact positif sur
+  Faiblesse          : Limitations fonctionnelles peu documentées (17/100) — risque de sous-é
+  FAILS (1) :
+    ❌ Robustesse 47/100 < 70 malgré narratifs présents
+
+  ❌ ADULTE_ACCIDENT_TRAVAIL — Karim NAIT ALI — AT 2019, séquelles physiques et psychologiques
+  ────────────────────────────────────────────────────────────────────
+  Narratifs générés : B_VIE_QUOTIDIENNE (3,168 chars) | D_SITUATION_PRO (2,786 chars) | E_PROJET_VIE (2,530 chars)
+  Robustesse globale : 56/100  █████░░░░░
+  Robustesse/droit   : AAH:55 | PCH:54 | RQTH:57 | CMI:53 | SAVS:56
+  Score maturité     : 87/100 (seuil 65)
+  Droits détectés    : AAH, RQTH, ESPO
+  Droits oubliés (3) :
+    🟡 Établissement/Service de Rééducation Professionnelle (ESRP) score=60/100 [moyenne]
+       Justification : Éléments compatibles détectés : Accident du travail ou reconversion obligat
+       Action        : Vérifier avec la personne : Votre handicap vous oblige-t-il à changer compl
+    🟡 Prestation de Compensation du Handicap (PCH)  score=53/100 [moyenne]
+       Justification : Éléments compatibles détectés : Besoin d'aide humaine pour les soins corpor
+       Action        : Vérifier avec la personne : Combien de fois par semaine avez-vous besoin d'
+    🟡 CMI — Mention Priorité                        score=35/100 [moyenne]
+       Justification : Éléments compatibles détectés : Impossibilité ou douleur en station debout 
+       Action        : Vérifier avec la personne : Pouvez-vous rester debout plus de quelques minu
+  Scores éligibilité : AAH:22 | PCH:53 | RQTH:60 | CMI_STATIONNEMENT:30 | SAVS:0 | ESAT:0
+  Orientations       : ESPO — bilan et orientation professionnelle adaptée
+  Questions levier (5) :
+    [Urgence P3 1        ] ROI=40.0 — Un de vos droits (AAH, PCH, AEEH, RQTH) arrive-t-il à échéance da...
+    [Urgence P3 6        ] ROI=35.0 — Avez-vous trouvé un emploi ou commencez-vous une formation bientô...
+    [Consentement échange] ROI=20.0 — Acceptez-vous que la MDPH contacte vos médecins, votre école ou v...
+  Force principale   : Texte B (vie quotidienne) bien documenté (72/100) — impact positif sur
+  FAILS (1) :
+    ❌ Robustesse 56/100 < 70 malgré narratifs présents
+
+  ❌ ADULTE_PSYCHIQUE_BIPOLAIRE — Sophie BERNARD — Trouble bipolaire type 1, 38 ans
+  ────────────────────────────────────────────────────────────────────
+  Narratifs générés : B_VIE_QUOTIDIENNE (2,955 chars) | D_SITUATION_PRO (2,463 chars) | E_PROJET_VIE (2,704 chars)
+  Robustesse globale : 48/100  ████░░░░░░
+  Robustesse/droit   : AAH:46 | PCH:44 | RQTH:50 | CMI:43 | SAVS:48
+  Score maturité     : 95/100 (seuil 60)
+  Droits détectés    : AAH, RQTH
+  Droits oubliés (1) :
+    🟡 Service d'Accompagnement à la Vie Sociale (SAVS) score=50/100 [moyenne]
+       Justification : Éléments compatibles détectés : Profil psychique ou TSA adulte compatible a
+       Action        : Vérifier avec la personne : Pour quelles démarches quotidiennes avez-vous b
+  Scores éligibilité : AAH:40 | PCH:0 | RQTH:60 | CMI_STATIONNEMENT:0 | SAVS:50 | ESAT:0
+  Orientations       : ESPO — bilan et orientation professionnelle adaptée
+  Questions levier (5) :
+    [Urgence P3 1        ] ROI=40.0 — Un de vos droits (AAH, PCH, AEEH, RQTH) arrive-t-il à échéance da...
+    [Urgence P3 6        ] ROI=35.0 — Avez-vous trouvé un emploi ou commencez-vous une formation bientô...
+    [RQTH / ESAT / ESPO  ] ROI=25.0 — Souhaitez-vous travailler en milieu ordinaire (avec adaptations),...
+  Force principale   : Texte B (vie quotidienne) bien documenté (72/100) — impact positif sur
+  Faiblesse          : Limitations fonctionnelles peu documentées (25/100) — risque de sous-é
+  FAILS (1) :
+    ❌ Robustesse 48/100 < 70 malgré narratifs présents
+
+  ❌ ADULTE_MOTEUR_SEP — Marie DUPONT — SEP progressive, 45 ans
+  ────────────────────────────────────────────────────────────────────
+  Narratifs générés : B_VIE_QUOTIDIENNE (3,437 chars) | D_SITUATION_PRO (2,432 chars) | E_PROJET_VIE (2,058 chars)
+  Robustesse globale : 55/100  █████░░░░░
+  Robustesse/droit   : AAH:54 | PCH:53 | RQTH:56 | CMI:52 | SAVS:55
+  Score maturité     : 87/100 (seuil 65)
+  Droits détectés    : AAH, RQTH
+  Droits oubliés (3) :
+    🟡 Prestation de Compensation du Handicap (PCH)  score=75/100 [moyenne]
+       Justification : Éléments compatibles détectés : Besoin d'aide humaine pour les soins corpor
+       Action        : Vérifier avec la personne : Combien de fois par semaine avez-vous besoin d'
+    🟡 CMI — Mention Stationnement                   score=70/100 [moyenne]
+       Justification : Éléments compatibles détectés : Limitation de la marche documentée (critère
+       Action        : Vérifier avec la personne : Quelle est la distance maximale que vous pouvez
+    🟡 CMI — Mention Priorité                        score=35/100 [moyenne]
+       Justification : Éléments compatibles détectés : Impossibilité ou douleur en station debout 
+       Action        : Vérifier avec la personne : Pouvez-vous rester debout plus de quelques minu
+  Scores éligibilité : AAH:32 | PCH:75 | RQTH:60 | CMI_STATIONNEMENT:70 | SAVS:0 | ESAT:0
+  Orientations       : ESPO — bilan et orientation professionnelle adaptée
+  Questions levier (5) :
+    [Urgence P3 1        ] ROI=40.0 — Un de vos droits (AAH, PCH, AEEH, RQTH) arrive-t-il à échéance da...
+    [Urgence P3 6        ] ROI=35.0 — Avez-vous trouvé un emploi ou commencez-vous une formation bientô...
+    [PCH / CMI Stationnem] ROI=30.0 — Pouvez-vous vous déplacer seul(e) à l'extérieur de votre domicile...
+  Force principale   : Texte B (vie quotidienne) bien documenté (72/100) — impact positif sur
+  FAILS (1) :
+    ❌ Robustesse 55/100 < 70 malgré narratifs présents
+
+  ❌ AIDANT_PARENT_TSA — Marie DURAND — Mère aidante Lucas TSA
+  ────────────────────────────────────────────────────────────────────
+  Narratifs générés : B_VIE_QUOTIDIENNE (2,525 chars) | C_SCOLARITE (2,212 chars) | E_PROJET_VIE (2,549 chars)
+  Robustesse globale : 47/100  ████░░░░░░
+  Robustesse/droit   : AEEH:49 | SESSAD:53 | IME:47 | EEAP:47 | PCH:41
+  Score maturité     : 66/100 (seuil 55)
+  Droits détectés    : AEEH, SESSAD
+  Droits oubliés (1) :
+    🟡 Affiliation Vieillesse Parent au Foyer (AVPF) score=75/100 [moyenne]
+       Justification : Éléments compatibles détectés : Réduction ou cessation d'activité parentale
+       Action        : Vérifier avec la personne : L'un des parents a-t-il réduit ou cessé son act
+  Scores éligibilité : PCH:0 | AEEH:80 | CMI_STATIONNEMENT:0 | SESSAD:75
+  Orientations       : SESSAD spécialisé TND — maintien en milieu scolaire ordinaire avec sou
+  Questions levier (3) :
+    [Urgence P3 1        ] ROI=40.0 — Un de vos droits (AAH, PCH, AEEH, RQTH) arrive-t-il à échéance da...
+    [Urgence P3 6        ] ROI=35.0 — Avez-vous trouvé un emploi ou commencez-vous une formation bientô...
+    [Consentement échange] ROI=20.0 — Acceptez-vous que la MDPH contacte vos médecins, votre école ou v...
+  Force principale   : Texte B (vie quotidienne) bien documenté (77/100) — impact positif sur
+  Faiblesse          : Limitations fonctionnelles peu documentées (10/100) — risque de sous-é
+  FAILS (1) :
+    ❌ Robustesse 47/100 < 70 malgré narratifs présents
+
+════════════════════════════════════════════════════════════════════════
+  SYNTHÈSE QA-4
+
+  Décision : FACILIM 60 est ❌ NON VALIDÉ
+
+  5 profil(s) en FAIL — corriger avant déploiement.
+  Robustesse moyenne 50.6/100 < 70 — vérifier injection narratifs.
+════════════════════════════════════════════════════════════════════════

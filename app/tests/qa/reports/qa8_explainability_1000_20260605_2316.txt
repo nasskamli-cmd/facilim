@@ -1,0 +1,10 @@
+QA-8 — Evidence & Explainability Engine
+Généré le 2026-06-05 21:16 UTC
+N=1000 seed=42 durée=2.5s
+PASS=932 FAIL=68 WARN=0
+Preuves_moy=2.5 Droits_moy=2.3
+Stabilité=93.2%
+Décision=⚠️ WARN
+
+Anomalies:
+  68/1000 E4-fragiles_faiblesses

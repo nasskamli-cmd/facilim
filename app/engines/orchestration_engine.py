@@ -74,12 +74,17 @@ def _dossier_narratif_exploitable(donnees: dict) -> bool:
     Intentionnellement large : mieux vaut générer un texte partiel que rien.
     Ne remplace pas is_complete() — s'y ajoute comme déclencheur alternatif.
     """
-    # Contenu fonctionnel minimum (au moins un champ)
+    # Contenu fonctionnel minimum (au moins un champ RÉELLEMENT COLLECTÉ).
+    # VALIDATION-1 / TEST4 : `notes_pro` est RETIRÉ de ce déclencheur. Il est
+    # pré-rempli dès la création (/initiate) avant toute collecte ; le compter
+    # comme « contenu fonctionnel » rendait le dossier « exploitable » d'emblée
+    # et terminait la collecte au 1ᵉʳ message WhatsApp (« oui » → fin). `notes_pro`
+    # reste disponible pour le moteur narratif — il ne sert simplement plus de
+    # déclencheur de fin de collecte.
     a_contenu_fonctionnel = any([
         donnees.get("diagnostics"),
         donnees.get("impact_quotidien"),
         donnees.get("_verbatim_b"),
-        donnees.get("notes_pro"),           # texte collé par le professionnel
         donnees.get("documents_texte"),     # texte extrait de documents uploadés
         (donnees.get("_document_knowledge") or {}).get("limitations_fonctionnelles"),
         (donnees.get("_document_knowledge") or {}).get("restrictions_medicales"),
@@ -1010,6 +1015,60 @@ class OrchestrationEngine:
                     )
                 except Exception:
                     pass  # notification non bloquante
+
+            # ── FACILIM PROD-1 : câblage de la chaîne analytique 60→100 ───────
+            # À ce point, narratifs + inférences + analyse de situation sont
+            # terminés : les données sont suffisamment riches pour exécuter la
+            # chaîne FACILIM 60→100 et produire le cockpit professionnel.
+            # CÂBLAGE UNIQUEMENT — aucune logique métier ajoutée, aucun moteur
+            # modifié. Bloc entièrement non bloquant.
+            try:
+                from app.engines import facilim_prod
+                resultat_prod = facilim_prod.run(
+                    donnees,
+                    profil_mdph=profil_mdph,
+                    profil_handicap=donnees.get("profil_principal", ""),
+                    dossier_id=dossier_id,
+                    generer_cerfa=False,  # le CERFA est produit par le pipeline existant
+                )
+                cockpit_pro = resultat_prod.cockpit_professionnel()
+                self.db.execute(
+                    "UPDATE dossiers SET cockpit_pro_json = ? WHERE id = ?",
+                    (json.dumps(cockpit_pro, ensure_ascii=False), dossier_id),
+                )
+                self.db.commit()
+                # ── Traçabilité PROD-4 : persistance de l'événement « calcul cockpit » ──
+                # Réutilise le journal existant audit_events (aucun moteur, aucun recalcul).
+                try:
+                    from app.audit.event_logger import log_event as _log_event
+                    _log_event(
+                        "COCKPIT_CALCULE",
+                        dossier_id=dossier_id,
+                        canal="pipeline",
+                        payload={
+                            "score_completude": resultat_prod.score_completude,
+                            "score_solidite":   resultat_prod.score_solidite,
+                            "decision":         resultat_prod.decision_depot,
+                            "gate":             (cockpit_pro.get("gate_export") or {}).get("decision"),
+                        },
+                        db_conn=self.db,
+                    )
+                    self.db.commit()
+                except Exception as _ae:
+                    logger.warning("[FACILIM_PROD] Audit cockpit non journalisé — %s", _ae)
+                logger.info(
+                    "[FACILIM_PROD] dossier=%s completude=%d solidite=%d "
+                    "decision=%s droits_oublies=%d actions=%d duree=%dms",
+                    dossier_id[:8],
+                    resultat_prod.score_completude,
+                    resultat_prod.score_solidite,
+                    resultat_prod.decision_depot,
+                    len(cockpit_pro.get("droits_oublies", [])),
+                    len(cockpit_pro.get("plan_action", [])),
+                    resultat_prod.duree_ms,
+                )
+            except Exception as _pe:
+                logger.warning("[FACILIM_PROD] Câblage non bloquant — %s", _pe)
 
         except Exception as e:
             logger.error("[NARRATIF] Échec génération narratif (non bloquant) : %s", e, exc_info=True)

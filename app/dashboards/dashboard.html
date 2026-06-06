@@ -289,6 +289,118 @@
         </div>
       </div>
 
+      <!-- ── Panneau COCKPIT PROFESSIONNEL FACILIM (lecture seule de cockpit_pro_json) ─ -->
+      <!-- Aucune logique métier, aucun recalcul : ce panneau affiche uniquement les   -->
+      <!-- résultats déjà calculés et persistés dans la colonne cockpit_pro_json.       -->
+      <div id="panel-cockpit" class="hidden mt-4">
+        <div class="border border-facilim-100 rounded-xl overflow-hidden">
+
+          <!-- En-tête -->
+          <div class="bg-facilim-50 px-5 py-3 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <svg class="w-4 h-4 text-facilim-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+              </svg>
+              <h4 class="font-semibold text-facilim-900 text-sm">Cockpit professionnel FACILIM</h4>
+            </div>
+            <span id="cockpit-decision" class="text-xs font-semibold px-2.5 py-1 rounded-full bg-gray-100 text-gray-600">–</span>
+          </div>
+
+          <!-- Mention validation humaine (toujours visible) -->
+          <div class="bg-amber-50 border-b border-amber-100 px-5 py-2">
+            <p class="text-xs text-amber-800">
+              ℹ️ <b>FACILIM recommande. Le professionnel valide.</b> Ce panneau affiche les résultats
+              déjà calculés (aucun recalcul). Toute décision appartient au professionnel.
+            </p>
+          </div>
+
+          <div class="divide-y divide-gray-50">
+
+            <!-- 1. Synthèse professionnelle -->
+            <div class="px-5 py-4">
+              <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
+                <div class="text-xs font-semibold text-gray-600 uppercase tracking-wide">Synthèse professionnelle</div>
+                <div class="flex gap-1.5 text-xs">
+                  <span class="px-2 py-0.5 rounded-full bg-gray-100 text-gray-700">Complétude <b id="cockpit-completude">–</b></span>
+                  <span class="px-2 py-0.5 rounded-full bg-gray-100 text-gray-700">Solidité <b id="cockpit-solidite">–</b></span>
+                  <span id="cockpit-niveau" class="px-2 py-0.5 rounded-full bg-gray-100 text-gray-700">–</span>
+                </div>
+              </div>
+              <div id="cockpit-resume" class="text-sm text-gray-700 leading-relaxed">–</div>
+            </div>
+
+            <!-- 2. Droits détectés -->
+            <div class="px-5 py-4">
+              <div class="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">Droits détectés</div>
+              <div id="cockpit-droits" class="flex flex-wrap gap-2"></div>
+            </div>
+
+            <!-- 3. Droits oubliés -->
+            <div class="px-5 py-4">
+              <div class="text-xs font-semibold text-facilim-700 uppercase tracking-wide mb-2">Droits potentiellement oubliés</div>
+              <div id="cockpit-oublies" class="space-y-1.5"></div>
+            </div>
+
+            <!-- 4. Risques du dossier -->
+            <div class="px-5 py-4">
+              <div class="flex items-center justify-between mb-2">
+                <div class="text-xs font-semibold text-red-600 uppercase tracking-wide">Risques du dossier</div>
+                <span id="cockpit-risque-global" class="text-xs font-semibold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">–</span>
+              </div>
+              <div id="cockpit-risques" class="space-y-1.5"></div>
+            </div>
+
+            <!-- 5. Preuves recommandées -->
+            <div class="px-5 py-4">
+              <div class="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">Preuves recommandées</div>
+              <div id="cockpit-preuves" class="space-y-1"></div>
+            </div>
+
+            <!-- 6. Gate CERFA -->
+            <div class="px-5 py-4">
+              <div class="flex items-center justify-between">
+                <div class="text-xs font-semibold text-gray-600 uppercase tracking-wide">Verrou export CERFA</div>
+                <span id="cockpit-gate" class="text-xs font-bold px-2.5 py-1 rounded-full bg-gray-100 text-gray-600">–</span>
+              </div>
+              <div id="cockpit-gate-msg" class="text-xs text-gray-500 mt-1"></div>
+            </div>
+
+            <!-- 7. Plan d'action -->
+            <div class="px-5 py-4">
+              <div class="text-xs font-semibold text-facilim-700 uppercase tracking-wide mb-2">Plan d'action</div>
+              <div id="cockpit-plan" class="space-y-2"></div>
+            </div>
+
+            <!-- 8. Validation humaine -->
+            <div class="px-5 py-4">
+              <div class="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">Validation humaine</div>
+              <p class="text-xs text-facilim-700 italic mb-2">FACILIM recommande. Le professionnel valide.</p>
+              <div id="cockpit-validation" class="space-y-1"></div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Panneau HISTORIQUE du dossier (lecture seule de GET /historique) ──── -->
+      <!-- Timeline générique : aucune donnée recalculée, aucune règle par type.    -->
+      <div id="panel-historique" class="hidden mt-4">
+        <div class="border border-facilim-100 rounded-xl overflow-hidden">
+          <div class="bg-facilim-50 px-5 py-3 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <svg class="w-4 h-4 text-facilim-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+              </svg>
+              <h4 class="font-semibold text-facilim-900 text-sm">Historique du dossier</h4>
+            </div>
+            <span id="historique-count" class="text-xs font-semibold px-2.5 py-1 rounded-full bg-gray-100 text-gray-600">–</span>
+          </div>
+          <div class="px-5 py-4">
+            <div id="historique-timeline" class="space-y-3"></div>
+          </div>
+        </div>
+      </div>
+
     </div>
 
     <!-- Zone pro : notes + upload document -->
@@ -531,6 +643,175 @@ function renderAppuiEvaluation(d) {
   }
 }
 
+// ── Cockpit professionnel FACILIM (lecture seule de cockpit_pro_json) ──────────
+// Aucun moteur appelé, aucun recalcul : on parse le JSON déjà persisté et on l'affiche.
+function renderCockpit(d) {
+  const panel = document.getElementById('panel-cockpit');
+  if (!panel) return;
+  panel.classList.add('hidden');
+
+  let c = {};
+  try {
+    c = (typeof d.cockpit_pro_json === 'string')
+      ? JSON.parse(d.cockpit_pro_json || '{}')
+      : (d.cockpit_pro_json || {});
+  } catch (e) { console.debug('cockpit_pro_json illisible:', e); return; }
+
+  const hasData = c && (c.cockpit_texte || c.score_solidite != null
+    || (c.droits_detectes || []).length || (c.plan_action || []).length);
+  if (!hasData) return;  // cockpit pas encore généré pour ce dossier
+
+  panel.classList.remove('hidden');
+
+  const esc = s => (s == null ? '' : String(s)).replace(/[&<>]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
+  const set  = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+  const html = (id, h)   => { const el = document.getElementById(id); if (el) el.innerHTML = h; };
+  const riskCls = r => { r = (r || '').toLowerCase();
+    return (r.includes('élev') || r.includes('elev')) ? 'text-red-700 bg-red-50'
+      : r.includes('moy') ? 'text-orange-700 bg-orange-50' : 'text-green-700 bg-green-50'; };
+
+  // 1. Synthèse professionnelle
+  set('cockpit-completude', (c.score_completude != null ? c.score_completude : '–') + '/100');
+  set('cockpit-solidite',   (c.score_solidite   != null ? c.score_solidite   : '–') + '/100');
+  set('cockpit-niveau', c.niveau || '–');
+  const decMap = { GO: 'bg-green-100 text-green-700', GO_AVEC_RISQUES: 'bg-orange-100 text-orange-700', NO_GO: 'bg-red-100 text-red-700' };
+  const decEl = document.getElementById('cockpit-decision');
+  if (decEl) {
+    decEl.className = 'text-xs font-semibold px-2.5 py-1 rounded-full ' + (decMap[c.decision] || 'bg-gray-100 text-gray-600');
+    decEl.textContent = (c.decision || '–').replace(/_/g, ' ');
+  }
+  set('cockpit-resume', c.resume || '–');
+
+  // 2. Droits détectés
+  const dd = c.droits_detectes || [];
+  html('cockpit-droits', dd.length ? dd.map(x =>
+    `<span class="text-xs px-2.5 py-1 rounded-full font-medium ${riskCls(x.risque)}">${esc(x.droit)}${x.score != null ? ` · ${x.score}%` : ''}</span>`
+  ).join('') : '<span class="text-xs text-gray-400 italic">Aucun droit détecté.</span>');
+
+  // 3. Droits oubliés (affichage explicite si vide)
+  const od = c.droits_oublies || [];
+  html('cockpit-oublies', od.length ? od.map(x =>
+    `<div class="flex items-start gap-2 text-xs text-facilim-700 bg-facilim-50 rounded-lg px-3 py-2">
+       <span>💡</span><span><b>${esc(x.label || x.droit || '')}</b>${x.priorite ? ` — ${esc(x.priorite)}` : ''}</span></div>`
+  ).join('') : '<div class="text-xs text-gray-400 italic">Aucun droit oublié détecté.</div>');
+
+  // 4. Risques du dossier
+  const rr = c.risques_refus || {};
+  const rgEl = document.getElementById('cockpit-risque-global');
+  if (rgEl) {
+    const rg = rr.risque_global || '–';
+    rgEl.className = 'text-xs font-semibold px-2 py-0.5 rounded-full ' + riskCls(rg);
+    rgEl.textContent = 'Global : ' + rg;
+  }
+  const risks = rr.risques || [];
+  html('cockpit-risques', risks.length ? risks.map(r =>
+    `<div class="rounded-lg px-3 py-2 ${riskCls(r.risque)}">
+       <div class="text-xs font-semibold">${esc(r.label || r.droit || '')} — ${esc(r.risque || '')}</div>
+       <div class="text-xs mt-0.5 opacity-90">${esc(r.justification || '')}</div></div>`
+  ).join('') : '<div class="text-xs text-gray-400 italic">Aucun risque identifié.</div>');
+
+  // 5. Preuves recommandées
+  const pp = c.pieces_prioritaires || [];
+  html('cockpit-preuves', pp.length ? pp.map(p =>
+    `<div class="flex items-start gap-2 text-xs py-1 border-b border-gray-50 last:border-0">
+       <span class="font-semibold whitespace-nowrap ${p.obligatoire ? 'text-red-600' : 'text-gray-500'}">${p.obligatoire ? 'OBLIGATOIRE' : 'recommandée'}</span>
+       <span class="text-gray-700">${esc(p.piece || '')}</span></div>`
+  ).join('') : '<div class="text-xs text-gray-400 italic">Aucune pièce listée.</div>');
+
+  // 6. Gate CERFA → PASS / WARNING / BLOCK
+  const g = c.gate_export || {};
+  const gMap = {
+    AUTORISE: { l: 'PASS', c: 'bg-green-100 text-green-700' },
+    AUTORISE_AVEC_AVERTISSEMENTS: { l: 'WARNING', c: 'bg-orange-100 text-orange-700' },
+    BLOQUE_EXPORT: { l: 'BLOCK', c: 'bg-red-100 text-red-700' },
+  };
+  const gInfo = gMap[g.decision] || { l: '–', c: 'bg-gray-100 text-gray-600' };
+  const gEl = document.getElementById('cockpit-gate');
+  if (gEl) { gEl.className = 'text-xs font-bold px-2.5 py-1 rounded-full ' + gInfo.c; gEl.textContent = gInfo.l; }
+  set('cockpit-gate-msg', g.message || '');
+
+  // 7. Plan d'action
+  const pa = c.plan_action || [];
+  const prioCls = p => p === 'haute' ? 'bg-red-100 text-red-700' : p === 'moyenne' ? 'bg-orange-100 text-orange-700' : 'bg-gray-100 text-gray-600';
+  html('cockpit-plan', pa.length ? pa.map(a =>
+    `<div class="border-l-2 border-facilim-400 pl-3 py-1">
+       <div class="flex items-center gap-2 flex-wrap">
+         <span class="text-xs font-semibold text-gray-800">${esc(a.titre || '')}</span>
+         <span class="text-[10px] px-1.5 py-0.5 rounded-full ${prioCls(a.priorite)}">${esc(a.priorite || '')}</span>
+         ${a.roi != null ? `<span class="text-[10px] text-gray-400">ROI ${a.roi}</span>` : ''}
+       </div>
+       <div class="text-xs text-gray-500 mt-0.5">${esc(a.description || '')}</div></div>`
+  ).join('') : '<div class="text-xs text-gray-400 italic">Aucune action proposée.</div>');
+
+  // 8. Validation humaine
+  const vh = c.validation_humaine || [];
+  const stCls = s => s === 'valide' ? 'text-green-600' : s === 'refuse' ? 'text-red-600' : 'text-gray-500';
+  html('cockpit-validation', vh.length ? vh.map(v =>
+    `<div class="flex items-center justify-between text-xs py-1 border-b border-gray-50 last:border-0">
+       <span class="text-gray-700">${esc(v.element || '')}</span>
+       <span class="flex items-center gap-2">
+         <span class="text-gray-400">${v.confiance != null ? v.confiance + '%' : ''}</span>
+         <span class="font-medium ${stCls(v.statut)}">${esc(v.statut || '')}</span>
+       </span></div>`
+  ).join('') : '<div class="text-xs text-gray-400 italic">Aucun élément à valider.</div>');
+}
+
+// ── Historique du dossier (lecture seule de GET /dossiers/{id}/historique) ─────
+// Timeline GÉNÉRIQUE : on affiche date/type/source + un rendu clé→valeur des
+// détails. Aucune règle spécifique par type d'événement, aucun recalcul.
+async function loadHistorique(dossierId) {
+  try {
+    const res = await fetch(`/api/v1/dossiers/${dossierId}/historique`, { credentials: 'include' });
+    if (!res.ok) return;
+    renderHistorique(await res.json());
+  } catch (e) { console.debug('Historique non disponible:', e); }
+}
+
+function renderHistorique(data) {
+  const panel = document.getElementById('panel-historique');
+  if (!panel) return;
+  panel.classList.remove('hidden');   // panneau affiché (message explicite si vide)
+
+  const evs = (data && Array.isArray(data.evenements)) ? data.evenements : [];
+  const esc = s => (s == null ? '' : String(s)).replace(/[&<>]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
+
+  const cnt = document.getElementById('historique-count');
+  if (cnt) cnt.textContent = `${evs.length} événement${evs.length > 1 ? 's' : ''}`;
+
+  const tl = document.getElementById('historique-timeline');
+  if (!tl) return;
+
+  if (!evs.length) {
+    tl.innerHTML = '<div class="text-xs text-gray-400 italic">Aucun événement enregistré pour ce dossier.</div>';
+    return;
+  }
+
+  const fmtDate = d => {
+    if (!d) return '—';
+    try { const x = new Date(d); return isNaN(x.getTime()) ? String(d) : x.toLocaleString('fr-FR'); }
+    catch (e) { return String(d); }
+  };
+  const fmtDetails = det => {
+    if (!det || typeof det !== 'object') return '';
+    return Object.entries(det)
+      .filter(([k, v]) => v !== '' && v !== null && v !== undefined)
+      .map(([k, v]) => `<div><span class="text-gray-400">${esc(k)} :</span> <span class="text-gray-700">${esc(typeof v === 'object' ? JSON.stringify(v) : v)}</span></div>`)
+      .join('');
+  };
+
+  tl.innerHTML = evs.map(e => `
+    <div class="border-l-2 border-facilim-400 pl-3 py-1">
+      <div class="flex items-center gap-2 flex-wrap">
+        <span class="text-[11px] text-gray-400">${fmtDate(e.date)}</span>
+        <span class="text-xs font-semibold text-gray-800">${esc(e.type || 'événement')}</span>
+        ${e.source ? `<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500">${esc(e.source)}</span>` : ''}
+        ${e.acteur ? `<span class="text-[10px] text-gray-400">par ${esc(e.acteur)}</span>` : ''}
+      </div>
+      <div class="text-xs mt-0.5 space-y-0.5">${fmtDetails(e.details)}</div>
+    </div>
+  `).join('');
+}
+
 async function loadDossiers() {
   try {
     const res = await fetch('/api/v1/dashboard/dossiers', { credentials: 'include' });
@@ -682,14 +963,24 @@ async function openDossier(id) {
     });
   }
 
+  // Réinitialiser le panneau cockpit professionnel
+  const panelCockpit = document.getElementById('panel-cockpit');
+  if (panelCockpit) panelCockpit.classList.add('hidden');
+
+  // Réinitialiser le panneau historique
+  const panelHist = document.getElementById('panel-historique');
+  if (panelHist) panelHist.classList.add('hidden');
+
   try {
-    // Chargement parallèle : données dossier + appui évaluation
+    // Chargement parallèle : données dossier + appui évaluation + historique
     const [res] = await Promise.all([
       fetch(`/api/v1/dashboard/dossiers/${id}`, { credentials: 'include' }),
       loadAppuiEvaluation(id),
+      loadHistorique(id),   // timeline — lecture seule de GET /historique
     ]);
     const d = await res.json();
     renderModalContent(d);
+    renderCockpit(d);   // lecture seule de cockpit_pro_json — aucun recalcul
   } catch(e) {
     document.getElementById('modal-content').innerHTML = '<div class="text-center text-red-500 py-8">Erreur de chargement</div>';
   }
@@ -915,10 +1206,12 @@ async function envoyerCerfa() {
     });
     const data = await res.json();
     if (res.ok) {
-      alert(`✅ CERFA envoyé avec succès à ${data.email_dest}`);
+      const avert = data.gate_avertissement ? `\n\n⚠️ ${data.gate_avertissement}` : '';
+      alert(`✅ CERFA envoyé avec succès à ${data.email_dest}${avert}`);
       closeModal('modal-dossier');
       await refreshData();
     } else {
+      // 403 = export bloqué par le gate FACILIM (BLOCK) → data.detail contient le motif
       alert(`❌ ${data.detail || 'Erreur lors de l\'envoi.'}`);
     }
   } catch(e) { alert('Erreur réseau lors de l\'envoi.'); }

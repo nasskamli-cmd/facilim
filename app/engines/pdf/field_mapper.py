@@ -16,6 +16,12 @@ from typing import Any
 
 def _nir_to_fields(nir: str, prefix: str) -> dict[str, str]:
     cleaned = "".join(c for c in (nir or "") if c.isdigit())[:15].ljust(15)
+    # QA-6 FIX — Le PDF CERFA 15692*01 numérote les cases NSS à partir de 3
+    # (Numero SS 3 → Numero SS 17 pour adulte, N° SS Enfant 1 → 15 pour enfant)
+    # Pour adulte (prefix "Numero SS") : décalage +3 pour coller aux vrais noms AcroForm
+    # Pour enfant (prefix "N° SS Enfant") : pas de décalage (PDF commence bien à 1)
+    if prefix == "Numero SS":
+        return {f"{prefix} {i+3}": cleaned[i] for i in range(15)}
     return {f"{prefix} {i+1}": cleaned[i] for i in range(15)}
 
 
@@ -103,9 +109,81 @@ def build_field_map(donnees: dict[str, Any], service_type: str = "adulte") -> di
     if num_dos:
         fields["Champ de texte P 1 2"] = num_dos   # N° de dossier existant
 
-    # Urgence
+    # ════════════════════════════════════════════════════════════════════════
+    # PAGE 3 — A3 Situations d'urgence — FACILIM 40 P0 LOT 1
+    # ════════════════════════════════════════════════════════════════════════
+    _urgence_src = " ".join(str(donnees.get(c, "") or "") for c in [
+        "historique_mdph", "droits_demandes", "statut_emploi",
+        "impact_quotidien", "notes_pro", "situation_scolaire",
+    ]).lower()
+
+    # P3 1 — Fin de droits imminente (< 2 mois)
+    fields["Case à cocher P3 1"] = _check(_contains_any(_urgence_src, [
+        "renouvellement", "échéance", "echeance", "expire", "fin de droits",
+        "arrive à terme", "dans 2 mois",
+    ]))
+
+    # P3 2 — Risque de perte de logement / domicile
+    fields["Case à cocher P3 2"] = _check(_contains_any(_urgence_src, [
+        "ne peut plus vivre", "perte de logement", "expulsion",
+        "quitter domicile", "sans hébergement",
+    ]))
+
+    # P3 3 — Scolarité en danger (NOM AVEC ESPACE dans le PDF officiel : P 3 3)
+    fields["Case à cocher P 3 3"] = _check(
+        service_type in ("enfant", "mixte") and
+        _contains_any(_urgence_src, [
+            "exclusion scolaire", "déscolarisé", "descolarise",
+            "école ne peut plus", "risque déscolarisation",
+        ])
+    )
+
+    # P3 4 — Sortie d'hospitalisation sans solution
+    fields["Case à cocher P3 4"] = _check(_contains_any(_urgence_src, [
+        "sortie hospitalisation", "sortie hôpital", "rééducation terminée",
+        "retour difficile", "ne peut pas rentrer",
+    ]))
+
+    # P3 5 — Risque de perte d'emploi (urgence emploi)
     if donnees.get("urgence") or "urgent" in hist or "échéance" in hist:
         fields["Case à cocher P3 5"] = "/Yes"
+    else:
+        fields["Case à cocher P3 5"] = _check(_contains_any(_urgence_src, [
+            "perd son emploi", "risque licenciement", "inaptitude imminente",
+        ]))
+
+    # P3 6 — Début d'emploi ou de formation imminent
+    fields["Case à cocher P3 6"] = _check(_contains_any(_urgence_src, [
+        "commence bientôt", "nouvel emploi", "nouveau poste", "début contrat",
+        "embauche prochaine", "formation démarre", "prise de poste",
+    ]))
+
+    # ════════════════════════════════════════════════════════════════════════
+    # PAGE 4 — Consentements + Procédure simplifiée — FACILIM 40 P0 LOT 2
+    # ════════════════════════════════════════════════════════════════════════
+    # P4 4 — Consentement échanges professionnels
+    # Facilim obtient le consentement via WhatsApp/interface → toujours /Yes
+    fields["Case à cocher P4 4"] = "/Yes"
+    fields["Case à cocher P4 5"] = "/Off"  # Refus → jamais
+
+    # P4 0 — Procédure simplifiée renouvellement
+    fields["Case à cocher P4 0"] = _check(
+        type_dos in ("RENOUVELLEMENT",) or "renouvell" in hist
+    )
+    # P4 1 — Procédure simplifiée AVPF
+    _droits_up_p4 = str(donnees.get("droits_demandes", "")).upper()
+    fields["Case à cocher P4 1"] = _check("AVPF" in _droits_up_p4)
+
+    # P4 2 — Procédure simplifiée RQTH
+    fields["Case à cocher P4 2"] = _check(
+        "RQTH" in _droits_up_p4 and
+        (type_dos in ("RENOUVELLEMENT",) or "renouvell" in hist)
+    )
+    # P4 3 — Procédure simplifiée urgence
+    fields["Case à cocher P4 3"] = _check(
+        bool(donnees.get("urgence")) or
+        _contains_any(_urgence_src, ["urgence", "urgent"])
+    )
 
     # ════════════════════════════════════════════════════════════════════════
     # PAGE 2 — A1 Identité
@@ -175,8 +253,10 @@ def build_field_map(donnees: dict[str, Any], service_type: str = "adulte") -> di
     # ════════════════════════════════════════════════════════════════════════
     # PAGE 3 — A4 Mesure de protection (adulte protégé)
     # ════════════════════════════════════════════════════════════════════════
-    if service_type == "protege":
-        fields["REPRESENTANT LEGAL 1"] = _trunc(donnees.get("type_protection", ""), 80)
+    # Fix QA-1 : REPRESENTANT LEGAL mappé si service_type=protege OU si type_protection présent
+    _type_prot = donnees.get("type_protection", "")
+    if service_type == "protege" or _type_prot:
+        fields["REPRESENTANT LEGAL 1"] = _trunc(_type_prot, 80)
         fields["REPRESENTANT LEGAL 3"] = _nom(rep)
         fields["REPRESENTANT LEGAL 6"] = _trunc(donnees.get("jugement_tribunal", ""), 100)
 
@@ -294,6 +374,71 @@ def build_field_map(donnees: dict[str, Any], service_type: str = "adulte") -> di
         if formation:
             fields["Champ de texte P9 4"] = _trunc(formation, 100)
 
+        # Sprint QA-1 Fix 2 — Aménagements scolaires (P10) — TDAH, DYS, TSA
+        # Sources : impact_quotidien · situation_scolaire · diagnostics · notes_pro
+        _all_scol = " ".join(str(donnees.get(c, "") or "") for c in [
+            "situation_scolaire", "impact_quotidien", "diagnostics",
+            "notes_pro", "texte_c_scolarite",
+        ]).lower()
+        # AESH / AVS
+        # QA-6 FIX — Correction nommage P10 : supprimer l'espace (P 10 → P10)
+        # Le PDF CERFA 15692*01 utilise "Case à cocher P10 X" sans espace
+        fields["Case à cocher P10 1"] = _check(
+            _contains_any(_all_scol, ["aesh", "avs", "accompagnant", "auxiliaire"])
+        )
+        # Tiers-temps / temps aménagé / temps supplémentaire
+        fields["Case à cocher P10 2"] = _check(
+            _contains_any(_all_scol, ["tiers-temps", "tiers temps", "temps aménagé",
+                                       "temps supplémentaire", "temps majoré", "1/3 temps"])
+        )
+        # Matériel adapté / ordinateur / tablette
+        fields["Case à cocher P10 3"] = _check(
+            _contains_any(_all_scol, ["matériel adapté", "ordinateur", "tablette",
+                                       "logiciel", "dictée", "aide technique", "matériel"])
+        )
+        # Transport scolaire adapté
+        fields["Case à cocher P10 4"] = _check(
+            _contains_any(_all_scol, ["transport", "taxi", "véhicule scolaire"])
+        )
+
+        # ── FACILIM 40 P0 LOT 3 — Orientations médico-sociales P10 (5-12) ──
+        _all_scol_orient = " ".join(str(donnees.get(c, "") or "") for c in [
+            "situation_scolaire", "droits_demandes", "diagnostics",
+            "notes_pro", "texte_c_scolarite", "texte_e_projet_vie", "impact_quotidien",
+        ]).lower()
+
+        # P10 5 — SESSAD
+        fields["Case à cocher P10 5"] = _check(
+            _contains_any(_all_scol_orient, ["sessad"])
+        )
+        # P10 6 — IME
+        fields["Case à cocher P10 6"] = _check(
+            _contains_any(_all_scol_orient, ["ime", "institut médico-éducatif",
+                                               "medico-educatif", "médico-éducatif"])
+        )
+        # P10 7 — ITEP
+        fields["Case à cocher P10 7"] = _check(
+            _contains_any(_all_scol_orient, ["itep", "troubles comportement"])
+        )
+        # P10 9 — ULIS
+        fields["Case à cocher P10 9"] = _check(
+            _contains_any(_all_scol_orient, ["ulis"])
+        )
+        # P10 10 — EEAP (polyhandicap)
+        fields["Case à cocher P10 10"] = _check(
+            _contains_any(_all_scol_orient, ["eeap", "polyhandicap"])
+        )
+        # P10 11 — IEM (déficient visuel)
+        fields["Case à cocher P10 11"] = _check(
+            _contains_any(_all_scol_orient, ["iem", "déficient visuel", "deficient visuel",
+                                               "malvoyant", "aveugle"])
+        )
+        # P10 12 — Institut déficient auditif / sourd
+        fields["Case à cocher P10 12"] = _check(
+            _contains_any(_all_scol_orient, ["sourd", "malentendant", "déficient auditif",
+                                               "surdité"])
+        )
+
     # ════════════════════════════════════════════════════════════════════════
     # PAGE 13 — D1 Situation professionnelle
     # ════════════════════════════════════════════════════════════════════════
@@ -344,6 +489,40 @@ def build_field_map(donnees: dict[str, Any], service_type: str = "adulte") -> di
         if texte_narratif_d.strip():
             fields["Champ de texte P14 1"] = _trunc(texte_narratif_d, 2000)
 
+        # ── FACILIM 40 P0 LOT 4 — Situations d'inactivité P14 ──────────────
+        _statut_p14 = str(donnees.get("statut_emploi", "") or "").lower()
+        _diag_p14   = str(donnees.get("diagnostics", "") or "").lower()
+        _impact_p14 = str(donnees.get("impact_quotidien", "") or "").lower()
+        _p14_all    = f"{_statut_p14} {_diag_p14} {_impact_p14}"
+
+        # P14 2 — Arrêt maladie longue durée
+        fields["Case à cocher P14 2"] = _check(_contains_any(_p14_all, [
+            "arrêt longue durée", "arrêt de longue", "arret longue duree",
+            "arrêt maladie", "longue maladie",
+        ]))
+
+        # P14 3 — Invalidité (pension)
+        fields["Case à cocher P14 3"] = _check(_contains_any(_p14_all, [
+            "invalidité", "invalide", "pension invalidité", "pension d'invalidité",
+            "2ème catégorie", "3ème catégorie",
+        ]))
+
+        # P14 5 — Congé parental / disponibilité parent
+        fields["Case à cocher P14 5"] = _check(_contains_any(_p14_all, [
+            "congé parental", "conge parental", "disponibilité", "arrêt aidant",
+        ]))
+
+        # P14 6 — Inaptitude / licenciement pour inaptitude
+        fields["Case à cocher P14 6"] = _check(_contains_any(_p14_all, [
+            "inaptitude", "inapte", "licencié pour inaptitude", "licencié pour inapte",
+            "licenciement pour inaptitude",
+        ]))
+
+        # P14 7 — Bénévolat / activité non rémunérée
+        fields["Case à cocher P14 7"] = _check(_contains_any(_p14_all, [
+            "bénévole", "benevolat", "bénévolat", "activité bénévole",
+        ]))
+
     # ════════════════════════════════════════════════════════════════════════
     # PAGE 15 — D2 Parcours professionnel
     # ════════════════════════════════════════════════════════════════════════
@@ -359,30 +538,191 @@ def build_field_map(donnees: dict[str, Any], service_type: str = "adulte") -> di
     if texte_narratif_e.strip():
         fields["Champ de texte P16 1"] = _trunc(texte_narratif_e, 2000)
 
+    # Fix QA-1 : P16 5 — Bilan de compétences / bilan capacités (ESPO)
+    _bilan_cap_signal = _contains_any(" ".join(str(donnees.get(c,"") or "") for c in [
+        "droits_demandes","projet_orientation","texte_d_situation_pro","texte_e_projet_vie","notes_pro",
+    ]).lower(), [
+        "bilan de compétences", "bilan capacités", "bilan capacites",
+        "bilan de compétence", "espo", "bilan compétences",
+    ])
+    if _bilan_cap_signal:
+        fields["Case à cocher P16 5"] = "/Yes"
+
+    # ── FACILIM 40 P0 LOT 5 — Orientations P16 ─────────────────────────────
+    if service_type in ("adulte", "protege", "mixte"):
+        _proj_p16 = " ".join(str(donnees.get(c, "") or "") for c in [
+            "droits_demandes", "projet_orientation", "texte_e_projet_vie",
+            "statut_emploi", "notes_pro",
+        ]).lower()
+        _droits_p16 = str(donnees.get("droits_demandes", "")).upper()
+
+        # P16 1 — Souhait emploi milieu ordinaire (avec adaptations)
+        fields["Case à cocher P16 1"] = _check(
+            _contains_any(_proj_p16, ["milieu ordinaire", "emploi ordinaire",
+                                       "retour emploi", "emploi classique"]) or
+            ("RQTH" in _droits_p16 and "ESAT" not in _droits_p16)
+        )
+
+        # P16 2 — Souhait ESAT / milieu protégé
+        fields["Case à cocher P16 2"] = _check(
+            _contains_any(_proj_p16, ["esat", "milieu protégé", "milieu protege",
+                                       "travail protégé"])
+        )
+
+        # P16 3 — Sans activité professionnelle souhaitée
+        fields["Case à cocher P16 3"] = _check(
+            _contains_any(_proj_p16, ["sans activité", "aucune activité professionnelle",
+                                       "ne souhaite pas travailler", "pas de projet professionnel"])
+        )
+
+        # Champ P16 2 — Nom de la structure souhaitée (NOTE : P 16 2 avec espace)
+        _structure_souhaitee = donnees.get("projet_orientation", "") or donnees.get("etablissement_souhaite", "")
+        if _structure_souhaitee:
+            fields["Champ de texte P 16 2"] = _trunc(str(_structure_souhaitee), 100)
+
+        # Champ P16 3 — Informations complémentaires orientation
+        if texte_narratif_e.strip():
+            fields["Champ de texte P16 3"] = _trunc(texte_narratif_e[:300], 300)
+
     # ════════════════════════════════════════════════════════════════════════
     # PAGE 17 — E1/E2/E3 Droits et prestations demandés
     # ════════════════════════════════════════════════════════════════════════
     droits = str(donnees.get("droits_demandes", "")).upper()
     droits_low = droits.lower()
 
+    # Sprint QA-1 — Sources enrichies pour la détection des droits
+    # statut_emploi, diagnostics, impact_quotidien, notes_pro, document_knowledge
+    _dk_projets = " ".join(
+        i.get("valeur","") for i in
+        (donnees.get("_document_knowledge") or {}).get("projets", [])
+        if isinstance(i, dict)
+    ).lower()
+    _dk_freins = " ".join(
+        i.get("valeur","") for i in
+        (donnees.get("_document_knowledge") or {}).get("freins", [])
+        if isinstance(i, dict)
+    ).lower()
+    _all_sources = " ".join(str(donnees.get(c,"") or "") for c in [
+        "droits_demandes","statut_emploi","diagnostics","impact_quotidien",
+        "notes_pro","projet_orientation","texte_d_situation_pro","texte_e_projet_vie",
+        "aidant_besoins","aidant_nom",
+    ]).lower() + " " + _dk_projets + " " + _dk_freins
+
     # E1 — vie quotidienne (<20 ans)
     fields["Case à cocher P17 1"]  = _check("AEEH" in droits)
     fields["Case à cocher P17 2"]  = _check("PCH" in droits)
     fields["Case à cocher P17 3"]  = _check("CMI" in droits)
-    fields["Case à cocher P17 4"]  = _check("AVPF" in droits)
+    # Fix QA-1 : AVPF détectée depuis droits OU signaux aidant (réduction activité pro pour enfant handicapé)
+    _avpf_signal = "AVPF" in droits or _contains_any(_all_sources, [
+        "avpf", "réduction activité", "reduction activite", "congé parental", "conge parental",
+        "cessation activité", "cessation activite", "mi-temps aidant", "arrêt aidant",
+    ])
+    fields["Case à cocher P17 4"]  = _check(_avpf_signal)
 
     # E1 — vie quotidienne (>20 ans)
-    fields["Case à cocher P17 5"]  = _check("AAH" in droits)
+    # Fix QA-1-4 : AAH détectée depuis droits ET signaux indirects (maladie chronique + sans emploi)
+    _arret_long = _contains_any(_all_sources, [
+        "arrêt longue durée", "arrêt de longue", "arret longue duree",
+        "sans emploi", "sans activité", "inapte", "invalidité", "allocation invalidité",
+    ])
+    _maladie_chron = _contains_any(_all_sources, [
+        "fibromyalgie", "sclérose en plaques", "sep", "lupus", "cancer",
+        "insuffisance", "maladie chronique", "fatigue chronique", "sfc",
+        "parkinson", "épilepsie", "diabète", "insuffisance rénale", "vih",
+        "sida", "polyarthrite", "crohn", "spondylarthrite",
+    ])
+    _aah_signal = "AAH" in droits or \
+                  _contains_any(_all_sources, ["aah", "allocation adulte", "allocation aux adultes"]) or \
+                  (_arret_long and _maladie_chron)
+    fields["Case à cocher P17 5"]  = _check(_aah_signal)
     fields["Case à cocher P17 6"]  = _check("RQTH" in droits)
     fields["Case à cocher P17 7"]  = _check("PCH" in droits)
-    fields["Case à cocher P17 11"] = _check(_contains_any(droits_low, ["esat", "orientation médico", "orientation medico"]))
+
+    # Fix QA-1-3 : ESAT/ESMS détectés depuis droits ET signaux ESAT dans données
+    _esat_signal = _contains_any(droits_low, ["esat", "orientation médico", "orientation medico"]) or \
+                   _contains_any(_all_sources, ["esat", "milieu protégé", "milieu protege"])
+    fields["Case à cocher P17 11"] = _check(_esat_signal)
+
+    # Fix QA-1-5 : CMI stationnement — signaux marche difficile (SEP, moteur, fatigue neuro)
+    _cmi_station_signal = _contains_any(droits_low, ["cmi stationnement", "stationnement"]) or \
+                          _contains_any(_all_sources, [
+                              "marche difficile", "ne peut pas marcher", "marcher longtemps",
+                              "fauteuil", "déambulateur", "canne", "béquille",
+                              "périmètre marche", "distance marche",
+                              "fatigue neurologique", "sclérose en plaques", "sep ",
+                              "ne peut plus marcher", "marche limitée",
+                          ])
+    fields["Case à cocher P17 13"] = _check(_cmi_station_signal)
+
+    # ── FACILIM 40 P0 LOT 6 — Droits P17 manquants ─────────────────────────
+    # P17 8 — Orientation ESMS (MAS/FAM/établissement médico-social lourd)
+    fields["Case à cocher P17 8"] = _check(
+        _contains_any(droits_low, ["mas", "fam", "esms", "maison d'accueil"]) or
+        _contains_any(_all_sources, [
+            "maison d'accueil spécialisée", "foyer d'accueil médicalisé",
+            "polyhandicap.{0,15}adulte", "grabataire",
+        ])
+    )
+    # P17 9 — Foyer de vie
+    fields["Case à cocher P17 9"] = _check(
+        _contains_any(droits_low, ["foyer de vie", "foyer vie"]) or
+        _contains_any(_all_sources, ["foyer de vie"])
+    )
+    # P17 10 — Foyer d'hébergement (travailleurs ESAT)
+    fields["Case à cocher P17 10"] = _check(
+        _contains_any(droits_low, ["foyer d'hébergement", "foyer hebergement"]) or
+        (_esat_signal and _contains_any(_all_sources, [
+            "hébergement", "logement accompagné", "foyer hébergement",
+        ]))
+    )
+    # P17 12 — Accueil de jour
+    fields["Case à cocher P17 12"] = _check(
+        _contains_any(droits_low, ["accueil de jour", "accueil jour"]) or
+        _contains_any(_all_sources, ["accueil de jour"])
+    )
+    # P17 14 — CMI priorité (file d'attente, transport)
+    fields["Case à cocher P17 14"] = _check(
+        _contains_any(droits_low, ["cmi priorité", "cmi priorite", "carte priorité"]) or
+        _contains_any(_all_sources, [
+            "ne peut pas rester debout", "douleur debout",
+            "file d'attente difficile", "difficile rester debout",
+        ])
+    )
+    # P17 15 — ACTP (droit historique, renouvellements antérieurs)
+    fields["Case à cocher P17 15"] = _check(
+        _contains_any(droits_low, ["actp", "allocation compensatrice"])
+    )
+    # P17 16 — Autre prestation vie quotidienne
+    fields["Case à cocher P17 16"] = _check(
+        _contains_any(droits_low, ["autre prestation"])
+    )
 
     # E3 — travail / emploi / formation
     fields["Case à cocher P18 1"]  = _check("RQTH" in droits)
-    fields["Case à cocher P18 2"]  = _check(_contains_any(droits_low, ["orientation professionnelle", "orientation prof"]))
-    fields["Case à cocher P18 3"]  = _check(_contains_any(droits, ["CRP", "CPO", "UEROS"]))
-    fields["Case à cocher P18 4"]  = _check("ESAT" in droits)
-    fields["Case à cocher P18 6"]  = _check("emploi accompagné" in droits_low)
+    fields["Case à cocher P18 2"]  = _check(
+        _contains_any(droits_low, ["orientation professionnelle", "orientation prof"]) or
+        ("RQTH" in droits and service_type in ("adulte", "mixte", "protege"))
+    )
+    fields["Case à cocher P18 3"]  = _check(
+        _contains_any(droits_low, ["crp", "cpo", "ueros", "espo"]) or
+        _contains_any(_all_sources, ["espo", "bilan capacités", "bilan capacites", "crp ", "cpo ", "ueros"])
+    )
+
+    # Fix QA-1-3 : ESAT dans E3 (P18 4) depuis droits ET signaux
+    fields["Case à cocher P18 4"]  = _check("ESAT" in droits or _esat_signal)
+
+    # FACILIM 40 P0 LOT 7 — P18 5 ESRP
+    fields["Case à cocher P18 5"]  = _check(
+        _contains_any(droits_low, ["esrp"]) or
+        _contains_any(_all_sources, [
+            "esrp", "rééducation professionnelle", "reeducation professionnelle",
+            "reconversion obligatoire", "inapte.{0,20}reconversion",
+        ])
+    )
+    fields["Case à cocher P18 6"]  = _check(
+        _contains_any(droits_low, ["emploi accompagné", "emploi accompagne"]) or
+        _contains_any(_all_sources, ["emploi accompagné", "job coaching"])
+    )
 
     # ════════════════════════════════════════════════════════════════════════
     # PAGE 19 — F Aidant familial
@@ -394,5 +734,15 @@ def build_field_map(donnees: dict[str, Any], service_type: str = "adulte") -> di
         if donnees.get("aidant_besoins"):
             fields["Champ de texte P20 1"] = _trunc(donnees["aidant_besoins"], 200)
 
-    # Supprime les valeurs vides
-    return {k: v for k, v in fields.items() if v not in ("", None, "/Off")}
+    # FACILIM 40 P0 — Filtre final
+    # Les cases à cocher des pages décisionnelles (P3/P4/P16/P17/P18) conservent
+    # leur valeur /Off (case explicitement non cochée = PDF valide + N1 couvert)
+    # Les champs texte vides et les autres cases restent filtrés
+    _KEEP_OFF_PAGES = re.compile(
+        r"^Case\s+à\s+cocher\s+(P3\s|P\s*3\s|P4\s|P16\s|P17\s|P18\s)"
+    )
+    return {
+        k: v for k, v in fields.items()
+        if v not in ("", None)
+        and not (v == "/Off" and not _KEEP_OFF_PAGES.match(k))
+    }

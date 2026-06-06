@@ -1,0 +1,5 @@
+QA-9 Human Validation & Professional Cockpit
+N=100 seed=42 durée=0.3s
+PASS=100 FAIL=0 WARN=0
+Score_moy=31.3 Validmoy=2.3
+Stabilité=100.0% Décision=✅ PASS

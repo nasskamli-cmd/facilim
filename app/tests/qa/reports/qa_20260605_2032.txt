@@ -1,0 +1,576 @@
+══════════════════════════════════════════════════════════════════════
+  FACILIM QA — RAPPORT DE VALIDATION
+  Généré le : 2026-06-05 18:32 UTC
+  Sprint : QA-1-REAL
+  Profils testés : 14
+══════════════════════════════════════════════════════════════════════
+
+  RÉSUMÉ GLOBAL
+  Score moyen        : 94.8/100
+  Profils PASS       : 14/14
+  Profils FAIL       : 0/14
+
+  COUVERTURE PAR SECTION
+  whatsapp        : ██████████ 100.0%
+  documents       : █████████░  96.4%
+  inferences      : █████████░  94.0%
+  narratifs       : ████████░░  85.5%
+  cerfa           : ██████████ 100.0%
+  justificatifs   : █████████░  94.6%
+
+  DÉTAIL PAR PROFIL
+  ID                              Score Niveau                     FAIL  WARN
+  ──────────────────────────────────────────────────────────────────────
+  AIDANT_PARENT_TSA              100.0 🟢 Production Ready            0     0
+  INSERTION_ESAT_DI               98.6 🟢 Production Ready            0     1
+  PROTECTION_TUTELLE              97.5 🟢 Production Ready            1     0
+  ADULTE_MALADIE_CHRONIQUE        96.7 🟢 Production Ready            0     1
+  ENFANT_TSA_LEGER                96.2 🟢 Production Ready            1     1
+  ENFANT_TSA_SEVERE               95.8 🟢 Production Ready            1     1
+  PROTECTION_HABILITATION         95.2 🟢 Production Ready            0     2
+  ENFANT_TDAH_DYS                 94.2 🟢 Production Ready            0     2
+  ADULTE_MOTEUR_SEP               94.2 🟢 Production Ready            1     1
+  ADULTE_ACCIDENT_TRAVAIL         93.3 🟢 Production Ready            2     1
+  ADULTE_SCHIZOPHRENIE_ESAT       93.3 🟢 Production Ready            1     2
+  INSERTION_RQTH_ESPO             92.9 🟢 Production Ready            2     1
+  ADULTE_PSYCHIQUE_BIPOLAIRE      90.0 🟢 Production Ready            3     1
+  ENFANT_POLYHANDICAP             89.9 🟢 Très bon                    1     3
+
+  ÉCHECS CRITIQUES (FAIL)
+  ──────────────────────────────────────────────────────────────────────
+  [ENFANT_TSA_LEGER    ] Narratifs       D2 — Fragment 's'isole' dans sectio
+    → Fragment attendu dans le texte narratif
+  [ENFANT_TSA_SEVERE   ] Narratifs       D2 — Fragment 'maintien' dans secti
+    → Fragment attendu dans le texte narratif
+  [ENFANT_POLYHANDICAP ] Narratifs       D2 — Fragment 'EEAP' dans section E
+    → Fragment attendu dans le texte narratif
+  [ADULTE_ACCIDENT_TRAV] Narratifs       D2 — Fragment 'ESPO' dans section D
+    → Fragment attendu dans le texte narratif
+  [ADULTE_ACCIDENT_TRAV] Narratifs       D2 — Fragment 'retourner travailler
+    → Fragment attendu dans le texte narratif
+  [ADULTE_MOTEUR_SEP   ] Narratifs       D2 — Fragment 'reconversion' dans s
+    → Fragment attendu dans le texte narratif
+  [ADULTE_PSYCHIQUE_BIP] Narratifs       D2 — Fragment 'jours' dans section 
+    → Fragment attendu dans le texte narratif
+  [ADULTE_PSYCHIQUE_BIP] Narratifs       D2 — Fragment 'stabilité' dans sect
+    → Fragment attendu dans le texte narratif
+  [ADULTE_PSYCHIQUE_BIP] Narratifs       D3 — Score maturité minimum
+    → Score 58/100 (minimum 60)
+  [ADULTE_SCHIZOPHRENIE] Narratifs       D2 — Fragment 'maintien' dans secti
+    → Fragment attendu dans le texte narratif
+  [INSERTION_RQTH_ESPO ] Narratifs       D2 — Fragment 'ESPO' dans section D
+    → Fragment attendu dans le texte narratif
+  [INSERTION_RQTH_ESPO ] Narratifs       D2 — Fragment 'mathématiques' dans 
+    → Fragment attendu dans le texte narratif
+  [PROTECTION_TUTELLE  ] Narratifs       D2 — Fragment 'maintien' dans secti
+    → Fragment attendu dans le texte narratif
+
+══════════════════════════════════════════════════════════════════════
+
+JSON:
+[
+  {
+    "id": "ENFANT_TSA_LEGER",
+    "score": 96.2,
+    "sections": {
+      "whatsapp": {
+        "score": 1.0,
+        "pass": 4,
+        "fail": 0
+      },
+      "documents": {
+        "score": 1.0,
+        "pass": 3,
+        "fail": 0
+      },
+      "inferences": {
+        "score": 1.0,
+        "pass": 3,
+        "fail": 0
+      },
+      "narratifs": {
+        "score": 0.812,
+        "pass": 6,
+        "fail": 1
+      },
+      "cerfa": {
+        "score": 1.0,
+        "pass": 6,
+        "fail": 0
+      },
+      "justificatifs": {
+        "score": 1.0,
+        "pass": 2,
+        "fail": 0
+      }
+    }
+  },
+  {
+    "id": "ENFANT_TSA_SEVERE",
+    "score": 95.8,
+    "sections": {
+      "whatsapp": {
+        "score": 1.0,
+        "pass": 4,
+        "fail": 0
+      },
+      "documents": {
+        "score": 1.0,
+        "pass": 3,
+        "fail": 0
+      },
+      "inferences": {
+        "score": 1.0,
+        "pass": 3,
+        "fail": 0
+      },
+      "narratifs": {
+        "score": 0.875,
+        "pass": 7,
+        "fail": 1
+      },
+      "cerfa": {
+        "score": 1.0,
+        "pass": 5,
+        "fail": 0
+      },
+      "justificatifs": {
+        "score": 0.833,
+        "pass": 2,
+        "fail": 0
+      }
+    }
+  },
+  {
+    "id": "ENFANT_TDAH_DYS",
+    "score": 94.2,
+    "sections": {
+      "whatsapp": {
+        "score": 1.0,
+        "pass": 4,
+        "fail": 0
+      },
+      "documents": {
+        "score": 0.833,
+        "pass": 2,
+        "fail": 0
+      },
+      "inferences": {
+        "score": 0.833,
+        "pass": 2,
+        "fail": 0
+      },
+      "narratifs": {
+        "score": 1.0,
+        "pass": 7,
+        "fail": 0
+      },
+      "cerfa": {
+        "score": 1.0,
+        "pass": 4,
+        "fail": 0
+      },
+      "justificatifs": {
+        "score": 1.0,
+        "pass": 3,
+        "fail": 0
+      }
+    }
+  },
+  {
+    "id": "ENFANT_POLYHANDICAP",
+    "score": 89.9,
+    "sections": {
+      "whatsapp": {
+        "score": 1.0,
+        "pass": 4,
+        "fail": 0
+      },
+      "documents": {
+        "score": 0.833,
+        "pass": 2,
+        "fail": 0
+      },
+      "inferences": {
+        "score": 0.833,
+        "pass": 2,
+        "fail": 0
+      },
+      "narratifs": {
+        "score": 0.786,
+        "pass": 5,
+        "fail": 1
+      },
+      "cerfa": {
+        "score": 1.0,
+        "pass": 3,
+        "fail": 0
+      },
+      "justificatifs": {
+        "score": 1.0,
+        "pass": 2,
+        "fail": 0
+      }
+    }
+  },
+  {
+    "id": "ADULTE_ACCIDENT_TRAVAIL",
+    "score": 93.3,
+    "sections": {
+      "whatsapp": {
+        "score": 1.0,
+        "pass": 4,
+        "fail": 0
+      },
+      "documents": {
+        "score": 1.0,
+        "pass": 3,
+        "fail": 0
+      },
+      "inferences": {
+        "score": 1.0,
+        "pass": 3,
+        "fail": 0
+      },
+      "narratifs": {
+        "score": 0.75,
+        "pass": 6,
+        "fail": 2
+      },
+      "cerfa": {
+        "score": 1.0,
+        "pass": 8,
+        "fail": 0
+      },
+      "justificatifs": {
+        "score": 0.833,
+        "pass": 2,
+        "fail": 0
+      }
+    }
+  },
+  {
+    "id": "ADULTE_MOTEUR_SEP",
+    "score": 94.2,
+    "sections": {
+      "whatsapp": {
+        "score": 1.0,
+        "pass": 4,
+        "fail": 0
+      },
+      "documents": {
+        "score": 1.0,
+        "pass": 1,
+        "fail": 0
+      },
+      "inferences": {
+        "score": 0.833,
+        "pass": 2,
+        "fail": 0
+      },
+      "narratifs": {
+        "score": 0.875,
+        "pass": 7,
+        "fail": 1
+      },
+      "cerfa": {
+        "score": 1.0,
+        "pass": 5,
+        "fail": 0
+      },
+      "justificatifs": {
+        "score": 1.0,
+        "pass": 3,
+        "fail": 0
+      }
+    }
+  },
+  {
+    "id": "ADULTE_PSYCHIQUE_BIPOLAIRE",
+    "score": 90.0,
+    "sections": {
+      "whatsapp": {
+        "score": 1.0,
+        "pass": 4,
+        "fail": 0
+      },
+      "documents": {
+        "score": 1.0,
+        "pass": 1,
+        "fail": 0
+      },
+      "inferences": {
+        "score": 1.0,
+        "pass": 3,
+        "fail": 0
+      },
+      "narratifs": {
+        "score": 0.625,
+        "pass": 5,
+        "fail": 3
+      },
+      "cerfa": {
+        "score": 1.0,
+        "pass": 3,
+        "fail": 0
+      },
+      "justificatifs": {
+        "score": 0.75,
+        "pass": 1,
+        "fail": 0
+      }
+    }
+  },
+  {
+    "id": "ADULTE_SCHIZOPHRENIE_ESAT",
+    "score": 93.3,
+    "sections": {
+      "whatsapp": {
+        "score": 1.0,
+        "pass": 4,
+        "fail": 0
+      },
+      "documents": {
+        "score": 0.833,
+        "pass": 2,
+        "fail": 0
+      },
+      "inferences": {
+        "score": 1.0,
+        "pass": 3,
+        "fail": 0
+      },
+      "narratifs": {
+        "score": 0.875,
+        "pass": 7,
+        "fail": 1
+      },
+      "cerfa": {
+        "score": 1.0,
+        "pass": 4,
+        "fail": 0
+      },
+      "justificatifs": {
+        "score": 0.833,
+        "pass": 2,
+        "fail": 0
+      }
+    }
+  },
+  {
+    "id": "ADULTE_MALADIE_CHRONIQUE",
+    "score": 96.7,
+    "sections": {
+      "whatsapp": {
+        "score": 1.0,
+        "pass": 4,
+        "fail": 0
+      },
+      "documents": {
+        "score": 1.0,
+        "pass": 1,
+        "fail": 0
+      },
+      "inferences": {
+        "score": 0.833,
+        "pass": 2,
+        "fail": 0
+      },
+      "narratifs": {
+        "score": 1.0,
+        "pass": 7,
+        "fail": 0
+      },
+      "cerfa": {
+        "score": 1.0,
+        "pass": 2,
+        "fail": 0
+      },
+      "justificatifs": {
+        "score": 1.0,
+        "pass": 2,
+        "fail": 0
+      }
+    }
+  },
+  {
+    "id": "INSERTION_RQTH_ESPO",
+    "score": 92.9,
+    "sections": {
+      "whatsapp": {
+        "score": 1.0,
+        "pass": 4,
+        "fail": 0
+      },
+      "documents": {
+        "score": 1.0,
+        "pass": 3,
+        "fail": 0
+      },
+      "inferences": {
+        "score": 1.0,
+        "pass": 3,
+        "fail": 0
+      },
+      "narratifs": {
+        "score": 0.643,
+        "pass": 4,
+        "fail": 2
+      },
+      "cerfa": {
+        "score": 1.0,
+        "pass": 6,
+        "fail": 0
+      },
+      "justificatifs": {
+        "score": 1.0,
+        "pass": 1,
+        "fail": 0
+      }
+    }
+  },
+  {
+    "id": "INSERTION_ESAT_DI",
+    "score": 98.6,
+    "sections": {
+      "whatsapp": {
+        "score": 1.0,
+        "pass": 4,
+        "fail": 0
+      },
+      "documents": {
+        "score": 1.0,
+        "pass": 1,
+        "fail": 0
+      },
+      "inferences": {
+        "score": 1.0,
+        "pass": 3,
+        "fail": 0
+      },
+      "narratifs": {
+        "score": 0.929,
+        "pass": 6,
+        "fail": 0
+      },
+      "cerfa": {
+        "score": 1.0,
+        "pass": 4,
+        "fail": 0
+      },
+      "justificatifs": {
+        "score": 1.0,
+        "pass": 2,
+        "fail": 0
+      }
+    }
+  },
+  {
+    "id": "PROTECTION_TUTELLE",
+    "score": 97.5,
+    "sections": {
+      "whatsapp": {
+        "score": 1.0,
+        "pass": 4,
+        "fail": 0
+      },
+      "documents": {
+        "score": 1.0,
+        "pass": 1,
+        "fail": 0
+      },
+      "inferences": {
+        "score": 1.0,
+        "pass": 3,
+        "fail": 0
+      },
+      "narratifs": {
+        "score": 0.875,
+        "pass": 7,
+        "fail": 1
+      },
+      "cerfa": {
+        "score": 1.0,
+        "pass": 4,
+        "fail": 0
+      },
+      "justificatifs": {
+        "score": 1.0,
+        "pass": 2,
+        "fail": 0
+      }
+    }
+  },
+  {
+    "id": "PROTECTION_HABILITATION",
+    "score": 95.2,
+    "sections": {
+      "whatsapp": {
+        "score": 1.0,
+        "pass": 4,
+        "fail": 0
+      },
+      "documents": {
+        "score": 1.0,
+        "pass": 1,
+        "fail": 0
+      },
+      "inferences": {
+        "score": 0.833,
+        "pass": 2,
+        "fail": 0
+      },
+      "narratifs": {
+        "score": 0.929,
+        "pass": 6,
+        "fail": 0
+      },
+      "cerfa": {
+        "score": 1.0,
+        "pass": 1,
+        "fail": 0
+      },
+      "justificatifs": {
+        "score": 1.0,
+        "pass": 1,
+        "fail": 0
+      }
+    }
+  },
+  {
+    "id": "AIDANT_PARENT_TSA",
+    "score": 100.0,
+    "sections": {
+      "whatsapp": {
+        "score": 1.0,
+        "pass": 4,
+        "fail": 0
+      },
+      "documents": {
+        "score": 1.0,
+        "pass": 1,
+        "fail": 0
+      },
+      "inferences": {
+        "score": 1.0,
+        "pass": 3,
+        "fail": 0
+      },
+      "narratifs": {
+        "score": 1.0,
+        "pass": 6,
+        "fail": 0
+      },
+      "cerfa": {
+        "score": 1.0,
+        "pass": 2,
+        "fail": 0
+      },
+      "justificatifs": {
+        "score": 1.0,
+        "pass": 2,
+        "fail": 0
+      }
+    }
+  }
+]
