@@ -1749,10 +1749,11 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     # Le booléen besoins_aide_humaine (source IA) peut être faux même quand la narration
     # décrit clairement une dépendance. On étend la détection à description_situation
     # et difficultes_quotidiennes pour garantir la cohérence B1 ↔ texte.
+    # ANTI-CONTAMINATION : ni le narratif généré P8 (description_situation) ni
+    # difficultes_quotidiennes (aliasé sur texte_b par v2_bridge L234) ne servent
+    # à cocher une case CERFA. Détection sur aides DÉCLARÉES uniquement.
     _texte_aide_humaine = " ".join(filter(None, [
         aides_str,
-        (description_situation or "").lower(),
-        (difficultes_quotidiennes or "").lower(),
         (besoins_aide_str or "").lower(),
     ]))
     _mots_aide_humaine = [
@@ -1786,10 +1787,11 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     # SESSAD = suivi médico-éducatif → C1 + éventuellement P10 accompagnements.
     # Ces sigles ne doivent PAS déclencher les cases B2 (P6 B1-B6).
     # On les retire du texte de détection B2 avant analyse.
+    # ANTI-CONTAMINATION : description_situation (narratif P8) ET difficultes_quotidiennes
+    # (aliasé sur texte_b par v2_bridge L234) RETIRÉS de la détection AVQ.
+    # Source officielle des cases = avq_* structurés (Vague 1) + aides DÉCLARÉES.
     _detection_b2b3_brut = " ".join(filter(None, [
         aides_str,
-        (description_situation or "").lower(),
-        (difficultes_quotidiennes or "").lower(),
         (besoins_aide_str or "").lower(),
     ]))
     # Supprimer les mentions AESH/SESSAD du texte de détection B2
@@ -1797,21 +1799,24 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     import re as _re_b2
     _detection_b2b3 = _re_b2.sub(_aesh_sessad_pattern, "", _detection_b2b3_brut, flags=_re_b2.IGNORECASE)
 
-    # CORRECTION 4 — Cases B2/B3 : alignement narration P8 ↔ cases cochées
-    # La détection est étendue à description_situation (P8) + difficultes_quotidiennes.
-    # _detection_b2b3 est déjà construit ci-dessus (C7) sans AESH/SESSAD.
-    # Gestes primaires (B2) — cochés si mentionnés dans l'une des 3 sources
+    # ── ANTI-CONTAMINATION : la source OFFICIELLE des cases AVQ est constituée des
+    #    champs structurés avq_* (Vague 1). Le déclaré (difficultes/besoins) reste un
+    #    complément ; le narratif généré (P8) n'intervient plus dans la détection.
+    _AVQ_BESOIN_AIDE = ("DIFFICULTE", "AIDE_PARTIELLE", "AIDE_TOTALE")
+    def _avq_besoin(_champ: str) -> bool:
+        return str(ds.get(_champ, "") or "").strip().upper() in _AVQ_BESOIN_AIDE
+
     # Toilette / hygiène
-    if any(x in _detection_b2b3 for x in ["hygiène", "toilette", "bain", "douche", "lavage", "se laver", "aide pour se laver"]):
+    if _avq_besoin("avq_toilette") or any(x in _detection_b2b3 for x in ["hygiène", "toilette", "bain", "douche", "lavage", "se laver", "aide pour se laver"]):
         cases.append("Case à cocher P6 B1")
     # Habillage
-    if any(x in _detection_b2b3 for x in ["habillage", "vêtement", "vêtir", "s'habill", "aide pour s'habill"]):
+    if _avq_besoin("avq_habillage") or any(x in _detection_b2b3 for x in ["habillage", "vêtement", "vêtir", "s'habill", "aide pour s'habill"]):
         cases.append("Case à cocher P6 B2")
     # Repas / manger
-    if any(x in _detection_b2b3 for x in ["repas", "alimentation", "manger", "nutrition", "préparer", "cuisine", "aide pour manger"]):
+    if _avq_besoin("avq_repas") or any(x in _detection_b2b3 for x in ["repas", "alimentation", "manger", "nutrition", "préparer", "cuisine", "aide pour manger"]):
         cases.append("Case à cocher P6 B3")
-    # Mobilité intérieure (B3)
-    if any(x in _detection_b2b3 for x in ["mobilité", "déplacement", "marche", "fauteuil", "déplacer", "se lever", "se déplace"]):
+    # Mobilité intérieure (B4)
+    if _avq_besoin("avq_deplacements") or any(x in _detection_b2b3 for x in ["mobilité", "déplacement", "marche", "fauteuil", "déplacer", "se lever", "se déplace"]):
         cases.append("Case à cocher P6 B4")
     # Sorties / extérieur
     if any(x in _detection_b2b3 for x in ["extérieur", "sortie", "courses", "promenade", "accompagné", "ne sort pas seul"]):

@@ -85,10 +85,11 @@ class RapportCDAPH:
 
 def _texte_complet(donnees: dict) -> str:
     """Construit un texte d'analyse depuis toutes les sources."""
+    # ANTI-CONTAMINATION (sprint critique) : narratifs générés (texte_b/c/d/e) RETIRÉS.
+    # Le score CDAPH se fonde uniquement sur preuves déclarées / structurées / documents.
     champs = [
         "diagnostics", "traitements", "impact_quotidien", "restrictions_emploi",
-        "statut_emploi", "notes_pro", "texte_b_vie_quotidienne", "texte_c_scolarite",
-        "texte_d_situation_pro", "texte_e_projet_vie", "situation_scolaire",
+        "statut_emploi", "notes_pro", "situation_scolaire",
         "expression_directe", "droits_demandes", "historique_mdph",
         "projet_orientation", "mode_vie", "type_protection",
     ]
@@ -144,19 +145,20 @@ def _evaluer_preuves(donnees: dict, texte: str) -> tuple[int, list[str], list[st
     score = 0
     forces, faiblesses = [], []
 
-    # Texte B présent et substantiel
-    texte_b = str(donnees.get("texte_b_vie_quotidienne", "") or "")
-    if len(texte_b) > 800:
+    # ANTI-CONTAMINATION : on ne score plus la LONGUEUR du narratif généré (texte_b).
+    # La vie quotidienne documentée est évaluée sur l'IMPACT DÉCLARÉ (preuve collectée).
+    impact_decl = str(donnees.get("impact_quotidien", "") or "")
+    if len(impact_decl) > 400:
         score += 30
-        forces.append("Description de la vie quotidienne détaillée et documentée")
-    elif len(texte_b) > 300:
+        forces.append("Vie quotidienne documentée (impact déclaré détaillé)")
+    elif len(impact_decl) > 150:
         score += 20
-        forces.append("Description de la vie quotidienne présente et substantielle")
-    elif len(texte_b) > 100:
+        forces.append("Vie quotidienne documentée (impact déclaré présent)")
+    elif len(impact_decl) > 40:
         score += 10
-        forces.append("Description de la vie quotidienne présente (à enrichir)")
+        forces.append("Vie quotidienne déclarée (à enrichir)")
     else:
-        faiblesses.append("Section B (vie quotidienne) absente ou trop vague — axe prioritaire")
+        faiblesses.append("Impact sur la vie quotidienne peu déclaré — axe prioritaire")
 
     # Documents externes
     notes = str(donnees.get("notes_pro", "") or "")
@@ -291,16 +293,23 @@ def _evaluer_projet(donnees: dict, texte: str) -> tuple[int, list[str], list[str
     score = 30  # baseline
     forces, faiblesses = [], []
 
-    texte_e = str(donnees.get("texte_e_projet_vie", "") or "")
+    # ANTI-CONTAMINATION : on ne score plus la LONGUEUR du narratif généré (texte_e).
+    # Le projet de vie est évalué sur les CHAMPS DÉCLARÉS (projet collecté).
+    projet_decl = str(
+        donnees.get("projet_orientation", "")
+        or donnees.get("projet_professionnel", "")
+        or donnees.get("attentes_mdph", "")
+        or ""
+    )
     droits  = str(donnees.get("droits_demandes", "") or "").upper()
 
-    if texte_e and len(texte_e) > 200:
+    if len(projet_decl) > 150:
         score += 30
-        forces.append("Projet de vie documenté — section E présente et substantielle")
-    elif texte_e:
+        forces.append("Projet de vie documenté (projet déclaré présent et substantiel)")
+    elif projet_decl.strip():
         score += 10
     else:
-        faiblesses.append("Section E (projet de vie) absente — la CDAPH ne connaît pas les attentes")
+        faiblesses.append("Projet de vie peu déclaré — la CDAPH ne connaît pas les attentes")
 
     # Cohérence projet / droits
     proj = str(donnees.get("projet_orientation", "") or "").lower()

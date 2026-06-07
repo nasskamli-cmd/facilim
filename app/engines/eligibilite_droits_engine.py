@@ -76,11 +76,13 @@ def _age_approx(date_naissance: str) -> int | None:
 
 def _construire_texte(donnees: dict[str, Any]) -> str:
     """Construit un texte d'analyse complet depuis toutes les sources."""
+    # ANTI-CONTAMINATION (sprint critique) : les narratifs générés (texte_b/c/d/e)
+    # sont RETIRÉS du blob décisionnel. Les 22 analyseurs de droits ne raisonnent
+    # plus que sur des preuves déclarées / structurées / documentaires.
     champs = [
         "diagnostics", "traitements", "impact_quotidien", "restrictions_emploi",
         "statut_emploi", "projet_orientation", "droits_demandes", "historique_mdph",
-        "aidant_besoins", "notes_pro", "texte_b_vie_quotidienne", "texte_c_scolarite",
-        "texte_d_situation_pro", "texte_e_projet_vie", "situation_scolaire",
+        "aidant_besoins", "notes_pro", "situation_scolaire",
         "expression_directe", "mode_vie", "type_protection",
     ]
     parties = []

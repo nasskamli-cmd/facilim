@@ -207,6 +207,13 @@ def synthese_to_v2_dossier(
         "numero_dossier_mdph":   num_dos,
         "nss":                   synthese.get("num_secu", "") or synthese.get("numero_securite_sociale", ""),
         "aidant_demande":        bool(synthese.get("aidant_demande") or synthese.get("aidant_familial")),
+        # ANTI-CONTAMINATION : champs AVQ structurés (Vague 1) propagés vers le filler V2
+        # afin que les cases P6 soient cochées sur PREUVE STRUCTURÉE (jamais sur narratif).
+        "avq_toilette":            synthese.get("avq_toilette", ""),
+        "avq_habillage":           synthese.get("avq_habillage", ""),
+        "avq_repas":               synthese.get("avq_repas", ""),
+        "avq_deplacements":        synthese.get("avq_deplacements", ""),
+        "avq_gestion_quotidienne": synthese.get("avq_gestion_quotidienne", ""),
     }
 
     # Synthèses narratives pour la page 8
