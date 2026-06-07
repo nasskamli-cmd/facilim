@@ -566,6 +566,7 @@ Conversation :
         if len(filtered) != len(extracted):
             rejetes = set(extracted) - champs_autorises
             logger.warning("[CONV] Champs rejetés (hors profil %s) : %s", profil_mdph, rejetes)
+            logger.info("[TRACE_COLLECTE] 6-REJETES profil=%s rejetes=%s", profil_mdph, sorted(rejetes))
 
         return filtered
 

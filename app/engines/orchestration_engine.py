@@ -165,6 +165,54 @@ def _calculer_completude_live(donnees: dict) -> int:
     return min(score, 100)
 
 
+# ── Instrumentation [TRACE_COLLECTE] — observabilité du pont collecte→synthese ──
+# LOGS UNIQUEMENT. Aucune donnée sensible complète. Aucun changement de comportement.
+_TRACE_SENSIBLES = {
+    "num_secu", "numero_securite_sociale", "nir",
+    "telephone", "telephone_whatsapp",
+    "adresse_complete", "diagnostics", "impact_quotidien",
+    "documents_texte", "notes_pro", "expression_directe",
+    "texte_b_vie_quotidienne", "texte_c_scolarite",
+    "texte_d_situation_pro", "texte_e_projet_vie",
+}
+
+
+def _trace_mask_phone(num: Any) -> str:
+    s = "".join(c for c in str(num or "") if c.isdigit())
+    return f"****{s[-4:]}" if len(s) >= 4 else "****"
+
+
+def _trace_mask_value(champ: str, valeur: Any) -> str:
+    """Représentation NON sensible d'une valeur (jamais la valeur brute si sensible)."""
+    if valeur in (None, "", [], {}):
+        return "∅"
+    k = str(champ).lower()
+    if k in ("num_secu", "numero_securite_sociale", "nir"):
+        return "***"
+    if k in ("telephone", "telephone_whatsapp"):
+        return _trace_mask_phone(valeur)
+    if k in _TRACE_SENSIBLES:
+        return f"<{len(str(valeur))}c>"
+    if isinstance(valeur, dict):
+        return "{" + ",".join(sorted(str(x) for x in valeur.keys())) + "}"
+    if isinstance(valeur, (list, tuple)):
+        return f"[{len(valeur)} items]"
+    return str(valeur)[:40]
+
+
+def _trace_resume(donnees: dict) -> str:
+    """Résumé non sensible : nb de champs, complétude, NOMS des champs (pas les valeurs)."""
+    keys = sorted(k for k in (donnees or {}).keys() if not str(k).startswith("_"))
+    return f"nb_champs={len(keys)} completude={_calculer_completude_live(donnees or {})} champs={keys}"
+
+
+def _trace_extrait(nouvelles: dict) -> str:
+    """Champs extraits avec valeurs masquées (sensibles → longueur/***)."""
+    if not nouvelles:
+        return "∅ (aucun champ extrait)"
+    return "{" + ", ".join(f"{k}={_trace_mask_value(k, v)}" for k, v in nouvelles.items()) + "}"
+
+
 def _sauvegarder_nav(
     db: Any,
     dossier_id: str,
@@ -178,6 +226,7 @@ def _sauvegarder_nav(
     (évite la race condition entre messages successifs rapides).
     """
     score_live = _calculer_completude_live(donnees)
+    logger.info("[TRACE_COLLECTE] 8-SAVE start dossier=%s %s", dossier_id, _trace_resume(donnees))
     db.execute(
         """
         UPDATE dossiers SET
@@ -202,7 +251,12 @@ def _sauvegarder_nav(
             dossier_id,
         ),
     )
-    db.commit()  # Commit immédiat — visibilité immédiate pour les requêtes parallèles
+    try:
+        db.commit()  # Commit immédiat — visibilité immédiate pour les requêtes parallèles
+        logger.info("[TRACE_COLLECTE] 9-SAVE ok dossier=%s completude=%d", dossier_id, score_live)
+    except Exception as _trace_save_err:
+        logger.error("[TRACE_COLLECTE] 9-SAVE FAIL dossier=%s err=%r", dossier_id, _trace_save_err)
+        raise
 
 
 def _load_cnsa_validator() -> Any:
@@ -479,15 +533,24 @@ class OrchestrationEngine:
             service_type = service_type_from_persona(etat)
             agent = get_agent(service_type)
 
+            # ── [TRACE_COLLECTE] amont extraction (observabilité, sans effet) ──
+            _trace_compl_avant = _calculer_completude_live(donnees)
+            logger.info("[TRACE_COLLECTE] 1-MSG dossier=%s tel=%s profil=%s msg_len=%d",
+                        dossier_id, _trace_mask_phone(phone_wa), service_type or "inconnu", len(text or ""))
+            logger.info("[TRACE_COLLECTE] 3-SYNTHESE_AVANT %s", _trace_resume(donnees))
+
             # ── Extraction LLM ─────────────────────────────────────────────────
             # FIX-VAGUE1 : transmettre le PROFIL RÉEL (et non "inconnu") pour appliquer
             # la bonne whitelist (anti-pollution) + capter les champs NIVEAU A (Vague 1).
+            logger.info("[TRACE_COLLECTE] 4-EXTRACT call profil=%s history_msgs=%d",
+                        service_type or "inconnu", len(historique) + 1)
             nouvelles_donnees = extract_structured_data_from_history(
                 historique + [{"role": "user", "content": text}],
                 self.llm,
                 model=self.settings.openai_model_fast,
                 profil_mdph=service_type or "inconnu",
             )
+            logger.info("[TRACE_COLLECTE] 5-EXTRAIT %s", _trace_extrait(nouvelles_donnees))
             # Règle de fusion données pro vs données usager :
             # - Champs "projet / orientation / scolarité / emploi" → la parole de l'USAGER prime
             # - Champs administratifs / médicaux → le pro est plus fiable, on ne réécrase pas
@@ -507,6 +570,10 @@ class OrchestrationEngine:
                     donnees[k] = v  # l'usager écrase toujours
                 elif k not in _champs_admin_pro:
                     donnees[k] = v  # champ nouveau → ajouter
+
+            # ── [TRACE_COLLECTE] aval fusion (avant sauvegarde) ──
+            logger.info("[TRACE_COLLECTE] 7-SYNTHESE_APRES %s (completude_avant=%d)",
+                        _trace_resume(donnees), _trace_compl_avant)
 
             # ── Verbatim significatif + chronologie + évaluation relance ─────────
             _relance_a_injecter: str = ""   # instruction de relance pour le contexte, si nécessaire
@@ -1306,11 +1373,15 @@ class OrchestrationEngine:
 
             if media_result:
                 content_bytes, detected_mime = media_result
+                logger.info("[TRACE_SOURCE_SYNTHESE] 3-DOC recu dossier=%s mime=%s taille=%do",
+                            dossier_id, detected_mime, len(content_bytes or b""))
                 # Importer la fonction d'extraction depuis main.py via import dynamique
                 try:
                     from app.main import _extraire_texte_fichier, _llm_client
                     ext = ".pdf" if "pdf" in detected_mime else ".docx" if "word" in detected_mime else ".bin"
                     texte = _extraire_texte_fichier(content_bytes, f"document{ext}", detected_mime)
+                    logger.info("[TRACE_SOURCE_SYNTHESE] 4-DOC texte_extrait len=%d exploitable=%s",
+                                len(texte or ""), bool(len(texte or "") > 50 and not (texte or "").startswith("[")))
                     if len(texte) > 50 and not texte.startswith("["):
                         # Enrichissement LLM
                         import json as _json
@@ -1329,14 +1400,20 @@ Document :
                             response_format={"type": "json_object"},
                         )
                         extraits = _json.loads(resp.choices[0].message.content)
+                        logger.info("[TRACE_SOURCE_SYNTHESE] 5-DOC champs_extraits %s", _trace_extrait(extraits))
                         if extraits:
                             dossier_row = self.db.execute(
                                 "SELECT synthese_json FROM dossiers WHERE id = ?", (dossier_id,)
                             ).fetchone()
                             synthese = _json.loads(dossier_row["synthese_json"] or "{}")
+                            logger.info("[TRACE_SOURCE_SYNTHESE] 8-SYNTHESE_AVANT(doc) %s", _trace_resume(synthese))
+                            _ts_avant_doc = set(synthese)
                             for k, v in extraits.items():
                                 if v and k not in synthese:
                                     synthese[k] = v
+                            logger.info("[TRACE_SOURCE_SYNTHESE] 10/11-DOC ajoutes=%s ignores_deja_presents=%s",
+                                        sorted(set(synthese) - _ts_avant_doc),
+                                        sorted(k for k, v in extraits.items() if v and k in _ts_avant_doc))
 
                             # ── Extraction fonctionnelle Sprint P0.1 ────────────────
                             # Complète l'extraction administrative existante avec les
@@ -1361,6 +1438,10 @@ Document :
                                     )
                                     if knowledge.nb_items_total > 0:
                                         synthese = fusionner_dans_donnees(synthese, knowledge)
+                                        _dk = synthese.get("_document_knowledge") or {}
+                                        logger.info("[TRACE_SOURCE_SYNTHESE] 6-DOC_KNOWLEDGE type=%s items=%d categories=%s | NB: alimente _document_knowledge (texte), PAS les champs structures avq_*/droits/organisme",
+                                                    getattr(knowledge, "type_document", "?"), knowledge.nb_items_total,
+                                                    sorted(_dk.keys()) if isinstance(_dk, dict) else "?")
                                         # Audit et ROI
                                         from app.services.conversation import get_agent, service_type_from_persona
                                         _session_doc = self.db.execute(
@@ -1393,11 +1474,18 @@ Document :
                             except Exception as _fe:
                                 logger.warning("[ORCH/DOC] Extracteur fonctionnel non bloquant : %s", _fe)
 
+                            logger.info("[TRACE_SOURCE_SYNTHESE] 9-SAVE(doc) start %s", _trace_resume(synthese))
                             self.db.execute(
                                 "UPDATE dossiers SET synthese_json = ?, updated_at = ? WHERE id = ?",
                                 (_json.dumps(synthese, ensure_ascii=False), now, dossier_id),
                             )
-                            self.db.commit()
+                            try:
+                                self.db.commit()
+                                logger.info("[TRACE_SOURCE_SYNTHESE] 13-SAVE(doc) ok dossier=%s completude=%d",
+                                            dossier_id, _calculer_completude_live(synthese))
+                            except Exception as _ts_save_err:
+                                logger.error("[TRACE_SOURCE_SYNTHESE] 13-SAVE(doc) FAIL dossier=%s err=%r", dossier_id, _ts_save_err)
+                                raise
                             nb = len(extraits)
                             nb_fonc = synthese.get("_extraction_audit", {}).get("total_items", 0)
                             if nb_fonc > 0:
