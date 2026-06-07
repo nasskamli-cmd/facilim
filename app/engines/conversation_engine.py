@@ -156,6 +156,9 @@ _CHAMPS_SECTION_F = [
 ]
 
 # ── Checklists complètes par profil ───────────────────────────────────────────
+# ⚠️ DÉPRÉCIÉ (Vague 1) — modèle parallèle NON utilisé par le flux réel.
+# La source de vérité UNIQUE est désormais `app/services/collecte_schema.py`
+# (`checklist_for(profil)`), utilisée par les agents actifs. Ne plus étendre ceci.
 CHECKLIST_MDPH = (
     CHECKLIST_MDPH_BASE
     + _CHAMPS_ADULTE

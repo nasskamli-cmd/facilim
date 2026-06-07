@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from app.services.conversation.base import ConversationAgent
 from app.services.conversation._shared import REGLES_COMMUNICATION_COMMUNES
+from app.services.collecte_schema import checklist_for
 
 
 class ChildConversationAgent(ConversationAgent):
@@ -73,30 +74,8 @@ SECTIONS À COLLECTER :
 
     REMINDER = "[RAPPEL ABSOLU] Représentant légal uniquement. 3ème personne pour l'enfant. INTERDITS : mariage, emploi, RSA, AAH. Priorité : B → C → E → A. Adapter nb questions au profil cognitif de l'enfant."
 
-    CHECKLIST = [
-        {"id": "nom_prenom",              "label": "Nom et prénom de l'enfant",             "requis": True},
-        {"id": "date_naissance",          "label": "Date de naissance (JJ/MM/AAAA)",        "requis": True},
-        {"id": "genre",                   "label": "Genre",                                 "requis": True},
-        {"id": "adresse_complete",        "label": "Adresse du domicile familial",           "requis": True},
-        {"id": "num_secu",                "label": "Numéro de Sécurité Sociale",             "requis": True},
-        {"id": "telephone",               "label": "Téléphone du représentant légal",        "requis": True},
-        {"id": "departement",             "label": "Département MDPH",                      "requis": True},
-        {"id": "representant_legal_nom",  "label": "Nom du représentant légal",              "requis": True},
-        {"id": "representant_legal_lien", "label": "Lien avec l'enfant",                    "requis": True},
-        {"id": "diagnostics",             "label": "Diagnostic(s) médical(aux)",             "requis": True},
-        {"id": "traitements",             "label": "Traitements en cours",                  "requis": True},
-        {"id": "medecin_traitant",        "label": "Médecin traitant (nom et ville)",        "requis": True},
-        {"id": "impact_quotidien",        "label": "Impact sur la vie quotidienne",          "requis": True},
-        {"id": "historique_mdph",         "label": "Historique MDPH",                       "requis": True},
-        {"id": "situation_scolaire",      "label": "Situation scolaire de l'enfant",         "requis": True},
-        {"id": "etablissement_scolaire",  "label": "Nom de l'établissement scolaire",        "requis": True},
-        # Chronologie — non bloquante mais précieuse
-        {"id": "date_debut_limitations", "label": "Depuis quel âge les difficultés sont-elles présentes ?", "requis": False},
-        # Expression directe — parole du représentant légal sur la situation de l'enfant
-        {"id": "expression_directe", "label": "Description libre de la situation de l'enfant par le représentant légal", "requis": False},
-        # Section E — non bloquante, proposée en fin
-        {"id": "droits_demandes",         "label": "Droits et prestations souhaités",        "requis": False},
-    ]
+    # Source de vérité UNIQUE (Vague 1) — profil enfant. is_complete inchangé.
+    CHECKLIST = checklist_for("enfant")
 
 
 child_agent = ChildConversationAgent()

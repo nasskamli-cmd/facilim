@@ -11,6 +11,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.services.collecte_schema import normaliser_collecte, AVQ_BESOIN_AIDE
+
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -71,6 +73,9 @@ def build_field_map(donnees: dict[str, Any], service_type: str = "adulte") -> di
     Construit le dict complet {nom_champ_pdf: valeur} depuis synthese_json.
     Couvre les 20 pages du CERFA 15692*01.
     """
+    # FIX VAGUE 1 : normalise les champs structurés (droits.* → droits_demandes) pour
+    # compatibilité avec le mapping existant. Aucune logique métier modifiée.
+    donnees = normaliser_collecte(donnees)
     fields: dict[str, str] = {}
 
     # ════════════════════════════════════════════════════════════════════════
@@ -189,8 +194,9 @@ def build_field_map(donnees: dict[str, Any], service_type: str = "adulte") -> di
     # PAGE 2 — A1 Identité
     # ════════════════════════════════════════════════════════════════════════
     nom_complet = donnees.get("nom_prenom", "")
-    fields["Champ de texte P2 1"] = _nom(nom_complet)    # Nom de naissance
-    fields["Champ de texte P2 3"] = _prenom(nom_complet) # Prénom(s)
+    # FIX VAGUE 1 : priorité aux champs structurés nom_naissance / prenom (sinon split heuristique)
+    fields["Champ de texte P2 1"] = donnees.get("nom_naissance") or _nom(nom_complet)    # Nom de naissance
+    fields["Champ de texte P2 3"] = donnees.get("prenom") or _prenom(nom_complet)        # Prénom(s)
 
     # Genre
     genre = str(donnees.get("genre", "")).lower()
@@ -305,15 +311,20 @@ def build_field_map(donnees: dict[str, Any], service_type: str = "adulte") -> di
     rest   = str(donnees.get("restrictions_emploi", "")).lower()
     all_impact = impact + " " + rest
 
-    fields["Case à cocher P6 B1"]  = _check(_contains_any(all_impact, ["dépense", "budget", "financ"]))
-    fields["Case à cocher P6 B2"]  = _check(_contains_any(all_impact, ["hygiène", "toilette", "lavage"]))
-    fields["Case à cocher P6 B3"]  = _check(_contains_any(all_impact, ["habill", "vêtement"]))
-    fields["Case à cocher P6 B4"]  = _check(_contains_any(all_impact, ["repas", "manger", "cuisine", "préparer"]))
+    # FIX VAGUE 1 : AVQ structurées prioritaires (niveau impliquant un besoin d'aide),
+    # sinon détection par mots-clés du texte libre (rétro-compatibilité).
+    def _avq(champ: str) -> bool:
+        return str(donnees.get(champ, "")).upper() in AVQ_BESOIN_AIDE
+
+    fields["Case à cocher P6 B1"]  = _check(_avq("avq_gestion_quotidienne") or _contains_any(all_impact, ["dépense", "budget", "financ"]))
+    fields["Case à cocher P6 B2"]  = _check(_avq("avq_toilette") or _contains_any(all_impact, ["hygiène", "toilette", "lavage"]))
+    fields["Case à cocher P6 B3"]  = _check(_avq("avq_habillage") or _contains_any(all_impact, ["habill", "vêtement"]))
+    fields["Case à cocher P6 B4"]  = _check(_avq("avq_repas") or _contains_any(all_impact, ["repas", "manger", "cuisine", "préparer"]))
     fields["Case à cocher P6 B10"] = _check(_contains_any(all_impact, ["santé", "traitement", "médic", "soin"]))
 
     # Déplacements (page 7)
-    fields["Case à cocher P7 2"]   = _check(_contains_any(all_impact, ["déplacer", "déplacement", "marcher", "domicile"]))
-    fields["Case à cocher P7 3"]   = _check(_contains_any(all_impact, ["sortir", "extérieur"]))
+    fields["Case à cocher P7 2"]   = _check(_avq("avq_deplacements") or _contains_any(all_impact, ["déplacer", "déplacement", "marcher", "domicile"]))
+    fields["Case à cocher P7 3"]   = _check(_avq("avq_deplacements") or _contains_any(all_impact, ["sortir", "extérieur"]))
     fields["Case à cocher P7 4"]   = _check(_contains_any(all_impact, ["transport", "commun"]))
     fields["Case à cocher P7 9"]   = _check(_contains_any(all_impact, ["fatigue", "fatigab"]))
     fields["Case à cocher P7 10"]  = _check(_contains_any(all_impact, ["douleur"]))

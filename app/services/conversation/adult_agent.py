@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from app.services.conversation.base import ConversationAgent
 from app.services.conversation._shared import REGLES_COMMUNICATION_COMMUNES
+from app.services.collecte_schema import checklist_for
 
 
 class AdultConversationAgent(ConversationAgent):
@@ -71,40 +72,9 @@ SECTIONS À COLLECTER :
 
     REMINDER = "[RAPPEL] Posture directe (vous). Priorité : B → D → E → A. Blocs thématiques cohérents. Ne jamais mélanger NSS et emploi. Adapter nb questions au profil cognitif."
 
-    CHECKLIST = [
-        {"id": "nom_prenom",          "label": "Nom et prénom",                                     "requis": True},
-        {"id": "date_naissance",      "label": "Date de naissance (JJ/MM/AAAA)",                   "requis": True},
-        {"id": "genre",               "label": "Genre",                                             "requis": True},
-        {"id": "adresse_complete",    "label": "Adresse complète",                                  "requis": True},
-        {"id": "num_secu",            "label": "Numéro de Sécurité Sociale",                        "requis": True},
-        {"id": "telephone",           "label": "Téléphone",                                         "requis": True},
-        {"id": "departement",         "label": "Département MDPH",                                  "requis": True},
-        {"id": "situation_familiale", "label": "Situation familiale",                               "requis": True},
-        {"id": "enfants_a_charge",    "label": "Nombre d'enfants à charge",                         "requis": True},
-        {"id": "diagnostics",         "label": "Diagnostic(s) médical(aux)",                        "requis": True},
-        {"id": "traitements",         "label": "Traitements en cours",                              "requis": True},
-        {"id": "medecin_traitant",    "label": "Médecin traitant (nom et ville)",                   "requis": True},
-        {"id": "impact_quotidien",    "label": "Impact du handicap sur la vie quotidienne",         "requis": True},
-        {"id": "historique_mdph",     "label": "Historique MDPH",                                   "requis": True},
-        # Section C — conditionnelle
-        {"id": "qualification_section_c", "label": "Êtes-vous actuellement en formation ?",         "requis": True},
-        {"id": "formation_actuelle",
-         "label": "Nom et type de la formation en cours",
-         "requis": True,
-         "condition": {"champ": "qualification_section_c", "valeur": "oui"}},
-        # Section D — conditionnelle
-        {"id": "qualification_section_d", "label": "Avez-vous un projet professionnel ou une demande RQTH ?", "requis": True},
-        {"id": "statut_emploi",
-         "label": "Statut professionnel actuel",
-         "requis": True,
-         "condition": {"champ": "qualification_section_d", "valeur": "oui"}},
-        # Chronologie — non bloquante mais précieuse
-        {"id": "date_debut_limitations", "label": "Depuis quand les limitations sont-elles présentes ?", "requis": False},
-        # Expression directe — cœur de la section E
-        {"id": "expression_directe", "label": "Expression directe : ce que la personne vit au quotidien", "requis": False},
-        # Section E — non bloquante
-        {"id": "droits_demandes", "label": "Droits et prestations souhaités (AAH, PCH, RQTH…)", "requis": False},
-    ]
+    # Source de vérité UNIQUE (Vague 1) : champs existants + NIVEAU A (requis=False).
+    # is_complete inchangé (les champs NIVEAU A ne sont pas requis).
+    CHECKLIST = checklist_for("adulte")
 
 
 adult_agent = AdultConversationAgent()

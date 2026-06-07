@@ -53,8 +53,16 @@ def synthese_to_v2_dossier(
     dossier: dict[str, Any] = {}
 
     # ── Identité ────────────────────────────────────────────────────────────────
+    # FIX VAGUE 1 : normalise les champs structurés (droits.* → droits_demandes)
+    # pour que le moteur V2 (qui lit droits_demandes) en bénéficie sans modification.
+    from app.services.collecte_schema import normaliser_collecte
+    synthese = normaliser_collecte(synthese)
+
     nom_complet = str(synthese.get("nom_prenom", "")).strip()
+    # Priorité aux champs structurés s'ils existent (sinon split heuristique)
     nom, prenom = _split_nom_prenom(nom_complet)
+    nom = synthese.get("nom_naissance") or nom
+    prenom = synthese.get("prenom") or prenom
 
     ddn = _normaliser_date(synthese.get("date_naissance", ""))
     if is_enfant:

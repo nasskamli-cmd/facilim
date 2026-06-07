@@ -392,6 +392,13 @@ def run(
     produit par le pipeline existant ; le verrou (gate) et le cockpit sont
     calculés dans tous les cas.
     """
+    # FIX VAGUE 1 : normalise les champs structurés (droits.* → droits_demandes)
+    # pour que cockpit / moteurs (qui lisent droits_demandes) en bénéficient.
+    try:
+        from app.services.collecte_schema import normaliser_collecte
+        donnees = normaliser_collecte(donnees)
+    except Exception:
+        pass
     return analyser_dossier_complet(
         donnees,
         profil_mdph=profil_mdph,

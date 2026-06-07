@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from app.services.conversation.base import ConversationAgent
 from app.services.conversation._shared import REGLES_COMMUNICATION_COMMUNES
+from app.services.collecte_schema import checklist_for
 
 
 class ProtectedAdultConversationAgent(ConversationAgent):
@@ -68,30 +69,8 @@ SECTIONS À COLLECTER :
 
     REMINDER = "[RAPPEL] Tuteur uniquement. 3ème personne (M./Mme + nom) pour le majeur protégé. Option B obligatoire. Priorité : B → D → E → A. Adapter nb questions au profil cognitif de la personne."
 
-    CHECKLIST = [
-        {"id": "nom_prenom",              "label": "Nom et prénom du majeur protégé",           "requis": True},
-        {"id": "date_naissance",          "label": "Date de naissance (JJ/MM/AAAA)",            "requis": True},
-        {"id": "genre",                   "label": "Genre",                                     "requis": True},
-        {"id": "adresse_complete",        "label": "Adresse du domicile actuel",                "requis": True},
-        {"id": "num_secu",                "label": "Numéro de Sécurité Sociale",                "requis": True},
-        {"id": "representant_legal_nom",  "label": "Nom du tuteur ou curateur",                 "requis": True},
-        {"id": "telephone",               "label": "Téléphone du représentant légal",           "requis": True},
-        {"id": "departement",             "label": "Département MDPH",                          "requis": True},
-        {"id": "type_protection",         "label": "Type de mesure de protection",              "requis": True},
-        {"id": "jugement_tribunal",       "label": "Tribunal et date du jugement",              "requis": True},
-        {"id": "diagnostics",             "label": "Diagnostic(s) médical(aux)",                "requis": True},
-        {"id": "traitements",             "label": "Traitements en cours",                      "requis": True},
-        {"id": "medecin_traitant",        "label": "Médecin traitant (nom et ville)",           "requis": True},
-        {"id": "impact_quotidien",        "label": "Impact sur la vie quotidienne",             "requis": True},
-        {"id": "historique_mdph",         "label": "Historique MDPH",                          "requis": True},
-        {"id": "statut_emploi",           "label": "Statut professionnel ou d'activité",        "requis": True},
-        # Chronologie — non bloquante mais précieuse
-        {"id": "date_debut_limitations", "label": "Depuis quand les limitations sont-elles présentes ?", "requis": False},
-        # Expression directe — parole du tuteur sur la situation de la personne protégée
-        {"id": "expression_directe", "label": "Description libre de la situation par le représentant légal", "requis": False},
-        # Section E — non bloquante
-        {"id": "droits_demandes", "label": "Droits et prestations souhaités", "requis": False},
-    ]
+    # Source de vérité UNIQUE (Vague 1) — profil protégé. is_complete inchangé.
+    CHECKLIST = checklist_for("protege")
 
 
 protected_agent = ProtectedAdultConversationAgent()
