@@ -480,12 +480,13 @@ class OrchestrationEngine:
             agent = get_agent(service_type)
 
             # ── Extraction LLM ─────────────────────────────────────────────────
-            # Whitelist large : l'agent filtre lui-même ses champs via CHECKLIST.
+            # FIX-VAGUE1 : transmettre le PROFIL RÉEL (et non "inconnu") pour appliquer
+            # la bonne whitelist (anti-pollution) + capter les champs NIVEAU A (Vague 1).
             nouvelles_donnees = extract_structured_data_from_history(
                 historique + [{"role": "user", "content": text}],
                 self.llm,
                 model=self.settings.openai_model_fast,
-                profil_mdph="inconnu",
+                profil_mdph=service_type or "inconnu",
             )
             # Règle de fusion données pro vs données usager :
             # - Champs "projet / orientation / scolarité / emploi" → la parole de l'USAGER prime

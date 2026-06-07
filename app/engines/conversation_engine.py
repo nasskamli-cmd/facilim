@@ -433,6 +433,25 @@ def detect_missing_fields(donnees: dict[str, Any], profil_mdph: str = "inconnu")
 # Empêche la pollution de synthese_json avec des concepts inadaptés
 # (ex : situation_familiale extraite d'un dossier enfant).
 
+# ── Vague 1 (NIVEAU A) — FIX-VAGUE1-EXTRACTION-PERSISTENCE ────────────────────
+# Champs structurés Vague 1 ajoutés à TOUS les profils (identité fine, administratif,
+# invalidité, AVQ, droits.*). Sans cet ajout, ces champs étaient demandés en
+# conversation mais REJETÉS à l'extraction → jamais persistés (Vague 1 décorative).
+_CHAMPS_NIVEAU_A = [
+    # identité fine
+    "prenom", "nom_naissance",
+    # administratif
+    "organisme_payeur", "numero_allocataire",
+    # invalidité
+    "pension_invalidite", "categorie_invalidite", "taux_ipp",
+    "accident_travail", "maladie_professionnelle",
+    # AVQ (niveaux : AUTONOME / DIFFICULTE / AIDE_PARTIELLE / AIDE_TOTALE)
+    "avq_toilette", "avq_habillage", "avq_repas",
+    "avq_deplacements", "avq_gestion_quotidienne",
+    # droits structurés (objet booléen)
+    "droits",
+]
+
 _CHAMPS_EXTRACTIBLES_ENFANT = [
     "nom_prenom", "date_naissance", "genre", "adresse_complete",
     "num_secu", "numero_securite_sociale", "telephone", "email", "departement",
@@ -470,11 +489,12 @@ _CHAMPS_EXTRACTIBLES_MIXTE = list(
 
 
 def _champs_extractibles(profil_mdph: str) -> list[str]:
+    # FIX-VAGUE1 : le NIVEAU A est ajouté à tous les profils (point unique).
     if profil_mdph == "enfant":
-        return _CHAMPS_EXTRACTIBLES_ENFANT
+        return _CHAMPS_EXTRACTIBLES_ENFANT + _CHAMPS_NIVEAU_A
     if profil_mdph == "mixte":
-        return _CHAMPS_EXTRACTIBLES_MIXTE
-    return _CHAMPS_EXTRACTIBLES_ADULTE
+        return _CHAMPS_EXTRACTIBLES_MIXTE + _CHAMPS_NIVEAU_A
+    return _CHAMPS_EXTRACTIBLES_ADULTE + _CHAMPS_NIVEAU_A
 
 
 def extract_structured_data_from_history(
@@ -511,7 +531,20 @@ Retourne UNIQUEMENT un JSON valide avec les champs trouvés PARMI CETTE LISTE ST
 
 RÈGLE ABSOLUE : n'inclus AUCUN champ hors de cette liste, même si tu le trouves dans la conversation.
 Si un champ n'est pas trouvé, ne l'inclus pas.
-Exemple : {{"nom_prenom": "Jean Dupont", "date_naissance": "15/03/1980"}}
+
+FORMATS SPÉCIAUX (Vague 1) — à respecter si l'information est présente :
+- avq_toilette, avq_habillage, avq_repas, avq_deplacements, avq_gestion_quotidienne :
+  valeur STRICTE parmi "AUTONOME", "DIFFICULTE", "AIDE_PARTIELLE", "AIDE_TOTALE".
+  Indices : "autonome/seul(e)" → "AUTONOME" ; "difficile mais fait seul(e)" → "DIFFICULTE" ;
+  "besoin d'aide / aidé(e) partiellement" → "AIDE_PARTIELLE" ;
+  "ne peut pas du tout / aide totale / fait à ma place" → "AIDE_TOTALE".
+- droits : OBJET de booléens, clés possibles aah, pch, rqth, cmi_invalidite, cmi_priorite,
+  cmi_stationnement, aeeh. Exemple : {{"droits": {{"aah": true, "pch": true}}}}.
+- pension_invalidite : booléen true/false. categorie_invalidite : 1, 2 ou 3.
+- organisme_payeur : "CAF", "MSA" ou "AUTRE". taux_ipp : nombre (pourcentage).
+- prenom / nom_naissance : chaînes. numero_allocataire : chaîne.
+
+Exemple : {{"nom_prenom": "Jean Dupont", "date_naissance": "15/03/1980", "avq_habillage": "AIDE_PARTIELLE", "droits": {{"aah": true}}}}
 
 Conversation :
 {conversation_text}
