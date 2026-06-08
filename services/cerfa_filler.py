@@ -2232,30 +2232,24 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         # D3 = "Orientation vers [NOM] pour [RAISON]"
         # ou projet libre si pas d'établissement identifié
 
-        _raison_d3 = ""
-        # Raison depuis besoins_aide ou difficultes_quotidiennes
-        _besoins_court = (cerfa_rep.get("besoins_aide") or besoins_aide_str or "").strip()
-        if _besoins_court and len(_besoins_court) > 10:
-            _raison_d3 = _besoins_court[:200]
-        elif difficultes_quotidiennes and len(difficultes_quotidiennes) > 10:
-            _raison_d3 = difficultes_quotidiennes[:200]
+        # D3 = PROJET PROFESSIONNEL. La « raison » ne doit JAMAIS provenir de la vie
+        # quotidienne (besoins_aide / difficultes_quotidiennes) : c'était une
+        # contamination — le récit de dépendance se recopiait dans le champ projet.
+        # On s'appuie UNIQUEMENT sur le projet professionnel réellement déclaré.
+        _raison_d3 = (projet_professionnel or "").strip()[:200]
 
         if _nom_etab_cible:
             # Cas 1 : nom d'établissement identifié → formulation précise
             _d3_text = f"Orientation vers {_nom_etab_cible}"
             if _raison_d3:
-                _d3_text += f" afin de bénéficier d'un accompagnement adapté aux besoins suivants : {_raison_d3}"
+                _d3_text += f" dans le cadre du projet suivant : {_raison_d3}"
             _d3_text = _d3_text[:500]
             champs["Champ de texte P16 1"] = _d3_text
             logger.info(f"[CERFA D3] Établissement identifié : {_nom_etab_cible!r}")
         elif projet_professionnel:
             # Cas 2 : projet pro libre (sans établissement nommé)
             champs["Champ de texte P16 1"] = projet_professionnel[:500]
-        elif _raison_d3:
-            # Cas 3 : aucun établissement, aucun projet explicite → résumé des besoins
-            champs["Champ de texte P16 1"] = (
-                f"Accompagnement et orientation adaptés aux besoins identifiés : {_raison_d3}"
-            )[:500]
+        # Plus de cas « résumé des besoins » : il copiait la vie quotidienne dans le projet.
 
         # Case à cocher P16 2 = Orientation vers CRP/ESRP
         _cible_crp = a_cible_esrp or any(t in droits_str for t in ("CRP", "ESRP", "CPO", "UEROS"))

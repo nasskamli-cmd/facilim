@@ -203,8 +203,58 @@ SECTION_C: list[dict[str, Any]] = [
 ]
 
 
-# Dictionnaire complet (s'étendra : SECTION_A + SECTION_B + SECTION_C + ...)
-_DICTIONNAIRE: list[dict[str, Any]] = list(SECTION_A) + list(SECTION_B) + list(SECTION_C)
+# ── PARTIE D — Situation professionnelle & projet (adultes, 16-25, protégés) ───
+# Conditionnel : un enfant n'a PAS de situation professionnelle (profils restreints).
+SECTION_D: list[dict[str, Any]] = [
+    {
+        "id": "situation_professionnelle",
+        "section": "D",
+        "profils": ("adulte", "mixte", "protege"),
+        "requis": True,
+        "extractible": True,
+        "label": "Situation professionnelle actuelle",
+        "question": "Quelle est votre situation professionnelle actuelle : en emploi, au chômage, en arrêt maladie, en invalidité, ou sans activité ?",
+        "valeurs": "emploi | chomage | arret_maladie | invalidite | sans_activite",
+        "cible_cerfa": "D1/D2 — situation pro (P13...)",
+    },
+    {
+        "id": "consequences_professionnelles",
+        "section": "D",
+        "profils": ("adulte", "mixte", "protege"),
+        "requis": True,
+        "extractible": True,
+        "label": "Conséquences de la santé sur le travail",
+        "question": "Votre santé a-t-elle des conséquences sur votre travail : fatigabilité, restrictions, inaptitude, besoin d'aménagement du poste ?",
+        "cible_cerfa": "D2 — retentissements professionnels",
+    },
+    {
+        "id": "projet_professionnel",
+        "section": "D",
+        "profils": ("adulte", "mixte", "protege"),
+        "requis": True,
+        "extractible": True,
+        "label": "Projet professionnel ou de reconversion",
+        "question": "Avez-vous un projet professionnel, un souhait de reconversion ou de formation ?",
+        "cible_cerfa": "D3 — projet professionnel (P16)",
+    },
+    {
+        "id": "emploi_accompagne",
+        "section": "D",
+        "profils": ("adulte", "mixte", "protege"),
+        "requis": True,
+        "extractible": True,
+        "label": "Besoin d'accompagnement vers ou dans l'emploi",
+        "question": "Avez-vous besoin d'un accompagnement pour trouver ou garder un emploi (emploi accompagné, ESRP, ou milieu protégé type ESAT) ?",
+        "valeurs": "oui | non",
+        "cible_cerfa": "Orientation pro (P18 — ORP / ESAT / emploi accompagné)",
+    },
+]
+
+
+# Dictionnaire complet (s'étendra : SECTION_A + B + C + D + E + F)
+_DICTIONNAIRE: list[dict[str, Any]] = (
+    list(SECTION_A) + list(SECTION_B) + list(SECTION_C) + list(SECTION_D)
+)
 
 
 def _applicable(champ: dict, profil: str) -> bool:
