@@ -162,6 +162,22 @@ def _calculer_completude_live(donnees: dict) -> int:
                 already_counted_nss = True
         elif donnees.get(champ):
             score += poids
+
+    # ── FACILIM V2 (ADDITIF) — créditer la présence d'un FAIT projet professionnel ──
+    # Lit synthese["faits"] si présent ; sinon aucun effet (dossiers legacy intacts).
+    # C'est ce qui rend le score sensible à une info stratégique (cas BIM Modeleur).
+    try:
+        faits = donnees.get("faits")
+        if isinstance(faits, list) and any(
+            isinstance(f, dict)
+            and f.get("domaine") == "projet_professionnel"
+            and f.get("valeur")
+            for f in faits
+        ):
+            score += 5
+    except Exception:
+        pass
+
     return min(score, 100)
 
 
@@ -570,6 +586,17 @@ class OrchestrationEngine:
                     donnees[k] = v  # l'usager écrase toujours
                 elif k not in _champs_admin_pro:
                     donnees[k] = v  # champ nouveau → ajouter
+
+            # ── FACILIM V2 (ADDITIF) — projeter le domaine pilote en faits canoniques ──
+            # N'efface aucune clé plate ; alimente uniquement donnees["faits"].
+            # Domaine pilote : projet_professionnel. Bloc non bloquant.
+            try:
+                from app.services.faits import derive_faits_projet_professionnel
+                derive_faits_projet_professionnel(
+                    donnees, source="whatsapp", extrait=(text or "")[:300]
+                )
+            except Exception as _faits_err:
+                logger.debug("[FAITS] projection non bloquante : %s", _faits_err)
 
             # ── [TRACE_COLLECTE] aval fusion (avant sauvegarde) ──
             logger.info("[TRACE_COLLECTE] 7-SYNTHESE_APRES %s (completude_avant=%d)",
