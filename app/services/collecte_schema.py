@@ -173,7 +173,20 @@ def checklist_for(profil: str) -> list[dict]:
     = champs existants (inchangés) + NIVEAU A (requis=False) + chrono/expression + droits texte.
     """
     base = _PROFILS.get((profil or "adulte").lower(), _ADULTE)
-    return list(base) + list(NIVEAU_A_COMMUN) + list(_CHRONO_EXPR) + list(_DROITS_TEXTE)
+    items = list(base) + list(NIVEAU_A_COMMUN) + list(_CHRONO_EXPR) + list(_DROITS_TEXTE)
+    # Fusion avec le DICTIONNAIRE CERFA (source de vérité unique) : il PRIME par id.
+    # C'est ce qui rend enfin « demandés » des champs jamais posés jusqu'ici
+    # (mode de contact MDPH, CAF / n° allocataire, caisse, etc.). Si le module
+    # est absent, dégradation gracieuse : on garde la checklist historique.
+    try:
+        from app.services.cerfa_dictionary import champs_checklist
+        par_id = {it["id"]: it for it in items}
+        for d in champs_checklist((profil or "adulte").lower()):
+            par_id[d["id"]] = d
+        items = list(par_id.values())
+    except Exception:
+        pass
+    return items
 
 
 # ── Normalisation (compat structuré ↔ legacy) — fonction PURE ────────────────

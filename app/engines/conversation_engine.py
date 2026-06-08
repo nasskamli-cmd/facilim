@@ -535,10 +535,20 @@ _CHAMPS_EXTRACTIBLES_MIXTE = list(
 def _champs_extractibles(profil_mdph: str) -> list[str]:
     # FIX-VAGUE1 : le NIVEAU A est ajouté à tous les profils (point unique).
     if profil_mdph == "enfant":
-        return _CHAMPS_EXTRACTIBLES_ENFANT + _CHAMPS_NIVEAU_A
-    if profil_mdph == "mixte":
-        return _CHAMPS_EXTRACTIBLES_MIXTE + _CHAMPS_NIVEAU_A
-    return _CHAMPS_EXTRACTIBLES_ADULTE + _CHAMPS_NIVEAU_A
+        base = _CHAMPS_EXTRACTIBLES_ENFANT + _CHAMPS_NIVEAU_A
+    elif profil_mdph == "mixte":
+        base = _CHAMPS_EXTRACTIBLES_MIXTE + _CHAMPS_NIVEAU_A
+    else:
+        base = _CHAMPS_EXTRACTIBLES_ADULTE + _CHAMPS_NIVEAU_A
+    # Champs dérivés du DICTIONNAIRE CERFA (source de vérité) : l'extraction doit
+    # pouvoir capter tout ce qui est demandé (ex. preference_contact, sinon impossible
+    # à remplir). Alignement collecte ↔ extraction garanti par la même racine.
+    try:
+        from app.services.cerfa_dictionary import ids_extractibles
+        base = list(base) + [i for i in ids_extractibles() if i not in base]
+    except Exception:
+        pass
+    return base
 
 
 def extract_structured_data_from_history(
@@ -562,6 +572,11 @@ def extract_structured_data_from_history(
 
     champs = _champs_extractibles(profil_mdph)
     champs_str = ", ".join(champs)
+    try:
+        from app.services.cerfa_dictionary import hints_extraction
+        _dico_hints = hints_extraction()
+    except Exception:
+        _dico_hints = ""
 
     conversation_text = "\n".join(
         f"{'Usager' if m.get('role') == 'user' else 'Assistant'}: {m.get('content', '')}"
@@ -587,6 +602,7 @@ FORMATS SPÉCIAUX (Vague 1) — à respecter si l'information est présente :
 - pension_invalidite : booléen true/false. categorie_invalidite : 1, 2 ou 3.
 - organisme_payeur : "CAF", "MSA" ou "AUTRE". taux_ipp : nombre (pourcentage).
 - prenom / nom_naissance : chaînes. numero_allocataire : chaîne.
+{_dico_hints}
 
 Exemple : {{"nom_prenom": "Jean Dupont", "date_naissance": "15/03/1980", "avq_habillage": "AIDE_PARTIELLE", "droits": {{"aah": true}}}}
 
