@@ -117,27 +117,27 @@ def _composer_description_p8(
             f"Tu rédiges la section 'Description de la situation et des difficultés' "
             f"d'un formulaire MDPH pour {sujet}.\n"
             f"Rédige ce texte du point de vue de {personne}.\n\n"
-            f"Structure OBLIGATOIRE en 4 parties (sans titres, texte continu) :\n"
-            f"1. SITUATION ACTUELLE — qui est la personne, quel est son handicap/sa pathologie, "
-            f"   dans quel contexte elle vit (2-3 phrases)\n"
-            f"2. RETENTISSEMENTS FONCTIONNELS — ce qu'elle ne peut pas faire seule, "
-            f"   ce qui est difficile ou épuisant (3-5 phrases courtes et concrètes, fort impact)\n"
-            f"3. RETENTISSEMENTS DANS LA VIE QUOTIDIENNE HORS TRAVAIL — "
-            f"   ce que le handicap change concrètement au quotidien EN DEHORS du travail : "
-            f"   repas/alimentation, courses, déplacements, sorties en famille, loisirs, "
-            f"   vie à domicile, relations sociales, gestion de la fatigue et/ou des douleurs "
-            f"   (2-4 phrases concrètes, ne pas parler de travail dans cette partie)\n"
-            f"4. PROJET DE VIE — ce que la personne souhaite accomplir : aspirations personnelles, "
-            f"   autonomie souhaitée, projet professionnel ou de formation si pertinent "
-            f"   (1-2 phrases){projet_str}\n\n"
-            f"Règles strictes :\n"
-            f"- Phrases simples, courtes, concrètes (pas de jargon médical ni administratif)\n"
-            f"- Ne mentionne JAMAIS : RSDAE, PCH, AAH, MDPH, score, algorithme, GEVA\n"
-            f"- Exemples de formulations : 'ne peut pas faire ses courses seul', "
-            f"  'fatigue intense après 20 min de marche', 'a besoin d'aide pour préparer ses repas', "
-            f"  'ne peut pas accompagner ses enfants en sortie scolaire'\n"
-            f"- Maximum 500 mots, pas de titres, pas de listes à puces, texte continu\n\n"
-            f"Informations disponibles :\n{contexte_brut}"
+            f"RÈGLE ABSOLUE — ANTI-INVENTION (la plus importante) :\n"
+            f"- Utilise STRICTEMENT et UNIQUEMENT les informations fournies plus bas.\n"
+            f"- N'invente JAMAIS une difficulté, une dépendance, une aide humaine, un aidant "
+            f"ou un besoin qui n'est pas EXPLICITEMENT décrit dans ces informations.\n"
+            f"- Si une dimension (toilette, habillage, repas, douche, déplacements, aides à domicile...) "
+            f"n'est pas mentionnée, NE L'ÉVOQUE PAS du tout. Ne la suppose pas, ne la déduis pas.\n"
+            f"- N'extrapole JAMAIS un profil de dépendance à partir d'un diagnostic, d'une douleur "
+            f"ou d'une fatigue. Une fatigue déclarée ne signifie pas un besoin d'aide pour se laver.\n"
+            f"- Reste fidèle aux mots de la personne. En cas de doute, écris MOINS plutôt que d'inventer.\n\n"
+            f"Structure (texte continu, sans titres ; n'écris une partie QUE si l'information existe) :\n"
+            f"1. SITUATION ACTUELLE — qui est la personne, sa pathologie/son handicap et son contexte "
+            f"de vie, tels que réellement décrits (2-3 phrases).\n"
+            f"2. RETENTISSEMENTS RÉELLEMENT DÉCRITS — uniquement les difficultés effectivement "
+            f"mentionnées dans les informations, sans en ajouter aucune autre.\n"
+            f"3. VIE QUOTIDIENNE HORS TRAVAIL — seulement les éléments du quotidien réellement "
+            f"documentés (ne parle pas de travail ici). Si rien n'est documenté, n'écris pas cette partie.\n"
+            f"4. PROJET DE VIE — ce que la personne souhaite, tel qu'exprimé{projet_str}.\n\n"
+            f"Règles de forme :\n"
+            f"- Phrases simples, concrètes, sans jargon (ne mentionne jamais RSDAE, PCH, AAH, MDPH, score, GEVA).\n"
+            f"- Maximum 500 mots, pas de titres, pas de listes à puces, texte continu.\n\n"
+            f"Informations disponibles (SEULE source autorisée, n'ajoute rien d'autre) :\n{contexte_brut}"
         )
 
         resp = _client.chat.completions.create(
@@ -813,7 +813,7 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     nom_usage              = ds.get("nom_usage") or ""
     organisme_payeur       = (ds.get("organisme_payeur") or cerfa_rep.get("organisme_payeur") or "").lower()
     numero_allocataire     = ds.get("numero_allocataire") or ""
-    organisme_assurance    = (ds.get("organisme_assurance_maladie") or "cpam").lower()
+    organisme_assurance    = (ds.get("organisme_assurance_maladie") or "").lower()  # pas de défaut CPAM
     # Protection juridique — V3 : lecture depuis SituationJuridique.type_mesure
     if _dv2 and _dv2.section_a.situation_juridique.type_mesure != "aucune":
         _sj = _dv2.section_a.situation_juridique
@@ -1215,10 +1215,11 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         # FIX 3d : décochage explicite de P1 A au niveau des octets PDF
         # (le template peut avoir P1 A coché par défaut → on force /Off)
         _decocher_case(writer, "Case à cocher P1 A")
-        if procedure_simplifiee or urgence_droits:
-            cases.append("Case à cocher P1 1")   # Renouvellement à l'identique (simplifié)
-        else:
-            cases.append("Case à cocher P1 C")   # Réévaluation (renouvellement avec révision)
+        # CORRECTION : un renouvellement = « renouvellement à l'identique » (P1 1).
+        # Avant, sans procédure simplifiée ni urgence, le code cochait par erreur
+        # « réévaluation » (P1 C), l'inverse du choix de l'utilisateur. La réévaluation
+        # est gérée séparément par la branche _is_reevaluation ci-dessus.
+        cases.append("Case à cocher P1 1")   # Renouvellement à l'identique
     # Si type_demande inconnu → aucune case cochée (pas de défaut "première demande")
 
     # Déjà connu de la MDPH — utilise deja_connu_mdph (déjà normalisé ci-dessus)
@@ -2434,14 +2435,18 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         _cocher_option_nth(writer, "Case à cocher OPTION P2 4", 2)
 
     # Assurance maladie (OPTION P2 5) — 0:CPAM | 1:MSA | 2:RSI | 3:Autre
+    # CORRECTION : ne rien cocher si la caisse d'assurance maladie n'est pas
+    # renseignée. Avant, CPAM était coché par défaut même sans information,
+    # ce qui faisait apparaître deux caisses cochées sur le CERFA.
     if "msa" in organisme_assurance:
         _cocher_option_nth(writer, "Case à cocher OPTION P2 5", 1)
     elif "rsi" in organisme_assurance:
         _cocher_option_nth(writer, "Case à cocher OPTION P2 5", 2)
     elif "autre" in organisme_assurance:
         _cocher_option_nth(writer, "Case à cocher OPTION P2 5", 3)
-    else:
+    elif "cpam" in organisme_assurance:
         _cocher_option_nth(writer, "Case à cocher OPTION P2 5", 0)
+    # sinon : radio laissé vide (caisse non renseignée)
 
     # Classe ordinaire (OPTION P9 1) — 0:Oui | 1:Non
     if age_tranche in ("enfant", "jeune_majeur") and scolarise:
