@@ -156,8 +156,55 @@ SECTION_B: list[dict[str, Any]] = [
 ]
 
 
-# Dictionnaire complet (s'étendra : SECTION_A + SECTION_B + ... + SECTION_F)
-_DICTIONNAIRE: list[dict[str, Any]] = list(SECTION_A) + list(SECTION_B)
+# ── PARTIE C — Scolarité (enfants et jeunes 16-25 ans UNIQUEMENT) ──────────────
+# Conditionnel : un adulte n'est PAS concerné par la scolarité (profils restreints).
+SECTION_C: list[dict[str, Any]] = [
+    {
+        "id": "type_etablissement_scolaire",
+        "section": "C",
+        "profils": ("enfant", "mixte"),
+        "requis": True,
+        "extractible": True,
+        "label": "Type de scolarisation",
+        "question": "Quel est le type de scolarisation actuel : école ordinaire, ULIS, IME, SESSAD, ITEP, ou autre ?",
+        "valeurs": "ordinaire | ULIS | IME | SESSAD | ITEP | autre",
+        "cible_cerfa": "C1 — type d'établissement (P9 / classe_ordinaire)",
+    },
+    {
+        "id": "classe_scolaire",
+        "section": "C",
+        "profils": ("enfant", "mixte"),
+        "requis": True,
+        "extractible": True,
+        "label": "Classe ou niveau scolaire actuel",
+        "question": "En quelle classe ou à quel niveau scolaire en êtes-vous actuellement ?",
+        "cible_cerfa": "Champ texte P9 2 (classe)",
+    },
+    {
+        "id": "accompagnement_scolaire",
+        "section": "C",
+        "profils": ("enfant", "mixte"),
+        "requis": True,
+        "extractible": True,
+        "label": "Accompagnement humain à l'école (AESH / AVS)",
+        "question": "Y a-t-il un accompagnement à l'école (AESH ou AVS) ? Si oui, combien d'heures par semaine ?",
+        "cible_cerfa": "C2 — AESH (P10 2)",
+    },
+    {
+        "id": "amenagements_scolaires",
+        "section": "C",
+        "profils": ("enfant", "mixte"),
+        "requis": True,
+        "extractible": True,
+        "label": "Aménagements scolaires en place",
+        "question": "Y a-t-il des aménagements scolaires en place (tiers-temps, matériel adapté, projet PPS, GEVASCO) ?",
+        "cible_cerfa": "C2 — aménagements (P10 1)",
+    },
+]
+
+
+# Dictionnaire complet (s'étendra : SECTION_A + SECTION_B + SECTION_C + ...)
+_DICTIONNAIRE: list[dict[str, Any]] = list(SECTION_A) + list(SECTION_B) + list(SECTION_C)
 
 
 def _applicable(champ: dict, profil: str) -> bool:
