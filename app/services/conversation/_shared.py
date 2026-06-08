@@ -40,4 +40,10 @@ RÈGLE ACTES ESSENTIELS DU QUOTIDIEN (partie B — toilette, habillage, repas, d
   avec difficulté, avec une aide partielle, ou avez-vous besoin d'une aide totale ? ». Puis n'insiste pas.
 - Ne suppose JAMAIS un besoin d'aide qui n'a pas été exprimé. Une fatigue ou une douleur
   ne signifie pas, à elle seule, un besoin d'aide pour se laver, s'habiller ou manger.
+
+RÈGLE AIDANT (section F) :
+- Dès qu'une aide humaine ou un aidant est évoqué(e), recueille son identité (nom et lien
+  avec la personne) et demande si cela a réduit ou modifié l'activité professionnelle de cet aidant.
+- Pour un enfant, le parent qui remplit le dossier EST l'aidant : son nom et son lien suffisent.
+- N'invente JAMAIS d'aidant : si la personne dit être seule ou n'avoir personne, ne renseigne aucun aidant.
 """

@@ -251,9 +251,64 @@ SECTION_D: list[dict[str, Any]] = [
 ]
 
 
-# Dictionnaire complet (s'étendra : SECTION_A + B + C + D + E + F)
+# ── PARTIE E — Projet de vie et attentes (tous profils) ───────────────────────
+SECTION_E: list[dict[str, Any]] = [
+    {
+        "id": "attentes_usager",
+        "section": "E",
+        "profils": ("tous",),
+        "requis": True,
+        "extractible": True,
+        "label": "Attentes vis-à-vis de la MDPH",
+        "question": "Qu'attendez-vous de la MDPH ? Quels sont vos besoins et vos demandes ?",
+        "cible_cerfa": "E — attentes / projet de vie",
+    },
+    {
+        "id": "projet_de_vie",
+        "section": "E",
+        "profils": ("tous",),
+        "requis": True,
+        "extractible": True,
+        "label": "Objectifs et souhaits de vie",
+        "question": "Quels sont vos objectifs, vos souhaits, vos projets de vie pour l'avenir ?",
+        "cible_cerfa": "E — projet de vie",
+    },
+]
+
+
+# ── PARTIE F — Aidant familial (recueilli quand une aide existe ; jamais inventé) ─
+# Volontairement requis=False : ces champs ne sont pas posés mécaniquement. Une règle
+# de conversation (dans _shared.py) demande l'aidant DÈS qu'une aide est évoquée, et
+# pour un enfant le parent qui remplit EST l'aidant. Si la personne est seule, rien.
+SECTION_F: list[dict[str, Any]] = [
+    {
+        "id": "aidant_identite",
+        "section": "F",
+        "profils": ("tous",),
+        "requis": False,
+        "extractible": True,
+        "label": "Identité de l'aidant (nom et lien avec la personne)",
+        "question": "Si une personne vous aide régulièrement au quotidien, qui est-elle (son nom et son lien avec vous) ?",
+        "cible_cerfa": "E1/E2 — aidant familial (P19-P20)",
+    },
+    {
+        "id": "aidant_reduction_travail",
+        "section": "F",
+        "profils": ("tous",),
+        "requis": False,
+        "extractible": True,
+        "label": "Impact de l'aide sur l'activité professionnelle de l'aidant",
+        "question": "Cette personne a-t-elle dû réduire ou aménager son travail pour vous aider ?",
+        "valeurs": "oui | non",
+        "cible_cerfa": "E2 — réduction d'activité de l'aidant",
+    },
+]
+
+
+# Dictionnaire complet : A + B + C + D + E + F (couverture du formulaire)
 _DICTIONNAIRE: list[dict[str, Any]] = (
-    list(SECTION_A) + list(SECTION_B) + list(SECTION_C) + list(SECTION_D)
+    list(SECTION_A) + list(SECTION_B) + list(SECTION_C)
+    + list(SECTION_D) + list(SECTION_E) + list(SECTION_F)
 )
 
 
