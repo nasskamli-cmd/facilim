@@ -224,16 +224,14 @@ RÈGLE VERBATIM : si un verbatim décrit une situation concrète, intègre-le da
 Tu peux le reformuler ou le citer entre guillemets : «comme elle l'exprime elle-même : "..."»
 La parole directe de la personne prime sur la reformulation clinique.
 
-{axes_specifiques_b}STRUCTURE OBLIGATOIRE (paragraphes rédigés, JAMAIS de liste à puces) :
-1. Présentation des difficultés principales et de leur ancienneté (utiliser la chronologie déclarée)
-2. Conséquences concrètes sur les actes essentiels du quotidien
-3. Limitations fonctionnelles dans les domaines suivants (si déclarés) :
-{domaines_str}
-4. Aides humaines et techniques déjà en place
-5. Besoins de compensation non couverts
+{axes_specifiques_b}CONSIGNE DE RÉDACTION — STRICTE (anti-invention) :
+Décris UNIQUEMENT les difficultés et limitations EXPLICITEMENT présentes dans les informations ci-dessus, en t'appuyant d'abord sur les mots de la personne (verbatim).
+- N'introduis JAMAIS un acte ni une aide (toilette, habillage, repas, douche, déplacements, fauteuil roulant, aidant, aménagement du logement, etc.) s'il n'est pas écrit explicitement dans les informations.
+- Ne déduis AUCUNE dépendance à partir d'un diagnostic, d'une douleur ou d'une fatigue. Une fatigue déclarée ne signifie pas un besoin d'aide pour se laver.
+- Si une dimension n'est pas renseignée, NE L'ÉVOQUE PAS. Tu n'es PAS obligé de couvrir tous les domaines.
+- AUCUNE longueur imposée : sois aussi bref que le permettent les informations réelles. Trois phrases vraies valent mieux qu'un paragraphe inventé.
 
-FORMAT : paragraphes continus, minimum 2 phrases par dimension renseignée.
-LONGUEUR CIBLE : 400 à 600 mots si les informations le permettent.
+FORMAT : paragraphes continus, sans liste à puces.
 """
 
 
