@@ -879,7 +879,7 @@ def get_alertes(user=Depends(_get_current_user), db=Depends(_get_db)):
         SELECT a.*, d.reference as dossier_reference
         FROM alertes a
         LEFT JOIN dossiers d ON d.id = a.dossier_id
-        WHERE a.type_alerte IN ('FLAG_HUMAIN', 'CHAMP_NON_COMMUNIQUE') AND a.acquittee = 0
+        WHERE a.type_alerte IN ('FLAG_HUMAIN', 'CHAMP_NON_COMMUNIQUE', 'REVUE_INSTRUCTEUR') AND a.acquittee = 0
         ORDER BY a.created_at DESC LIMIT 50
         """
     ).fetchall()

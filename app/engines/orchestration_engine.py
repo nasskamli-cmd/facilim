@@ -1042,6 +1042,14 @@ class OrchestrationEngine:
         3. Persiste le tout en base
         Non bloquant : les erreurs sont loggées sans interrompre le pipeline.
         """
+        # ── Revue instructeur (lecture seule) : repère les points d'attention et
+        #    alerte le professionnel. Ne modifie rien, ne décide rien. Non bloquant.
+        try:
+            from app.engines.revue_instructeur import revue_dossier
+            revue_dossier(donnees, profil_mdph, dossier_id, db=self.db)
+        except Exception as _revue_err:
+            logger.warning("[REVUE] non bloquant : %s", _revue_err)
+
         try:
             from app.engines.cerfa_narrative_engine import generer_textes_narratifs
             from app.engines.cerfa_quality_agent import verifier_qualite_cerfa
