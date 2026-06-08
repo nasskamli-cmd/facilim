@@ -116,8 +116,48 @@ SECTION_A: list[dict[str, Any]] = [
     },
 ]
 
+
+# ── PARTIE B — Vie quotidienne : actes essentiels, aides, frais ───────────────
+# Les actes (toilette, habillage, repas, déplacements, gestion) ne sont PAS posés
+# un par un : l'assistant questionne OUVERTEMENT et ne cible un acte que si la
+# personne en parle d'elle-même (règle dans _shared.py). Ici on rend « à demander »
+# ce qui ne l'était jamais : aides humaines, aides techniques, frais restant à charge.
+SECTION_B: list[dict[str, Any]] = [
+    {
+        "id": "aides_en_place",
+        "section": "B",
+        "profils": ("tous",),
+        "requis": True,
+        "extractible": True,
+        "label": "Aide humaine au quotidien (qui et pour quoi)",
+        "question": "Au quotidien, une personne vous aide-t-elle pour certains gestes ? Si oui, qui vous aide, et pour quoi ?",
+        "cible_cerfa": "Aide humaine en place (narratif B / P6)",
+    },
+    {
+        "id": "aides_techniques",
+        "section": "B",
+        "profils": ("tous",),
+        "requis": True,
+        "extractible": True,
+        "label": "Aides techniques ou aménagements utilisés",
+        "question": "Utilisez-vous du matériel ou des aménagements au quotidien (fauteuil, canne, aide auditive, adaptation du logement...) ?",
+        "cible_cerfa": "Aides techniques (P6)",
+    },
+    {
+        "id": "frais_handicap",
+        "section": "B",
+        "profils": ("tous",),
+        "requis": True,
+        "extractible": True,
+        "label": "Frais liés au handicap restant à charge (non remboursés)",
+        "question": "Avez-vous des dépenses liées à votre handicap qui restent à votre charge et qui ne sont pas remboursées ?",
+        "cible_cerfa": "Frais liés au handicap (B1)",
+    },
+]
+
+
 # Dictionnaire complet (s'étendra : SECTION_A + SECTION_B + ... + SECTION_F)
-_DICTIONNAIRE: list[dict[str, Any]] = list(SECTION_A)
+_DICTIONNAIRE: list[dict[str, Any]] = list(SECTION_A) + list(SECTION_B)
 
 
 def _applicable(champ: dict, profil: str) -> bool:
