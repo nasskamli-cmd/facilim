@@ -549,6 +549,14 @@ class OrchestrationEngine:
             service_type = service_type_from_persona(etat)
             agent = get_agent(service_type)
 
+            # Snapshot des champs obligatoires EN ATTENTE avant extraction
+            # (= ce que l'agent venait de demander) — base de la détection de refus.
+            try:
+                _manquants_avant_ids = agent.missing_field_ids(donnees)
+                _id_to_label = {it["id"]: it["label"] for it in agent.CHECKLIST}
+            except Exception:
+                _manquants_avant_ids, _id_to_label = [], {}
+
             # ── [TRACE_COLLECTE] amont extraction (observabilité, sans effet) ──
             _trace_compl_avant = _calculer_completude_live(donnees)
             logger.info("[TRACE_COLLECTE] 1-MSG dossier=%s tel=%s profil=%s msg_len=%d",
@@ -597,6 +605,18 @@ class OrchestrationEngine:
                 )
             except Exception as _faits_err:
                 logger.debug("[FAITS] projection non bloquante : %s", _faits_err)
+
+            # ── Détection d'un refus de champ (« champ non communiqué ») ─────────
+            # Si la famille refuse : marque le champ (jamais inventé), message
+            # bienveillant à la famille, alerte au professionnel. Non bloquant.
+            try:
+                from app.services.refus_handler import traiter_refus_eventuel
+                traiter_refus_eventuel(
+                    donnees, text or "", _manquants_avant_ids, _id_to_label,
+                    self.wa, self.db, dossier_id, phone_wa,
+                )
+            except Exception as _refus_err:
+                logger.warning("[REFUS] traitement non bloquant : %s", _refus_err)
 
             # ── [TRACE_COLLECTE] aval fusion (avant sauvegarde) ──
             logger.info("[TRACE_COLLECTE] 7-SYNTHESE_APRES %s (completude_avant=%d)",

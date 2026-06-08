@@ -33,3 +33,11 @@ static/generate_pptx.js
 .vscode/
 .idea/
 *.swp
+
+# Code mort et archives - non deployes
+_legacy/
+_archive/
+
+# Code mort et archives - non deployes
+_legacy/
+_archive/

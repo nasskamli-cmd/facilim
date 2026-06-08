@@ -19,6 +19,8 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
+from app.services.field_status import est_refuse
+
 logger = logging.getLogger("facilim.conversation")
 
 
@@ -94,9 +96,28 @@ class ConversationAgent(ABC):
                 val = str(donnees.get(cond["champ"], "")).lower()
                 if not val.startswith(cond["valeur"].lower()):
                     continue
+            if est_refuse(donnees, item["id"]):
+                continue  # la famille a refusé : champ traité et signalé, ne pas redemander
             if not donnees.get(item["id"]):
                 missing.append(item["label"])
         return missing
+
+    def missing_field_ids(self, donnees: dict[str, Any]) -> list[str]:
+        """Comme missing_fields() mais retourne les IDS — utilisé pour la détection de refus."""
+        ids = []
+        for item in self.CHECKLIST:
+            if not item.get("requis", True):
+                continue
+            cond = item.get("condition")
+            if cond:
+                val = str(donnees.get(cond["champ"], "")).lower()
+                if not val.startswith(cond["valeur"].lower()):
+                    continue
+            if est_refuse(donnees, item["id"]):
+                continue
+            if not donnees.get(item["id"]):
+                ids.append(item["id"])
+        return ids
 
     def is_complete(self, donnees: dict[str, Any]) -> bool:
         return len(self.missing_fields(donnees)) == 0
@@ -192,7 +213,9 @@ class ConversationAgent(ABC):
 
         manquants_ids = [
             item["id"] for item in self.CHECKLIST
-            if item.get("requis", True) and not donnees.get(item["id"])
+            if item.get("requis", True)
+            and not donnees.get(item["id"])
+            and not est_refuse(donnees, item["id"])
         ]
         # Filtrer les champs déjà couverts par l'extraction documentaire
         _knowledge = donnees.get("_document_knowledge") or {}

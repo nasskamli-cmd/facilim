@@ -58,6 +58,28 @@ _DROIT_LABEL = {
 ORGANISME_PAYEUR_VALEURS = ("CAF", "MSA", "AUTRE")
 
 
+# ── Criticité des champs (gestion des refus « champ non communiqué ») ─────────
+# Le refus d'un champ BLOQUANT empêche la finalisation tant que le professionnel
+# n'a pas tranché. Le refus d'un autre champ est seulement SIGNALÉ (alerte pro) et
+# n'empêche pas de finaliser. Dans les deux cas : message bienveillant à la famille,
+# alerte au professionnel, et AUCUNE valeur inventée.
+CHAMPS_CRITIQUES_BLOQUANTS = {
+    "nom_prenom",
+    "date_naissance",
+    "adresse_complete",
+    "num_secu",
+    "departement",
+    "diagnostics",
+    "droits_demandes",          # type(s) de demande — sans quoi la MDPH ne peut instruire
+    "representant_legal_nom",   # enfant / majeur protégé : représentant légal indispensable
+}
+
+
+def criticite_champ(field_id: str) -> str:
+    """'bloquant' si le refus de ce champ empêche la finalisation, sinon 'signale'."""
+    return "bloquant" if field_id in CHAMPS_CRITIQUES_BLOQUANTS else "signale"
+
+
 # ── NIVEAU A — champs ajoutés (requis=False : is_complete inchangé) ───────────
 _NIVEAU_A_IDENTITE = [
     {"id": "prenom",        "label": "Prénom(s)",                    "requis": False, "niveau": "A"},

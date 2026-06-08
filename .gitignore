@@ -27,3 +27,8 @@ package-lock.json
 # PPTX générés
 static/*.pptx
 static/generate_pptx.js
+
+# Artefacts CERFA generes (QA / runtime) - ne pas versionner
+storage/cerfa/*.pdf
+# Rapports de rendu QA regeneres
+app/tests/qa/reports/*.html
