@@ -50,6 +50,25 @@ logger = logging.getLogger(__name__)
 #  Description narrative Page 8 du CERFA
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _terme_relationnel_enfant(lien: str, genre: str) -> str:
+    """
+    Terme affectueux du proche qui remplit le dossier d'un enfant, selon le lien et
+    le sexe de l'enfant : « mon fils », « ma fille », « mon neveu », « ma nièce »...
+    Retourne "" si le lien est inconnu (→ on retombe sur le prénom à la 3e personne).
+    """
+    l = (lien or "").lower()
+    fille = str(genre or "").lower() in ("fille", "femme", "f", "féminin", "feminin")
+    if "grand" in l:
+        return "ma petite-fille" if fille else "mon petit-fils"
+    if "oncle" in l or "tante" in l:
+        return "ma nièce" if fille else "mon neveu"
+    if any(w in l for w in ("frère", "frere", "sœur", "soeur")):
+        return "ma sœur" if fille else "mon frère"
+    if any(w in l for w in ("mère", "mere", "père", "pere", "parent", "maman", "papa")):
+        return "ma fille" if fille else "mon fils"
+    return ""
+
+
 def _composer_description_p8(
     geva_pro: str,
     juriste: str,
@@ -60,6 +79,9 @@ def _composer_description_p8(
     besoins_aide: str = "",
     prenom: str = "",
     nom: str = "",
+    protege: bool = False,
+    lien_enfant: str = "",
+    genre: str = "",
 ) -> str:
     """
     Compose le texte narratif de la page 8 du CERFA 15692 :
@@ -106,11 +128,31 @@ def _composer_description_p8(
         _civilite     = _identite  # ex. "Yasmine BENALI" ou "M. Dupont"
 
         sujet    = f"de {_identite}" if _identite not in ("l'enfant", "la personne") else ("de l'enfant" if is_enfant else "de la personne")
-        personne = (
-            f"{_civilite} (à la 3ème personne, ex : « {_civilite} ne peut pas… », « il/elle ne peut pas… »)"
-            if is_enfant else
-            f"{_civilite} elle-même (à la 1ère personne, ex : « je ne peux pas… »)"
-        )
+        # Voix du récit :
+        #  - enfant : voix du proche qui remplit (« mon fils / ma fille / mon neveu… »)
+        #             si le lien est connu, sinon prénom à la 3e personne.
+        #  - majeur protégé (tutelle/curatelle) : 3e personne, c'est le représentant qui parle.
+        #  - adulte autonome : 1ère personne.
+        if is_enfant:
+            _terme = _terme_relationnel_enfant(lien_enfant, genre)
+            if _terme:
+                personne = (
+                    f"le proche qui remplit le dossier, qui parle de l'enfant en disant « {_terme} » "
+                    f"(ex : « {_terme} a besoin d'aide pour… », « {_terme} ne peut pas… »). "
+                    f"Écris à la 1ère personne de ce proche, à propos de l'enfant."
+                )
+            else:
+                personne = (
+                    f"{_identite}, à la 3ème personne "
+                    f"(ex : « {_prenom_clean or 'il/elle'} ne peut pas… », « il/elle ne peut pas… »)"
+                )
+        elif protege:
+            personne = (
+                f"{_civilite}, à la 3ème personne, car c'est son représentant légal qui s'exprime "
+                f"(ex : « il/elle ne peut pas… »)"
+            )
+        else:
+            personne = f"{_civilite} elle-même, à la 1ère personne (ex : « je ne peux pas… »)"
         projet_str = f"\nProjet de vie : {projet_professionnel}" if projet_professionnel else ""
 
         prompt = (
@@ -1162,6 +1204,9 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         besoins_aide=besoins_aide_str,
         prenom=prenom,
         nom=nom,
+        protege=(protection_juridique not in ("aucune", "", "none", "non")),
+        lien_enfant=(ds.get("representant_legal_lien") or ds.get("lien_interlocuteur") or ds.get("lien_parent") or ""),
+        genre=genre,
     )
 
     # ── Droits → liste de cases P17/P18 ─────────────────────────────────────
