@@ -2716,6 +2716,14 @@ def bulk_update_synthese(
                 synthese[champ] = valeur
             champs_mis_a_jour.append(champ)
 
+    # Alias NIR : garder 'num_secu' et 'numero_securite_sociale' synchronisés
+    # (l'interface peut enregistrer l'un ou l'autre ; la collecte WhatsApp lit 'num_secu').
+    _nir = synthese.get("numero_securite_sociale") or synthese.get("num_secu")
+    if _nir:
+        _nir = str(_nir).replace(" ", "")
+        synthese["numero_securite_sociale"] = _nir
+        synthese["num_secu"] = _nir
+
     db.execute(
         "UPDATE dossiers SET synthese_json = ?, updated_at = ? WHERE id = ?",
         (json.dumps(synthese, ensure_ascii=False), datetime.now(timezone.utc).isoformat(), dossier_id),
@@ -2746,6 +2754,14 @@ def update_cerfa_champ(
         synthese["notes_pro"] = f"{synthese['notes_pro']}\n{body.valeur}".strip()
     else:
         synthese[body.champ] = body.valeur
+
+    # Alias NIR : l'interface enregistre le numéro de Sécu sous 'numero_securite_sociale',
+    # mais la collecte WhatsApp surveille 'num_secu'. On synchronise les deux noms pour
+    # qu'un NIR saisi à l'écran ne soit JAMAIS redemandé sur WhatsApp.
+    if body.champ in ("numero_securite_sociale", "num_secu") and body.valeur:
+        _nir = str(body.valeur).replace(" ", "")
+        synthese["numero_securite_sociale"] = _nir
+        synthese["num_secu"] = _nir
 
     from app.engines.orchestration_engine import _calculer_completude_live
     score = _calculer_completude_live(synthese)
