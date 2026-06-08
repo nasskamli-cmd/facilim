@@ -385,18 +385,62 @@ def onglet_courant_complet(
     return all(donnees.get(c) for c in champs_du_profil)
 
 
-def generer_message_validation_onglet(onglet_num: int) -> str:
+_RECAP_LABELS = [
+    ("nom_prenom", "Nom et prénom"),
+    ("date_naissance", "Date de naissance"),
+    ("genre", "Sexe"),
+    ("adresse_complete", "Adresse"),
+    ("num_secu", "N° de Sécurité Sociale"),
+    ("telephone", "Téléphone"),
+    ("departement", "Département"),
+    ("situation_familiale", "Situation familiale"),
+    ("diagnostics", "Santé / diagnostic"),
+    ("traitements", "Traitements"),
+    ("medecin_traitant", "Médecin traitant"),
+    ("impact_quotidien", "Impact au quotidien"),
+    ("statut_emploi", "Situation professionnelle"),
+    ("projet_professionnel", "Projet"),
+    ("droits_demandes", "Demandes"),
+    ("historique_mdph", "Historique MDPH"),
+]
+
+
+def formater_recap_donnees(donnees: dict[str, Any] | None, max_len: int = 90) -> str:
+    """Récapitulatif lisible des informations déjà collectées (pour confirmation usager)."""
+    if not donnees:
+        return ""
+    lignes = []
+    for cid, label in _RECAP_LABELS:
+        v = donnees.get(cid)
+        if v in (None, "", 0, []):
+            continue
+        sv = str(v).strip().replace("\n", " ")
+        if cid == "num_secu" and len(sv) >= 6:
+            sv = sv[:1] + "•" * (len(sv) - 4) + sv[-3:]  # masquer partiellement le NIR
+        if len(sv) > max_len:
+            sv = sv[:max_len] + "…"
+        lignes.append(f"• {label} : {sv}")
+    return "\n".join(lignes)
+
+
+def generer_message_validation_onglet(onglet_num: int, donnees: dict[str, Any] | None = None) -> str:
     """
     Génère le message de demande de validation d'un onglet avant de passer au suivant.
-    Formulé en FALC, chaleureux.
+    Formulé en FALC, chaleureux. Affiche un récapitulatif des informations collectées
+    pour que la confirmation ait du sens.
     """
     onglet = next((o for o in ONGLETS_MDPH if o["num"] == onglet_num), None)
     if not onglet:
         return ""
-    resume = onglet.get("resume_validation", f"la section {onglet['titre']}")
+    recap = formater_recap_donnees(donnees)
+    if recap:
+        entete = "✅ Voici ce que j'ai noté jusqu'ici :\n\n" + recap + "\n\n"
+    else:
+        resume = onglet.get("resume_validation", f"la section {onglet['titre']}")
+        entete = f"✅ Nous avons bien noté *{resume}*.\n\n"
     return (
-        f"✅ Nous avons bien noté *{resume}*.\n\n"
-        "Est-ce que ces informations sont correctes et complètes ?\n"
+        entete
+        + "Est-ce que ces informations sont correctes et complètes ?\n"
         "Répondez *OUI* pour confirmer, ou dites-moi ce qu'il faut corriger."
     )
 

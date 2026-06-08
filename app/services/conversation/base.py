@@ -260,6 +260,11 @@ class ConversationAgent(ABC):
             ctx += f"\n\n⛔ INFORMATIONS DÉJÀ CONNUES — NE PAS REDEMANDER ({len(_champs_a_afficher)} champs) :\n"
             for k, v in _champs_a_afficher[:8]:
                 ctx += f"  ✓ {k}: {str(v)[:80]}\n"
-            ctx += "Ces informations ont été transmises par le professionnel. Passer directement aux éléments manquants."
+            ctx += (
+                "Ces informations sont déjà connues : ne les redemande pas, passe aux éléments manquants. "
+                "MAIS si l'usager demande à les voir, les vérifier ou les confirmer "
+                "(par ex. « montre-moi », « récapitule », « qu'as-tu noté »), présente-lui un "
+                "récapitulatif clair et lisible de ces informations. Ne refuse JAMAIS de les montrer."
+            )
 
         return ctx

@@ -595,6 +595,15 @@ class OrchestrationEngine:
                 elif k not in _champs_admin_pro:
                     donnees[k] = v  # champ nouveau → ajouter
 
+            # ── Alias NIR : l'extraction renvoie 'numero_securite_sociale', mais la
+            # collecte surveille 'num_secu'. Sans synchronisation, Corrine croit le
+            # numéro absent et le redemande sans cesse. On garde les deux noms alignés.
+            _nir = donnees.get("num_secu") or donnees.get("numero_securite_sociale")
+            if _nir:
+                _nir = str(_nir).replace(" ", "")
+                donnees["num_secu"] = _nir
+                donnees["numero_securite_sociale"] = _nir
+
             # ── FACILIM V2 (ADDITIF) — projeter le domaine pilote en faits canoniques ──
             # N'efface aucune clé plate ; alimente uniquement donnees["faits"].
             # Domaine pilote : projet_professionnel. Bloc non bloquant.
@@ -923,7 +932,7 @@ class OrchestrationEngine:
                 if _onglet_a_des_champs:
                     # Onglet avec champs → demander confirmation à l'usager
                     nav.validation_demandee = True
-                    msg_validation = generer_message_validation_onglet(nav.onglet_courant)
+                    msg_validation = generer_message_validation_onglet(nav.onglet_courant, donnees)
                     self.wa.send_text(phone_wa, msg_validation, dossier_id=dossier_id, db_conn=self.db)
                     _sauvegarder_nav(self.db, dossier_id, nav, historique, donnees)
                     return {"success": True, "action": "validation_demandee", "dossier_id": dossier_id}
