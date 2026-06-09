@@ -1166,7 +1166,7 @@ def dashboard_page(request: Request):
         return RedirectResponse("/login", status_code=302)
     dashboard_path = os.path.join(os.path.dirname(__file__), "dashboards", "dashboard.html")
     if os.path.isfile(dashboard_path):
-        return FileResponse(dashboard_path)
+        return FileResponse(dashboard_path, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
     return HTMLResponse("<h1>Facilim v2 — Dashboard en cours de chargement</h1>")
 
 
@@ -1174,7 +1174,7 @@ def dashboard_page(request: Request):
 def login_page():
     static_login = os.path.join(os.path.dirname(__file__), "..", "static", "login.html")
     if os.path.isfile(static_login):
-        return FileResponse(static_login)
+        return FileResponse(static_login, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
     return HTMLResponse("""
     <!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
     <title>Facilim — Connexion</title>
