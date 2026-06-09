@@ -2277,7 +2277,8 @@ def _ajouter_page_couverture(cerfa_bytes: bytes, donnees: dict) -> bytes:
     return out.getvalue()
 
 
-def _verrou_export_cerfa(dossier_id: str, db, user, action: str = "export") -> dict:
+def _verrou_export_cerfa(dossier_id: str, db, user, action: str = "export",
+                         exiger_present: bool = False) -> dict:
     """
     VERROU CENTRALISÉ d'export CERFA (FACILIM PROD-3).
 
@@ -2288,7 +2289,10 @@ def _verrou_export_cerfa(dossier_id: str, db, user, action: str = "export") -> d
       - PASS / WARNING / UNKNOWN(absent) → autorise (retourne le statut)
       - BLOCK                            → refuse (403, aucun PDF généré)
 
-    Retour : dict du statut du gate (cf. export_gate.lire_gate_export).
+    exiger_present : durcissement réservé à la TRANSMISSION officielle. Quand True,
+    un gate absent (cockpit jamais évalué) ne suffit plus : le dossier doit avoir
+    été évalué et validé avant d'être transmis. Le téléchargement pour relecture
+    reste, lui, tolérant (fail-open) afin de ne pas gêner le travail du pro.
     """
     from app.services.export_gate import lire_gate_export
 
@@ -2327,6 +2331,14 @@ def _verrou_export_cerfa(dossier_id: str, db, user, action: str = "export") -> d
             detail=(g["message"] or
                     "Export bloqué par FACILIM (gate BLOCK). Corrigez les points critiques "
                     "signalés dans le cockpit avant d'exporter ou de transmettre le CERFA."),
+        )
+    # Durcissement transmission : un dossier jamais évalué ne peut pas être transmis.
+    if exiger_present and not g["present"]:
+        raise HTTPException(
+            status_code=403,
+            detail=("Le dossier n'a pas encore été évalué par FACILIM. Ouvrez-le dans le "
+                    "cockpit pour générer l'analyse, faites valider par un professionnel, "
+                    "puis relancez la transmission."),
         )
     return g
 
@@ -2588,7 +2600,7 @@ def envoyer_cerfa(
 
     # ── VERROU PROD-3 : gate d'export (lit le gate DÉJÀ calculé, aucun recalcul) ──
     # BLOCK → 403 ici : aucun PDF n'est généré, aucun email n'est envoyé.
-    gate = _verrou_export_cerfa(dossier_id, db, user, action="envoi")
+    gate = _verrou_export_cerfa(dossier_id, db, user, action="envoi", exiger_present=True)
 
     donnees    = json.loads(row["synthese_json"] or "{}")
     email_dest = donnees.get("email", "").strip()
