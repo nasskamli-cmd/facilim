@@ -59,6 +59,45 @@ def points_d_attention(donnees: dict[str, Any], profil: str) -> list[dict[str, A
     return pts
 
 
+def controles_coherence(donnees: dict[str, Any], profil: str) -> list[dict[str, Any]]:
+    """
+    Contrôles de cohérence d'un instructeur senior, au niveau des DONNÉES
+    (déterministe, sans LLM). Ce sont les « drapeaux rouges » classiques qui font
+    rejeter ou affaiblir un dossier MDPH.
+    """
+    alertes: list[dict[str, Any]] = []
+    diag    = str(donnees.get("diagnostics", "") or "").strip()
+    impact  = str(donnees.get("impact_quotidien", "") or "").strip()
+    droits  = donnees.get("droits_demandes") or donnees.get("droits")
+    attentes = (
+        str(donnees.get("attentes_usager", "") or "").strip()
+        or str(donnees.get("projet_de_vie", "") or "").strip()
+    )
+
+    # 1. Diagnostic sans conséquence fonctionnelle — cause n°1 de refus.
+    if diag and not impact:
+        alertes.append({
+            "niveau": "ROUGE",
+            "label": ("Un diagnostic est indiqué mais aucune conséquence sur la vie "
+                      "quotidienne n'est décrite. La MDPH évalue le retentissement, "
+                      "pas le diagnostic seul."),
+        })
+    # 2. Aucune demande de droit → le dossier n'a pas d'objet.
+    if not droits:
+        alertes.append({
+            "niveau": "ROUGE",
+            "label": "Aucune demande de droit ou de prestation n'est renseignée.",
+        })
+    # 3. Projet de vie / attentes absents (section E).
+    if not attentes:
+        alertes.append({
+            "niveau": "ORANGE",
+            "label": ("Le projet de vie et les attentes vis-à-vis de la MDPH ne sont "
+                      "pas exprimés (section E)."),
+        })
+    return alertes
+
+
 def revue_dossier(
     donnees: dict[str, Any],
     profil: str,
@@ -74,18 +113,24 @@ def revue_dossier(
     Retourne {"points": [...], "bloquants": n}.
     """
     pts = points_d_attention(donnees, profil)
-    if not pts:
+    coherence = controles_coherence(donnees, profil)
+    if not pts and not coherence:
         logger.info("[REVUE] dossier=%s : aucun point d'attention", dossier_id)
-        return {"points": [], "bloquants": 0}
+        return {"points": [], "coherence": [], "bloquants": 0}
 
     bloquants = [p for p in pts if p["bloquant"]]
+    rouges = [c for c in coherence if c.get("niveau") == "ROUGE"]
 
     # 1. Alerte au professionnel (tableau de bord) — réutilise la table `alertes`
     try:
         if db is not None:
-            libelles = " ; ".join(p["label"] for p in pts[:12])
-            description = f"Points à compléter avant dépôt : {libelles}"
-            severite = "HAUTE" if bloquants else "NORMALE"
+            parties = []
+            if pts:
+                parties.append("À compléter : " + " ; ".join(p["label"] for p in pts[:10]))
+            if coherence:
+                parties.append("Cohérence : " + " ; ".join(c["label"] for c in coherence[:6]))
+            description = " | ".join(parties)[:1000]
+            severite = "HAUTE" if (bloquants or rouges) else "NORMALE"
             db.execute(
                 """
                 INSERT INTO alertes
@@ -98,7 +143,7 @@ def revue_dossier(
                     dossier_id,
                     TYPE_ALERTE,
                     severite,
-                    f"Revue instructeur : {len(pts)} point(s) d'attention",
+                    f"Revue instructeur : {len(pts) + len(coherence)} point(s) d'attention",
                     description,
                     datetime.now(timezone.utc).isoformat(),
                 ),
@@ -106,8 +151,8 @@ def revue_dossier(
     except Exception as e:
         logger.warning("[REVUE] alerte pro échouée : %s", e)
 
-    # 2. Message bienveillant à la famille (optionnel)
-    if notifier_famille and wa is not None and phone:
+    # 2. Message bienveillant à la famille (optionnel) — seulement sur les champs manquants
+    if notifier_famille and wa is not None and phone and pts:
         try:
             manquants = ", ".join(p["label"] for p in pts[:6])
             msg = (
@@ -121,7 +166,11 @@ def revue_dossier(
             logger.warning("[REVUE] message famille échoué : %s", e)
 
     logger.info(
-        "[REVUE] dossier=%s : %d point(s), %d bloquant(s)",
-        dossier_id, len(pts), len(bloquants),
+        "[REVUE] dossier=%s : %d champ(s) vide(s) (%d bloquant), %d cohérence (%d rouge)",
+        dossier_id, len(pts), len(bloquants), len(coherence), len(rouges),
     )
-    return {"points": pts, "bloquants": len(bloquants)}
+    return {
+        "points": pts,
+        "coherence": coherence,
+        "bloquants": len(bloquants) + len(rouges),
+    }

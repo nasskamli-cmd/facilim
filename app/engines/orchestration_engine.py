@@ -1120,6 +1120,28 @@ class OrchestrationEngine:
                 len(rapport.alertes_rouges),
             )
 
+            # ── Revue instructeur — rendre ACTIONNABLES les alertes qualité ──────
+            # Le rapport qualité (retentissement absent, projet de vie incomplet,
+            # contradictions entre sections) est déjà calculé ci-dessus mais n'est
+            # pas remonté au professionnel. On le surface en alerte tableau de bord.
+            # Lecture seule, non décisionnaire, non bloquant.
+            try:
+                _q_rouges = list(rapport.alertes_rouges or []) + list(rapport.contradictions or [])
+                if _q_rouges:
+                    import uuid as _uuidq
+                    _descq = " ; ".join(str(a) for a in _q_rouges)[:1000]
+                    self.db.execute(
+                        "INSERT INTO alertes (id, dossier_id, usager_id, destinataire_id, "
+                        "type_alerte, severite, titre, description, created_at, acquittee) "
+                        "VALUES (?, ?, NULL, NULL, 'REVUE_INSTRUCTEUR', 'HAUTE', ?, ?, ?, 0)",
+                        (str(_uuidq.uuid4()), dossier_id,
+                         f"Qualité CERFA : {len(_q_rouges)} alerte(s) rouge(s)",
+                         _descq, _now_iso()),
+                    )
+                    self.db.commit()
+            except Exception as _q_err:
+                logger.warning("[REVUE] surfaçage qualité non bloquant : %s", _q_err)
+
             # ── Analyse de situation (Sprint 5) ──────────────────────────────
             try:
                 from app.engines.analyse_situation_engine import analyser_situation
