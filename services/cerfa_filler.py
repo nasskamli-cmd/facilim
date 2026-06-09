@@ -433,6 +433,41 @@ def _cocher_option_nth(writer: PdfWriter, field_name: str, n: int) -> bool:
 #  Mapping droits → cases P17 / P18 / P19
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Marqueurs d'une orientation en Centre de Rééducation/Réadaptation Professionnelle
+# (CRP/ESRP/CPO/UEROS). Un ESRP EST un CRP : il ouvre P18 3 (réadaptation pro), jamais
+# le marché du travail ordinaire (P18 5) ni la scolarité. Détection sur texte sans accents.
+_MARQUEURS_CRP = re.compile(
+    r"\b(esrp|crp|cpo|espo|ueros)\b"
+    r"|re[ae]ducation professionnelle"
+    r"|readaptation professionnelle"
+    r"|pre.?orientation"
+    r"|centre de re[ae]ducation"
+    r"|centre de readaptation",
+    re.IGNORECASE,
+)
+
+
+def _detecter_orientation_crp(a_cible_esrp: bool, *textes: str) -> bool:
+    """
+    Détecte une orientation CRP/ESRP depuis TOUS les signaux disponibles, pas
+    seulement la liste des droits : champ structuré `a_cible_esrp`, nom d'ESRP,
+    nom/organisme de formation, et projet professionnel en texte libre.
+
+    Sans cette détection partagée, un ESRP mentionné uniquement dans le projet
+    (ex. « formation CADGA à l'ESRP La Rose ») n'atteignait pas le mapping P18,
+    qui cochait alors « marché du travail » (P18 5) au lieu de « CRP » (P18 3).
+    """
+    if a_cible_esrp:
+        return True
+    import unicodedata
+    blob = " ".join(str(t or "") for t in textes)
+    blob = "".join(
+        c for c in unicodedata.normalize("NFD", blob.lower())
+        if unicodedata.category(c) != "Mn"
+    )
+    return bool(_MARQUEURS_CRP.search(blob))
+
+
 def _mapper_droits(
     droits: list,
     is_enfant: bool,
@@ -441,6 +476,7 @@ def _mapper_droits(
     cmi_stationnement: bool = False,
     emploi_accompagne: bool = False,
     creton: bool = False,
+    orientation_crp: bool = False,
 ) -> list[str]:
     """
     Traduit la liste de droits identifiés par l'IA en noms de cases CERFA.
@@ -557,12 +593,18 @@ def _mapper_droits(
     _orp_tokens = ("ORP", "ORIENTATION PROFESSIONNELLE", "ORIENTATION PRO",
                    "RECLASSEMENT PROFESSIONNEL", "INSERTION PROFESSIONNELLE")
     _is_esat_projet = "ESAT" in droits_str and not is_enfant
-    _is_crp_projet  = any(t in droits_str for t in (
-        "CRP", "CPO", "UEROS", "ESRP", "VISA PRO",
+    # CRP/ESRP : détecté soit dans la liste des droits, soit via le signal partagé
+    # `orientation_crp` (projet pro en texte libre, nom d'ESRP, formation…).
+    _is_crp_projet  = orientation_crp or any(t in droits_str for t in (
+        "CRP", "CPO", "ESPO", "UEROS", "ESRP", "VISA PRO", "PRE ORIENTATION",
         "REEDUCATION PROFESSIONNELLE", "READAPTATION PROFESSIONNELLE",
         "CENTRE DE REEDUCATION", "CENTRE DE READAPTATION",
     ))
-    if any(t in droits_str for t in _orp_tokens):
+    _a_orp_explicite = any(t in droits_str for t in _orp_tokens)
+    # On entre dans l'orientation pro dès qu'un signal existe : ORP explicite, OU
+    # une cible identifiée (CRP/ESRP via texte libre), OU un projet ESAT. Ainsi un
+    # ESRP nommé seulement dans le projet coche bien « orientation pro » + « CRP ».
+    if _a_orp_explicite or _is_crp_projet or _is_esat_projet:
         cases.append("Case à cocher P18 2")  # Case parente ORP
         if _is_esat_projet and not _is_crp_projet:
             # Projet ESAT uniquement → milieu protégé
@@ -575,7 +617,8 @@ def _mapper_droits(
             cases.append("Case à cocher P18 4")
             logger.warning("[CERFA C5] ESAT + CRP tous deux présents — P18 4 (ESAT) retenu, P18 3 ignoré.")
         else:
-            # Marché du travail (milieu ordinaire)
+            # Marché du travail (milieu ordinaire) — uniquement si AUCUNE cible
+            # CRP/ESAT n'est identifiée (orientation pro « ordinaire »).
             cases.append("Case à cocher P18 5")
             if emploi_accompagne or "EMPLOI ACCOMPAGNE" in droits_str:
                 cases.append("Case à cocher P18 6")
@@ -1276,6 +1319,15 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         source_verite=_impact_brut,
     )
 
+    # ── Orientation CRP/ESRP : détection partagée (P18 + P16) ───────────────
+    # Calculée UNE fois depuis tous les signaux, puis réutilisée par le mapping
+    # des droits (P18 3) et par la page 16 (P16 2/5), pour qu'ils ne divergent plus.
+    _orientation_crp = _detecter_orientation_crp(
+        a_cible_esrp,
+        projet_professionnel, nom_esrp, nom_formation,
+        organisme_formation, type_formation_pro,
+    )
+
     # ── Droits → liste de cases P17/P18 ─────────────────────────────────────
     cases_droits = _mapper_droits(
         droits,
@@ -1285,6 +1337,7 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         cmi_stationnement=cmi_stationnement,
         emploi_accompagne=emploi_accompagne,
         creton=creton,
+        orientation_crp=_orientation_crp,
     )
 
     # ════════════════════════════════════════════════════════════════════════
@@ -2319,7 +2372,9 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         # Plus de cas « résumé des besoins » : il copiait la vie quotidienne dans le projet.
 
         # Case à cocher P16 2 = Orientation vers CRP/ESRP
-        _cible_crp = a_cible_esrp or any(t in droits_str for t in ("CRP", "ESRP", "CPO", "UEROS"))
+        # Même signal partagé que P18 3 (détection depuis projet libre / formation /
+        # nom d'ESRP), pour que page 16 et page 18 racontent la même orientation.
+        _cible_crp = _orientation_crp or any(t in droits_str for t in ("CRP", "ESRP", "CPO", "ESPO", "UEROS"))
         if _cible_crp:
             cases.append("Case à cocher P16 2")
             _esrp_label = nom_esrp or organisme_formation or ""
