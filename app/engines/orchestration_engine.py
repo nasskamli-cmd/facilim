@@ -419,7 +419,7 @@ class OrchestrationEngine:
             # Clé = message_id (unique par message WhatsApp).
             import time as _time
             lock_check = self.db.execute(
-                "SELECT contexte_json FROM sessions_whatsapp WHERE telephone = ? OR telephone = ? LIMIT 1",
+                "SELECT contexte_json FROM sessions_whatsapp WHERE telephone = ? OR telephone = ? ORDER BY created_at DESC LIMIT 1",
                 (phone_db, phone_wa),
             ).fetchone()
             if lock_check:
@@ -1284,7 +1284,7 @@ class OrchestrationEngine:
             _dossier_row = None
             try:
                 _session = self.db.execute(
-                    "SELECT dossier_id FROM sessions_whatsapp WHERE telephone = ? OR telephone = ? LIMIT 1",
+                    "SELECT dossier_id FROM sessions_whatsapp WHERE telephone = ? OR telephone = ? ORDER BY created_at DESC LIMIT 1",
                     (phone_wa, self._normaliser_telephone_local(phone_wa))
                 ).fetchone()
                 if _session and _session["dossier_id"]:
@@ -2033,8 +2033,14 @@ Document :
     def _get_or_create_session(self, phone: str, usager_id: str | None) -> dict[str, Any]:
         # Chercher par téléphone (texte clair) — cherche les deux formats
         phone_intl = "33" + phone[1:] if phone.startswith("0") else phone
+        # CRITIQUE (RGPD) : un même numéro peut avoir plusieurs sessions (numéro
+        # réutilisé pour plusieurs personnes de test, ou changement de dossier).
+        # Sans tri, « LIMIT 1 » renvoie une session au hasard → un message pouvait
+        # tomber dans le dossier d'une AUTRE personne (fuite de données). On prend
+        # TOUJOURS la session la plus récemment créée = le dernier dossier ouvert.
         row = self.db.execute(
-            "SELECT * FROM sessions_whatsapp WHERE telephone = ? OR telephone = ? LIMIT 1",
+            "SELECT * FROM sessions_whatsapp WHERE telephone = ? OR telephone = ? "
+            "ORDER BY created_at DESC LIMIT 1",
             (phone, phone_intl),
         ).fetchone()
 

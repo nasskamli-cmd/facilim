@@ -2526,7 +2526,15 @@ def telecharger_cerfa(
         row = db.execute("SELECT synthese_json FROM dossiers WHERE id = ?", (dossier_id,)).fetchone()
         if row:
             d = json.loads(row["synthese_json"] or "{}")
-            nom_usager = d.get("nom_prenom", "dossier").replace(" ", "_")
+            import unicodedata as _ud_hdr
+            _nom_brut = str(d.get("nom_prenom", "") or "dossier")
+            # L'en-tête HTTP Content-Disposition n'accepte que le latin-1. Les
+            # apostrophes courbes (') et autres caractères Unicode font planter
+            # l'envoi. On translittère donc le nom en ASCII pur pour le nom de fichier.
+            _nom_ascii = _ud_hdr.normalize("NFKD", _nom_brut).encode("ascii", "ignore").decode("ascii")
+            nom_usager = "".join(
+                c if (c.isalnum() or c in "-_") else "_" for c in _nom_ascii
+            ).strip("_") or "dossier"
         return RawResponse(
             content=pdf_bytes,
             media_type="application/pdf",
