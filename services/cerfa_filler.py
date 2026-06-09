@@ -186,9 +186,32 @@ def _composer_description_p8(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=700,
-            temperature=0.3,
+            temperature=0.0,
         )
         texte = resp.choices[0].message.content.strip()
+
+        # ── GARDE-FOU ANTI-INVENTION DÉTERMINISTE ────────────────────────────
+        # Une consigne ne suffit pas : le modèle déduit parfois une dépendance
+        # (toilette, habillage…) à partir d'une simple fatigue. On vérifie donc
+        # APRÈS COUP : si le texte introduit un acte ou une aide ABSENT des
+        # informations sources, c'est une invention → on rejette le texte du
+        # modèle et on retombe sur un rendu fidèle des informations déclarées.
+        _src = (contexte_brut or "").lower()
+        _txt = texte.lower()
+        _ACTES_INVENTABLES = [
+            "toilette", "se laver", "se doucher", "douche", "s'habiller",
+            "habiller", "habillage", "fauteuil roulant", "aide pour",
+            "besoin d'aide", "aidant", "aide humaine", "incapable de",
+            "ne peut pas se", "dépendant",
+        ]
+        _inventions = [m for m in _ACTES_INVENTABLES if m in _txt and m not in _src]
+        if _inventions:
+            logger.warning(
+                "[CERFA P8] Invention détectée %s — texte du modèle rejeté, rendu "
+                "fidèle des informations déclarées à la place.", _inventions,
+            )
+            return contexte_brut[:2000]
+
         logger.info(f"[CERFA P8] Description générée par LLM ({len(texte)} chars)")
         return texte[:2000]
 

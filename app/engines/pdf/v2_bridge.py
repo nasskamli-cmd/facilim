@@ -116,13 +116,28 @@ def synthese_to_v2_dossier(
         dossier["protection_juridique"] = str(synthese.get("type_protection", ""))
         dossier["tribunal_protection"]  = str(synthese.get("jugement_tribunal", ""))
 
-    # ── Genre (normalisation : homme/masculin/m → "m", femme/féminin/f → "f") ────
+    # ── Genre (normalisation) ───────────────────────────────────────────────────
+    # On accepte aussi la CIVILITÉ : à la question « votre genre ? », une personne
+    # répond souvent « Mr », « Monsieur », « Mme »… La civilité est une déclaration
+    # de genre explicite, donc on la mappe (ce n'est pas une invention).
     _genre_raw = str(synthese.get("genre", "") or synthese.get("sexe", "")).lower().strip()
+    _genre_raw = _genre_raw.replace(".", " ").strip()  # "m." → "m"
     _genre_map = {
         "homme": "m", "masculin": "m", "male": "m", "m": "m", "h": "m",
+        "mr": "m", "monsieur": "m", "mister": "m",
         "femme": "f", "féminin": "f", "feminin": "f", "female": "f", "f": "f",
+        "mme": "f", "madame": "f", "mlle": "f", "mademoiselle": "f", "mrs": "f",
     }
-    dossier["genre"] = _genre_map.get(_genre_raw, _genre_raw)
+    _g = _genre_map.get(_genre_raw)
+    if _g is None:
+        # Tolérance : civilité ou variante en tout début de chaîne.
+        if _genre_raw.startswith(("mr", "monsieur", "homme", "mascul", "m ")):
+            _g = "m"
+        elif _genre_raw.startswith(("mme", "mlle", "madame", "mademoiselle", "femme", "fémin", "femin")):
+            _g = "f"
+        else:
+            _g = _genre_raw
+    dossier["genre"] = _g
 
     # ── Situation matrimoniale / familiale ──────────────────────────────────────
     _sit_mat = str(synthese.get("situation_familiale", "") or synthese.get("situation_matrimoniale", "")).lower()
