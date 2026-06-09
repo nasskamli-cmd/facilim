@@ -291,6 +291,28 @@ def synthese_to_v2_dossier(
         "statut_occupation":          synthese.get("statut_occupation", ""),
     }
 
+    # ── RACCORD dictionnaire → moteur de remplissage ─────────────────────────────
+    # Ces champs sont collectés via le dictionnaire CERFA mais n'étaient PAS
+    # acheminés par le pont : recueillis, jamais reportés sur le formulaire. On les
+    # transmet ici sous le nom EXACT que le moteur lit, dans les deux sources qu'il
+    # consulte (donnees_structurees et cerfa_reponses), sans jamais écraser une
+    # valeur déjà posée. Un champ vide n'est pas transmis (pas d'invention).
+    _champs_dico = (
+        "preference_contact", "organisme_payeur", "numero_allocataire",
+        "organisme_assurance_maladie", "commune_naissance", "pays_naissance",
+        "nom_naissance", "frais_handicap", "situation_professionnelle",
+        "emploi_accompagne", "type_etablissement_scolaire", "classe_scolaire",
+        "accompagnement_scolaire", "amenagements_scolaires", "aides_en_place",
+        "aides_techniques", "consequences_professionnelles", "attentes_usager",
+        "aidant_identite", "aidant_reduction_travail", "projet_professionnel",
+    )
+    for _cd in _champs_dico:
+        _val = synthese.get(_cd)
+        if _val not in (None, "", [], {}):
+            if _cd not in donnees_structurees:
+                donnees_structurees[_cd] = _val
+            dossier["cerfa_reponses"].setdefault(_cd, _val)
+
     # ── Notes pro pour contexte narratif page 8 ──────────────────────────────────
     notes = str(synthese.get("notes_pro", ""))
     if notes:
