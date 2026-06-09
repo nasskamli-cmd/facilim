@@ -1654,20 +1654,15 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     # Consentement partage informations — géré via le radio OPTION P4 1 dans la section radios
     # (valeur /J'accepte ou /Je n'accepte pas — cochée via _cocher_option_nth plus bas)
 
-    # Case de certification sur l'honneur (page 4) — toujours cochée
-    # "En cochant cette case, je certifie sur l'honneur l'exactitude des informations"
-    try:
-        cases.append("Case à cocher P4 certification")
-    except Exception:
-        pass
+    # Certification sur l'honneur (page 4) : ACTE HUMAIN. Conformément à la
+    # cartographie (« Facilim ne signe ni ne certifie jamais »), Facilim NE coche
+    # PAS cette case — elle reste à la personne / au représentant à l'impression.
+    # (De plus « Case à cocher P4 certification » n'existe pas dans le PDF : l'ancien
+    #  append était un champ fantôme silencieux. Voir l'audit anti-fantôme.)
 
-    # Difficultés remplissage dossier médical — UNIQUEMENT si question posée et réponse "oui"
-    _difficultes_med_rep = (cerfa_rep.get("difficultes_dossier_medical") or "").lower()
-    if any(w in _difficultes_med_rep for w in ["oui", "yes", "difficile", "aide", "aidé"]):
-        try:
-            cases.append("Case à cocher P4 difficultes_med")
-        except Exception:
-            pass
+    # Difficultés à obtenir le certificat médical : la cartographie en fait un
+    # TEXTE facultatif, et le PDF n'expose pas de case « P4 difficultes_med »
+    # (champ fantôme). Rien à cocher ici ; à traiter en texte libre si besoin.
 
     # Date de rédaction du dossier médical — remplir si connue
     date_dossier_medical = (
