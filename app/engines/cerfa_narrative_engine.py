@@ -189,7 +189,6 @@ def _resoudre_pronoms(profil_mdph: str, donnees: dict[str, Any]) -> dict[str, st
 def _prompt_section_b(donnees: dict, pronoms: dict, profil_handicap: str) -> str:
     impact = donnees.get("impact_quotidien", "") or ""
     aides  = donnees.get("aides_en_place", "") or donnees.get("detail_aide_humaine", "") or ""
-    diags  = donnees.get("diagnostics", "") or ""
     frais  = donnees.get("frais_restant_charge", "") or ""
 
     verbatim_b    = formater_verbatim_pour_prompt(donnees, "b")
@@ -212,7 +211,6 @@ Si une information est absente, écris exactement : [INFO MANQUANTE : nom_du_dom
 N'invente rien. N'infère rien. Ne suppose rien.
 {doc_knowledge_b}{verbatim_b}{chronologie}
 INFORMATIONS STRUCTURÉES DÉCLARÉES :
-- Diagnostic(s) : {diags or "[INFO MANQUANTE : diagnostics]"}
 - Impact quotidien déclaré : {impact or "[INFO MANQUANTE : impact_quotidien]"}
 - Aides en place : {aides or "[INFO MANQUANTE : aides_en_place]"}
 - Frais restant à charge : {frais or "non renseigné"}
@@ -239,7 +237,6 @@ def _prompt_section_c(donnees: dict, pronoms: dict) -> str:
     scol   = donnees.get("situation_scolaire", "") or ""
     etab   = donnees.get("etablissement_scolaire", "") or ""
     impact = donnees.get("impact_quotidien", "") or ""
-    diags  = donnees.get("diagnostics", "") or ""
 
     verbatim_c  = formater_verbatim_pour_prompt(donnees, "c")
     chronologie = formater_chronologie_pour_prompt(donnees)
@@ -256,7 +253,6 @@ N'invente rien. N'infère rien.
 INFORMATIONS STRUCTURÉES DÉCLARÉES :
 - Situation scolaire : {scol or "[INFO MANQUANTE : situation_scolaire]"}
 - Établissement : {etab or "[INFO MANQUANTE : etablissement_scolaire]"}
-- Diagnostic(s) : {diags or "[INFO MANQUANTE : diagnostics]"}
 - Impact général déclaré : {impact or "[INFO MANQUANTE : impact_quotidien]"}
 
 PRONOMS : {sujet} (ex : "{ex_diff}...")
@@ -280,7 +276,6 @@ def _prompt_section_d(donnees: dict, pronoms: dict) -> str:
     statut   = donnees.get("statut_emploi", "") or ""
     projet   = donnees.get("projet_professionnel", "") or ""
     impact   = donnees.get("impact_quotidien", "") or ""
-    diags    = donnees.get("diagnostics", "") or ""
     cons_pro = donnees.get("consequences_professionnelles", "") or ""
 
     verbatim_d  = formater_verbatim_pour_prompt(donnees, "d")
@@ -302,7 +297,6 @@ INFORMATIONS STRUCTURÉES DÉCLARÉES :
 - Statut professionnel : {statut or "[INFO MANQUANTE : statut_emploi]"}
 - Projet professionnel : {projet or "non renseigné"}
 - Conséquences professionnelles déclarées : {cons_pro or "non renseigné"}
-- Diagnostic(s) : {diags or "[INFO MANQUANTE : diagnostics]"}
 - Impact général : {impact or "non renseigné"}
 
 PRONOMS : {sujet}
@@ -325,7 +319,6 @@ LONGUEUR CIBLE : 300 à 500 mots si les informations le permettent.
 def _prompt_section_e(donnees: dict, pronoms: dict, profil_mdph: str) -> str:
     droits           = donnees.get("droits_demandes", "") or ""
     projet_vie       = donnees.get("projet_orientation", "") or donnees.get("projet_professionnel", "") or ""
-    diags            = donnees.get("diagnostics", "") or ""
     impact           = donnees.get("impact_quotidien", "") or ""
     attentes         = donnees.get("attentes_mdph", "") or ""
     besoins          = donnees.get("besoins_compensation", "") or ""
@@ -375,7 +368,6 @@ INFORMATIONS STRUCTURÉES DÉCLARÉES :
 - Projet de vie / orientation : {projet_vie or "[INFO MANQUANTE : projet_orientation]"}
 - Attentes vis-à-vis de la MDPH : {attentes or "non renseigné"}
 - Besoins de compensation : {besoins or "non renseigné"}
-- Diagnostic(s) : {diags or "[INFO MANQUANTE : diagnostics]"}
 - Impact général : {impact or "non renseigné"}
 
 PRONOMS : {sujet} (ex : "{ex_attente}...")

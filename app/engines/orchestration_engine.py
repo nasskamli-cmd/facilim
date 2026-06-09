@@ -81,8 +81,9 @@ def _dossier_narratif_exploitable(donnees: dict) -> bool:
     # et terminait la collecte au 1ᵉʳ message WhatsApp (« oui » → fin). `notes_pro`
     # reste disponible pour le moteur narratif — il ne sert simplement plus de
     # déclencheur de fin de collecte.
+    # Médical HORS CERFA : `diagnostics` ne sert plus de déclencheur (il n'est plus
+    # collecté). Le contenu fonctionnel (retentissement) suffit et est plus fidèle.
     a_contenu_fonctionnel = any([
-        donnees.get("diagnostics"),
         donnees.get("impact_quotidien"),
         donnees.get("_verbatim_b"),
         donnees.get("documents_texte"),     # texte extrait de documents uploadés

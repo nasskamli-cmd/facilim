@@ -69,7 +69,9 @@ CHAMPS_CRITIQUES_BLOQUANTS = {
     "adresse_complete",
     "num_secu",
     "departement",
-    "diagnostics",
+    # NB : `diagnostics` n'est PLUS bloquant. Le médical (diagnostic, traitements,
+    # médecin) ne figure pas sur ce CERFA — il est sur le certificat médical 15695,
+    # rempli par le médecin. On ne le demande pas, on ne le bloque pas. Cf. cartographie.
     "droits_demandes",          # type(s) de demande — sans quoi la MDPH ne peut instruire
     "representant_legal_nom",   # enfant / majeur protégé : représentant légal indispensable
 }
@@ -119,9 +121,12 @@ _BASE_COMMUN = [
     {"id": "num_secu",       "label": "Numéro de Sécurité Sociale",     "requis": True},
     {"id": "telephone",      "label": "Téléphone",                      "requis": True},
     {"id": "departement",    "label": "Département MDPH",                "requis": True},
-    {"id": "diagnostics",    "label": "Diagnostic(s) médical(aux)",     "requis": True},
-    {"id": "traitements",    "label": "Traitements en cours",          "requis": True},
-    {"id": "medecin_traitant", "label": "Médecin traitant (nom et ville)", "requis": True},
+    # Médical HORS CERFA (cf. cartographie) : diagnostic, traitements et médecin
+    # traitant ne sont NI demandés NI inscrits sur ce formulaire — ils figurent sur
+    # le certificat médical 15695 rempli par le médecin. Seuls comptent ici
+    # l'existence du certificat et SA date (champ certificat_medical_date, dictionnaire),
+    # avec alerte instructeur si absent ou de plus d'un an. On garde uniquement le
+    # RETENTISSEMENT fonctionnel (impact_quotidien), qui, lui, est bien sur le CERFA.
     {"id": "impact_quotidien", "label": "Impact du handicap sur la vie quotidienne", "requis": True},
     {"id": "historique_mdph", "label": "Historique MDPH",               "requis": True},
 ]
