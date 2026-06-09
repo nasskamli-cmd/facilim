@@ -1055,6 +1055,33 @@ class OrchestrationEngine:
         except Exception as _revue_err:
             logger.warning("[REVUE] non bloquant : %s", _revue_err)
 
+        # ── RACCORD dictionnaire → moteur narratif ───────────────────────────────
+        # Le moteur narratif lit certains champs sous des noms historiques différents
+        # de ceux du dictionnaire. Sans alignement, des informations collectées ne
+        # nourrissent pas les sections B/C/E. On aligne ici, sans écraser une valeur
+        # déjà présente et sans rien inventer (un champ vide n'alimente rien).
+        try:
+            _alias_narratif = {
+                "attentes_mdph":        ("attentes_usager", "projet_de_vie"),
+                "frais_restant_charge": ("frais_handicap",),
+                "besoins_compensation": ("aides_techniques",),
+            }
+            for _cible, _sources in _alias_narratif.items():
+                if not donnees.get(_cible):
+                    for _s in _sources:
+                        if donnees.get(_s):
+                            donnees[_cible] = donnees[_s]
+                            break
+            # Scolarité : composer situation_scolaire si absente (enfant / mixte).
+            if not donnees.get("situation_scolaire"):
+                _sco = [donnees.get(k) for k in (
+                    "type_etablissement_scolaire", "classe_scolaire",
+                    "accompagnement_scolaire", "amenagements_scolaires") if donnees.get(k)]
+                if _sco:
+                    donnees["situation_scolaire"] = " — ".join(str(x) for x in _sco)
+        except Exception as _alias_err:
+            logger.debug("[NARRATIF] alignement des alias non bloquant : %s", _alias_err)
+
         try:
             from app.engines.cerfa_narrative_engine import generer_textes_narratifs
             from app.engines.cerfa_quality_agent import verifier_qualite_cerfa
