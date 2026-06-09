@@ -69,6 +69,17 @@ def _terme_relationnel_enfant(lien: str, genre: str) -> str:
     return ""
 
 
+# Actes d'aide / de dépendance qui ne doivent JAMAIS apparaître dans le récit P8
+# s'ils ne figurent pas dans les faits réellement déclarés. Sert de garde-fou
+# anti-invention déterministe (le modèle déduit parfois une dépendance d'une fatigue).
+_ACTES_INVENTABLES = [
+    "toilette", "se laver", "se doucher", "douche", "s'habiller",
+    "habiller", "habillage", "fauteuil roulant", "aide pour",
+    "besoin d'aide", "aidant", "aide humaine", "incapable de",
+    "ne peut pas se", "dépendant",
+]
+
+
 def _composer_description_p8(
     geva_pro: str,
     juriste: str,
@@ -82,6 +93,8 @@ def _composer_description_p8(
     protege: bool = False,
     lien_enfant: str = "",
     genre: str = "",
+    texte_pret: str = "",
+    source_verite: str = "",
 ) -> str:
     """
     Compose le texte narratif de la page 8 du CERFA 15692 :
@@ -110,6 +123,28 @@ def _composer_description_p8(
             parties.append(probants_str.strip())
 
     contexte_brut = "\n\n".join(parties).strip()
+
+    # ── Réutilisation du narratif déjà rédigé par le moteur V3 ────────────────
+    # Si un texte de section B a déjà été rédigé en amont, on le REPREND TEL QUEL
+    # plutôt que de le réécrire via un second appel LLM : cela supprime la double
+    # génération et la seconde surface d'invention. Garde-fou conservé : si ce texte
+    # introduit un acte d'aide absent des faits réellement déclarés, on retombe sur
+    # un rendu fidèle.
+    if texte_pret and texte_pret.strip():
+        _ref = (str(source_verite) + "\n" + contexte_brut).lower()
+        _bad = [m for m in _ACTES_INVENTABLES if m in texte_pret.lower() and m not in _ref]
+        if _bad:
+            logger.warning(
+                "[CERFA P8] Narratif V3 réutilisé mais invention détectée %s — "
+                "rendu fidèle des faits déclarés à la place.", _bad,
+            )
+            return (str(source_verite) or contexte_brut)[:2000]
+        logger.info(
+            "[CERFA P8] Narratif V3 réutilisé tel quel (%d chars) — pas de regénération.",
+            len(texte_pret),
+        )
+        return texte_pret[:2000]
+
     if not contexte_brut:
         return ""
 
@@ -198,12 +233,6 @@ def _composer_description_p8(
         # modèle et on retombe sur un rendu fidèle des informations déclarées.
         _src = (contexte_brut or "").lower()
         _txt = texte.lower()
-        _ACTES_INVENTABLES = [
-            "toilette", "se laver", "se doucher", "douche", "s'habiller",
-            "habiller", "habillage", "fauteuil roulant", "aide pour",
-            "besoin d'aide", "aidant", "aide humaine", "incapable de",
-            "ne peut pas se", "dépendant",
-        ]
         _inventions = [m for m in _ACTES_INVENTABLES if m in _txt and m not in _src]
         if _inventions:
             logger.warning(
@@ -937,6 +966,19 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         or cerfa_rep.get("difficultes_quotidiennes")
         or ""
     )
+    # Narratif P8 déjà rédigé par le moteur V3 (à réutiliser tel quel, sans réécrire)
+    # et faits bruts déclarés (référence du garde-fou anti-invention).
+    _p8_pret = (
+        ds.get("description_p8_prete")
+        or cerfa_rep.get("description_p8_prete")
+        or ""
+    ).strip()
+    _impact_brut = (
+        ds.get("impact_quotidien_brut")
+        or cerfa_rep.get("impact_quotidien_brut")
+        or ds.get("impact_quotidien")
+        or ""
+    ).strip()
     besoins_aide_str = (
         ds.get("besoins_aide_narrative")
         or ds.get("besoins_aide")
@@ -1230,6 +1272,8 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         protege=(protection_juridique not in ("aucune", "", "none", "non")),
         lien_enfant=(ds.get("representant_legal_lien") or ds.get("lien_interlocuteur") or ds.get("lien_parent") or ""),
         genre=genre,
+        texte_pret=_p8_pret,
+        source_verite=_impact_brut,
     )
 
     # ── Droits → liste de cases P17/P18 ─────────────────────────────────────

@@ -254,6 +254,12 @@ def synthese_to_v2_dossier(
     dossier["cerfa_reponses"] = {
         # Vie quotidienne : texte narratif B en priorité
         "difficultes_quotidiennes":   _texte_b[:2000] if _texte_b else synthese.get("impact_quotidien", ""),
+        # Narratif B DÉJÀ RÉDIGÉ par le moteur V3 : le filler doit le réutiliser tel
+        # quel pour la page 8, sans le réécrire (évite la double génération et une
+        # seconde surface d'invention). Vide s'il n'existe pas encore.
+        "description_p8_prete":       _texte_b[:2000] if _texte_b else "",
+        # Faits bruts réellement déclarés — référence du garde-fou anti-invention.
+        "impact_quotidien_brut":      synthese.get("impact_quotidien", ""),
         # Scolarité : texte narratif C
         "situation_scolaire_narrative": _texte_c[:1500] if _texte_c else synthese.get("situation_scolaire", ""),
         # Emploi : texte narratif D

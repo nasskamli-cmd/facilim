@@ -1473,9 +1473,15 @@ class OrchestrationEngine:
                         import json as _json
                         prompt = f"""Extrais les informations MDPH depuis ce document.
 Retourne UNIQUEMENT un JSON avec les champs trouvés parmi :
-nom_prenom, date_naissance, adresse_complete, departement, num_secu,
+nom_prenom, date_naissance, genre, commune_naissance, pays_naissance,
+adresse_complete, departement, num_secu,
 diagnostics, traitements, medecin_traitant, impact_quotidien, statut_emploi,
 historique_mdph, accident_travail, restrictions_emploi
+
+Règles :
+- genre : déduis-le de la civilité écrite dans le document. « Mr », « M. », « Monsieur »
+  donnent "homme" ; « Mme », « Madame », « Mlle » donnent "femme". Sinon, ne renvoie rien.
+- N'invente aucun champ : si une information est absente, ne la renvoie pas.
 
 Document :
 {texte[:3000]}"""

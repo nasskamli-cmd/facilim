@@ -1843,6 +1843,9 @@ async def upload_document_dossier(
 Retourne UNIQUEMENT un JSON avec les champs trouvés parmi cette liste :
 - nom_prenom : NOM Prénom (tel qu'écrit dans le document)
 - date_naissance : JJ/MM/AAAA
+- genre : "homme" ou "femme", déduit de la civilité écrite dans le document (« Mr », « M. », « Monsieur » → "homme" ; « Mme », « Madame », « Mlle » → "femme"). N'invente rien : si aucune civilité, n'inclus pas ce champ.
+- commune_naissance : commune de naissance si mentionnée
+- pays_naissance : pays de naissance si mentionné
 - adresse_complete : adresse postale complète
 - departement : code département (2 ou 3 chiffres)
 - num_secu : numéro de sécurité sociale 15 chiffres
