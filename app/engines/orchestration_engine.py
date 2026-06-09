@@ -541,6 +541,13 @@ class OrchestrationEngine:
             historique = json.loads(dossier.get("conversation_json", "[]") or "[]")
             donnees    = json.loads(dossier.get("synthese_json", "{}") or "{}")
 
+            # Neutraliser un gabarit de date stocké par erreur (ex. « JJ/MM/AAAA ») :
+            # sans cela, la date réelle donnée par l'usager n'écrase jamais le gabarit,
+            # le champ reste « rempli » d'un faux et la question tourne en boucle.
+            _dn = str(donnees.get("date_naissance") or "")
+            if _dn and not any(c.isdigit() for c in _dn):
+                donnees["date_naissance"] = ""
+
             # ── Sélection du service (IMMUABLE une fois posé) ─────────────────
             # Le service_type est lu depuis sessions_whatsapp.persona_actif.
             # "intake" / "collecte" / vide → identification d'abord.
@@ -630,6 +637,19 @@ class OrchestrationEngine:
             # ── [TRACE_COLLECTE] aval fusion (avant sauvegarde) ──
             logger.info("[TRACE_COLLECTE] 7-SYNTHESE_APRES %s (completude_avant=%d)",
                         _trace_resume(donnees), _trace_compl_avant)
+
+            # ── Champs OUBLIÉS : demandés au tour précédent, toujours vides et non
+            #    refusés → la personne a probablement oublié d'y répondre. On le signale
+            #    pour une relance DOUCE (« sauf erreur de ma part… »), sans insister ni
+            #    confondre avec un refus.
+            try:
+                from app.services.field_status import est_refuse as _est_refuse
+                donnees["_champs_oublies"] = [
+                    fid for fid in (_manquants_avant_ids or [])
+                    if not donnees.get(fid) and not _est_refuse(donnees, fid)
+                ]
+            except Exception:
+                donnees["_champs_oublies"] = []
 
             # ── Verbatim significatif + chronologie + évaluation relance ─────────
             _relance_a_injecter: str = ""   # instruction de relance pour le contexte, si nécessaire
@@ -977,41 +997,62 @@ class OrchestrationEngine:
             #   uploadé / des notes de création (donc avec beaucoup de champs requis
             #   manquants) clôturait la collecte dès le 1ᵉʳ message (« oui »), sautant
             #   les questions et la Section E (droits_demandes).
+            # Garde anti-finalisation prématurée : le raccourci « presque complet »
+            # ne doit PAS clôturer un dossier seulement parce qu'il a été bien pré-rempli
+            # par le professionnel. On exige, pour ce raccourci, que les DEMANDES de droits
+            # soient présentes — c'est l'objet même du dossier. Sans demande, jamais « prêt ».
+            _a_des_demandes = bool(donnees.get("droits_demandes") or donnees.get("droits"))
             _declencher_narratif = (
                 (
                     agent.is_complete(donnees)
-                    or (_dossier_narratif_exploitable(donnees) and _collecte_presque_complete(agent, donnees))
+                    or (
+                        _dossier_narratif_exploitable(donnees)
+                        and _collecte_presque_complete(agent, donnees)
+                        and _a_des_demandes
+                    )
                 )
                 and service_type != "validation_en_attente"
             )
             if _declencher_narratif:
-                self._generer_narratif_et_qualite(dossier_id, donnees, service_type)
+                # RÉSILIENCE : toute cette phase (narratif, qualité, validation finale)
+                # est isolée. Une exception ici ne doit JAMAIS casser le tour ni faire
+                # perdre l'état déjà sauvegardé plus haut. En cas d'échec, on poursuit
+                # simplement la collecte avec une réponse normale, sans planter.
+                try:
+                    self._generer_narratif_et_qualite(dossier_id, donnees, service_type)
 
-                # Sprint P0.6 — Priorité 1 : vérifier que le narratif a réellement été généré.
-                # La validation finale NE DOIT PAS être envoyée si le moteur narratif a échoué.
-                # Un narratif absent = dossier non exploitable = pas de validation = collecte continue.
-                _narratif_ok = any([
-                    donnees.get("texte_b_vie_quotidienne"),
-                    donnees.get("texte_c_scolarite"),
-                    donnees.get("texte_d_situation_pro"),
-                    donnees.get("texte_e_projet_vie"),
-                ])
-                if _narratif_ok:
-                    self._demander_validation_usager(
-                        dossier_id, usager, donnees, phone_wa, session["id"]
-                    )
-                    _sauvegarder_nav(self.db, dossier_id, nav, historique, donnees)
-                    return {"success": True, "action": "validation_demandee", "dossier_id": dossier_id}
-                else:
-                    # Sprint P0.6 — Anti-boucle : marquer l'échec pour ne plus retenter
-                    # indéfiniment et ne pas renvoyer une fausse validation.
-                    donnees["_narratif_echec"] = True
-                    _sauvegarder_nav(self.db, dossier_id, nav, historique, donnees)
+                    # Sprint P0.6 — Priorité 1 : vérifier que le narratif a réellement été généré.
+                    # La validation finale NE DOIT PAS être envoyée si le moteur narratif a échoué.
+                    _narratif_ok = any([
+                        donnees.get("texte_b_vie_quotidienne"),
+                        donnees.get("texte_c_scolarite"),
+                        donnees.get("texte_d_situation_pro"),
+                        donnees.get("texte_e_projet_vie"),
+                    ])
+                    if _narratif_ok:
+                        self._demander_validation_usager(
+                            dossier_id, usager, donnees, phone_wa, session["id"]
+                        )
+                        _sauvegarder_nav(self.db, dossier_id, nav, historique, donnees)
+                        return {"success": True, "action": "validation_demandee", "dossier_id": dossier_id}
+                    else:
+                        # Anti-boucle : marquer l'échec pour ne plus retenter et ne pas
+                        # renvoyer une fausse validation.
+                        donnees["_narratif_echec"] = True
+                        _sauvegarder_nav(self.db, dossier_id, nav, historique, donnees)
+                        logger.error(
+                            "[P0.6] Narratif non généré pour dossier=%s — validation bloquée, collecte continuée",
+                            dossier_id[:8],
+                        )
+                        # Ne pas return → continue vers send_text(reponse) ci-dessous
+                except Exception as _fin_err:
                     logger.error(
-                        "[P0.6] Narratif non généré pour dossier=%s — validation bloquée, collecte continuée",
-                        dossier_id[:8],
+                        "[FINALISATION] Échec non bloquant pour dossier=%s — le tour se poursuit "
+                        "normalement, l'état est préservé : %s",
+                        dossier_id[:8], _fin_err, exc_info=True,
                     )
-                    # Ne pas return → continue vers send_text(reponse) ci-dessous
+                    # L'état a déjà été sauvegardé avant ce bloc ; on continue vers la
+                    # réponse normale ci-dessous sans interrompre la conversation.
 
             # ── Point 2 : traitement réponse validation usager ───────────────────
             if service_type == "validation_en_attente":

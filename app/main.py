@@ -55,6 +55,45 @@ _2FA_LOCK:      threading.Lock  = threading.Lock()
 _2FA_TTL_SEC:   int             = 600   # 10 minutes
 
 
+def _send_email_brevo(
+    to_email: str,
+    subject: str,
+    html: str,
+    reply_to_email: str | None = None,
+    reply_to_name: str | None = None,
+) -> bool:
+    """
+    Envoi d'email générique via l'API HTTP Brevo (réutilisable).
+    Retourne True si Brevo a accepté l'envoi. Non bloquant côté appelant.
+    """
+    if not settings.brevo_api_key:
+        logger.warning("[EMAIL] BREVO_API_KEY absente — envoi ignoré (to=%s)", (to_email or "")[:4] + "***")
+        return False
+    try:
+        import requests as _req
+        _payload = {
+            "sender":      {"name": settings.brevo_sender_name, "email": settings.brevo_sender_email},
+            "to":          [{"email": to_email}],
+            "subject":     subject,
+            "htmlContent": html,
+        }
+        if reply_to_email:
+            _payload["replyTo"] = {"email": reply_to_email, "name": reply_to_name or reply_to_email}
+        resp = _req.post(
+            "https://api.brevo.com/v3/smtp/email",
+            headers={"accept": "application/json", "content-type": "application/json",
+                     "api-key": settings.brevo_api_key},
+            json=_payload, timeout=12,
+        )
+        if resp.status_code in (200, 201):
+            return True
+        logger.warning("[EMAIL] Brevo status=%d body=%s", resp.status_code, resp.text[:200])
+        return False
+    except Exception as e:
+        logger.warning("[EMAIL] Envoi échoué : %s", e)
+        return False
+
+
 def _generate_2fa_code() -> str:
     import random
     return f"{random.randint(0, 999999):06d}"
@@ -218,6 +257,39 @@ except Exception as _col_err:
 # ── Client LLM ───────────────────────────────────────────────────────────────
 from openai import OpenAI
 _llm_client = OpenAI(api_key=settings.openai_api_key)
+
+# ── Observabilité Sentry — suivi des erreurs en production ───────────────────
+# Activé uniquement si un DSN est fourni. Garde-fou RGPD : on retire les corps de
+# requête, les cookies et les en-têtes sensibles pour ne JAMAIS transmettre de
+# donnée de santé ou personnelle brute à un tiers.
+if settings.sentry_dsn:
+    try:
+        import sentry_sdk
+
+        def _sentry_scrub(event, hint):
+            req = event.get("request") or {}
+            req.pop("data", None)
+            req.pop("cookies", None)
+            req.pop("query_string", None)
+            if isinstance(req.get("headers"), dict):
+                req["headers"] = {
+                    k: v for k, v in req["headers"].items()
+                    if k.lower() not in ("authorization", "cookie", "api-key")
+                }
+            if req:
+                event["request"] = req
+            return event
+
+        sentry_sdk.init(
+            dsn=settings.sentry_dsn,
+            environment=settings.sentry_environment,
+            send_default_pii=False,      # jamais d'IP, de cookies ou de corps par défaut
+            traces_sample_rate=0.0,      # pas de tracing perf, uniquement les erreurs
+            before_send=_sentry_scrub,
+        )
+        logger.info("[SENTRY] Suivi des erreurs activé (env=%s)", settings.sentry_environment)
+    except Exception as _sentry_err:
+        logger.warning("[SENTRY] Initialisation ignorée (non bloquant) : %s", _sentry_err)
 
 # ── Services ─────────────────────────────────────────────────────────────────
 _wa_service = WhatsAppService(
@@ -415,6 +487,171 @@ def _process_whatsapp_background(
         conn.rollback()
     finally:
         conn.close()
+
+
+# ── Formulaire de contact (demandes de renseignement des structures) ──────────
+class ContactRequest(BaseModel):
+    prenom:    str
+    nom:       str
+    email:     str
+    structure: str | None = ""
+    type:      str | None = ""
+    message:   str | None = ""
+
+
+@app.post("/api/v1/contact")
+def contact_form(body: ContactRequest):
+    """
+    Reçoit une demande de renseignement depuis la page d'accueil et l'achemine
+    par email vers la boîte de contact Facilim. La réponse part directement vers
+    le prospect (replyTo). Aucune donnée de santé ici : prospection uniquement.
+    """
+    import html as _html
+    _esc = lambda s: _html.escape(str(s or "").strip())
+    prenom, nom, email = _esc(body.prenom), _esc(body.nom), _esc(body.email)
+    if not (prenom and nom and email and "@" in email):
+        raise HTTPException(status_code=400, detail="Prénom, nom et email valides requis.")
+
+    corps = (
+        f"<p><strong>Nouvelle demande via facilim.fr</strong></p>"
+        f"<p><b>Nom :</b> {prenom} {nom}<br/>"
+        f"<b>Email :</b> {email}<br/>"
+        f"<b>Structure :</b> {_esc(body.structure) or '—'}<br/>"
+        f"<b>Type :</b> {_esc(body.type) or '—'}</p>"
+        f"<p><b>Message :</b><br/>{_esc(body.message).replace(chr(10), '<br/>') or '—'}</p>"
+    )
+    envoye = _send_email_brevo(
+        to_email=settings.contact_email,
+        subject=f"[Facilim] Demande de {prenom} {nom}" + (f" — {_esc(body.structure)}" if body.structure else ""),
+        html=corps,
+        reply_to_email=email,
+        reply_to_name=f"{prenom} {nom}",
+    )
+    # Accusé de réception au prospect (non bloquant).
+    if envoye:
+        _send_email_brevo(
+            to_email=email,
+            subject="Votre demande a bien été reçue — Facilim",
+            html=(f"<p>Bonjour {prenom},</p><p>Merci pour votre message. "
+                  f"Nous revenons vers vous très vite.</p><p>L'équipe Facilim</p>"),
+        )
+    logger.info("[CONTACT] demande reçue de %s (envoi=%s)", email[:4] + "***", envoye)
+    return {"success": True, "envoye": envoye}
+
+
+# ── Documents reçus par email → rattachement automatique au dossier ───────────
+def _ingerer_document_dans_dossier(db, dossier_id: str, content: bytes,
+                                   filename: str, content_type: str) -> bool:
+    """
+    Ingestion d'un document reçu (email, upload) dans un dossier : extraction du
+    texte, extraction LLM des champs utiles (sans rien écraser), enregistrement
+    comme pièce justificative. Réutilise la même logique que l'upload tableau de bord.
+    """
+    texte = _extraire_texte_fichier(content, filename, content_type)
+    extraits: dict = {}
+    if texte and len(texte) > 50 and not texte.startswith("["):
+        try:
+            prompt = f"""Extrais les informations MDPH de ce document. Retourne UNIQUEMENT un JSON
+avec les champs trouvés parmi : nom_prenom, date_naissance, genre, commune_naissance,
+pays_naissance, adresse_complete, departement, num_secu, diagnostics, traitements,
+medecin_traitant, impact_quotidien, statut_emploi, historique_mdph, restrictions_emploi.
+Règles : genre déduit de la civilité (Mr/M./Monsieur → "homme" ; Mme/Madame → "femme").
+N'invente rien ; si un champ est absent, ne l'inclus pas.
+
+Document :
+{texte[:4000]}"""
+            resp = _llm_client.chat.completions.create(
+                model=settings.openai_model_fast,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=400, temperature=0.0,
+                response_format={"type": "json_object"},
+            )
+            extraits = json.loads(resp.choices[0].message.content) or {}
+        except Exception as e:
+            logger.warning("[EMAIL_IN] extraction LLM ignorée : %s", e)
+
+    row = db.execute("SELECT synthese_json FROM dossiers WHERE id = ?", (dossier_id,)).fetchone()
+    synthese = json.loads((row["synthese_json"] if row else "{}") or "{}")
+    for k, v in extraits.items():
+        # Ne pas écraser une valeur existante ; ignorer les gabarits de date.
+        if not v or synthese.get(k):
+            continue
+        if k == "date_naissance" and not any(c.isdigit() for c in str(v)):
+            continue
+        synthese[k] = v
+    if texte and not texte.startswith("["):
+        _notes = synthese.get("documents_texte", "")
+        synthese["documents_texte"] = f"{_notes}\n\n--- {filename} (reçu par email) ---\n{texte[:2000]}"
+
+    now = datetime.now(timezone.utc).isoformat()
+    db.execute("UPDATE dossiers SET synthese_json = ?, updated_at = ? WHERE id = ?",
+               (json.dumps(synthese, ensure_ascii=False), now, dossier_id))
+    db.execute(
+        """INSERT INTO pieces_justificatives
+           (id, dossier_id, type_piece, mime_type, uploaded_par, ocr_effectue,
+            flag_validation_humaine, created_at, updated_at)
+           VALUES (?, ?, 'DOCUMENT_EMAIL', ?, 'email', 0, 0, ?, ?)""",
+        (str(uuid.uuid4()), dossier_id, content_type or "", now, now),
+    )
+    return True
+
+
+@app.post("/api/v1/webhook/email-inbound")
+async def email_inbound_webhook(request: Request, db=Depends(_get_db)):
+    """
+    Webhook d'email entrant (ex. Brevo Inbound Parsing). Quand un usager envoie des
+    documents par email à l'adresse Facilim, ses pièces jointes sont rattachées
+    automatiquement à SON dossier — le plus récent associé à son adresse.
+
+    Sécurité : jeton partagé requis (?token= ou en-tête X-Inbound-Token = INBOUND_EMAIL_SECRET).
+    """
+    token = request.query_params.get("token") or request.headers.get("x-inbound-token", "")
+    if not settings.inbound_email_secret or token != settings.inbound_email_secret:
+        raise HTTPException(status_code=403, detail="Webhook non autorisé.")
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Payload JSON invalide.")
+
+    items = payload.get("items") if isinstance(payload, dict) else None
+    items = items if isinstance(items, list) else [payload]
+    import base64 as _b64
+    traites = 0
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        sender = ((item.get("From") or {}).get("Address") if isinstance(item.get("From"), dict)
+                  else item.get("from") or item.get("sender") or "")
+        sender = str(sender or "").strip().lower()
+        attachments = item.get("Attachments") or item.get("attachments") or []
+        if not sender or not attachments:
+            continue
+        # Rattachement par email, dossier le plus récent (anti-fuite : jamais le 1er au hasard).
+        row = db.execute(
+            "SELECT id FROM dossiers WHERE lower(synthese_json) LIKE ? ORDER BY updated_at DESC LIMIT 1",
+            (f'%{sender}%',),
+        ).fetchone()
+        if not row:
+            logger.info("[EMAIL_IN] aucun dossier pour l'expéditeur — pièces ignorées")
+            continue
+        dossier_id = row["id"]
+        for att in (attachments if isinstance(attachments, list) else []):
+            try:
+                name  = att.get("Name") or att.get("name") or "document"
+                ctype = att.get("ContentType") or att.get("contentType") or ""
+                c_b64 = att.get("Content") or att.get("content") or ""
+                if not c_b64:
+                    continue
+                _ingerer_document_dans_dossier(db, dossier_id, _b64.b64decode(c_b64), name, ctype)
+                traites += 1
+            except Exception as _att_err:
+                logger.warning("[EMAIL_IN] pièce ignorée : %s", _att_err)
+        try:
+            db.commit()
+        except Exception:
+            pass
+    logger.info("[EMAIL_IN] %d pièce(s) rattachée(s)", traites)
+    return {"success": True, "pieces_traitees": traites}
 
 
 # ── Authentification Dashboard ────────────────────────────────────────────────
@@ -1562,7 +1799,10 @@ def initiate_dossier(
         "langue":           body.langue,
     }
     if body.nom_prenom:           donnees_initiales["nom_prenom"]          = body.nom_prenom
-    if body.date_naissance:       donnees_initiales["date_naissance"]      = body.date_naissance
+    # Ne pas stocker un gabarit de date (« JJ/MM/AAAA ») : seule une vraie date,
+    # contenant des chiffres, est conservée — sinon le champ reste à collecter.
+    if body.date_naissance and any(c.isdigit() for c in str(body.date_naissance)):
+        donnees_initiales["date_naissance"] = body.date_naissance
     if body.notes_pro:            donnees_initiales["notes_pro"]           = body.notes_pro
     if body.numero_securite_sociale:
         donnees_initiales["numero_securite_sociale"] = body.numero_securite_sociale.replace(" ", "")

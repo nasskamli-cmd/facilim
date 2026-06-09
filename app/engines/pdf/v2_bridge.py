@@ -354,7 +354,11 @@ def _normaliser_date(date_str: str) -> str:
       02/04/1985    → 02/04/1985 (inchangé)
     """
     if not date_str:
-        return date_str
+        return ""
+    # Gabarit non daté (ex. « JJ/MM/AAAA », « à compléter ») : aucune date réelle,
+    # ne rien transmettre plutôt que d'inscrire un faux sur le CERFA.
+    if not any(c.isdigit() for c in str(date_str)):
+        return ""
     import re as _re
     # Supprimer séparateurs existants
     cleaned = _re.sub(r"[-./\s]", "", date_str.strip())

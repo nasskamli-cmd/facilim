@@ -96,6 +96,32 @@ def controles_coherence(donnees: dict[str, Any], profil: str) -> list[dict[str, 
                       "pas exprimés (section E)."),
         })
 
+    # 3 bis. Certificat médical : pièce obligatoire et de moins d'un an pour la MDPH.
+    _cert = str(donnees.get("certificat_medical_date", "") or "").strip().lower()
+    if not _cert:
+        alertes.append({
+            "niveau": "ORANGE",
+            "label": ("Aucun certificat médical n'est signalé. La MDPH exige un certificat "
+                      "médical (cerfa 15695) de moins d'un an pour instruire la demande."),
+        })
+    else:
+        import re as _re
+        from datetime import datetime as _dt
+        _m = _re.search(r"(19|20)\d{2}", _cert)
+        _sans_cert = any(w in _cert for w in ("non", "pas de", "aucun", "sans"))
+        if _sans_cert:
+            alertes.append({
+                "niveau": "ORANGE",
+                "label": ("La personne indique ne pas avoir de certificat médical. Il faudra "
+                          "en obtenir un (cerfa 15695, moins d'un an) avant la transmission."),
+            })
+        elif _m and (_dt.now().year - int(_m.group(0))) > 1:
+            alertes.append({
+                "niveau": "ORANGE",
+                "label": (f"Le certificat médical daterait de {_m.group(0)} : possiblement de plus "
+                          f"d'un an. La MDPH exige un certificat de moins d'un an, à vérifier."),
+            })
+
     # 4. Donnée collectée mais à risque de ne pas être reportée sur le CERFA.
     #    Garantit qu'aucune information recueillie ne se perd silencieusement entre
     #    la collecte et le formulaire (jonction dictionnaire → remplissage).

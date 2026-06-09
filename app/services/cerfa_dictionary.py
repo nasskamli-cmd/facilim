@@ -114,6 +114,17 @@ SECTION_A: list[dict[str, Any]] = [
         "question": "Dans quel pays êtes-vous né(e) ?",
         "cible_cerfa": "Champ texte pays de naissance",
     },
+    {
+        "id": "certificat_medical_date",
+        "section": "A",
+        "profils": ("tous",),
+        "requis": True,
+        "extractible": True,
+        "label": "Certificat médical MDPH (existence et date)",
+        "question": "Avez-vous un certificat médical pour la MDPH ? Si oui, de quand date-t-il ? "
+                    "(la MDPH demande un certificat de moins d'un an)",
+        "cible_cerfa": "Pièce jointe — certificat médical (cerfa 15695), date de référence",
+    },
 ]
 
 

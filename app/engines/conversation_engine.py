@@ -415,6 +415,9 @@ def formater_recap_donnees(donnees: dict[str, Any] | None, max_len: int = 90) ->
         if v in (None, "", 0, []):
             continue
         sv = str(v).strip().replace("\n", " ")
+        # Ne jamais présenter un gabarit comme une vraie valeur (ex. date « JJ/MM/AAAA »).
+        if cid == "date_naissance" and not any(c.isdigit() for c in sv):
+            continue
         if cid == "num_secu" and len(sv) >= 6:
             sv = sv[:1] + "•" * (len(sv) - 4) + sv[-3:]  # masquer partiellement le NIR
         if len(sv) > max_len:

@@ -226,25 +226,69 @@ class ConversationAgent(ABC):
             except Exception:
                 pass
 
+        # ── Groupement par nature de question ─────────────────────────────────
+        # Questions OUVERTES (réflexives) : posées UNE par une, pour laisser la
+        # personne s'exprimer. Questions FACTUELLES courtes (identité, administratif,
+        # dates, choix) : regroupées en un seul message pour réduire les allers-retours
+        # et éviter les redondances.
+        _CHAMPS_OUVERTS = {
+            "impact_quotidien", "aides_en_place", "aides_techniques", "frais_handicap",
+            "consequences_professionnelles", "projet_professionnel", "attentes_usager",
+            "projet_de_vie", "aidant_identite", "accompagnement_scolaire",
+            "amenagements_scolaires", "expression_directe", "situation_professionnelle",
+        }
+
         # Reconvertir en labels pour l'affichage
         _id_to_label = {item["id"]: item["label"] for item in self.CHECKLIST}
         manquants = [_id_to_label[mid] for mid in manquants_ids if mid in _id_to_label]
 
-        if manquants:
-            # Maximum 2 questions par message pour ne pas surcharger.
-            # Le LLM les formule de façon naturelle et conversationnelle.
-            prochains = manquants[:2]
+        if manquants_ids:
+            _premier = manquants_ids[0]
+            if _premier in _CHAMPS_OUVERTS:
+                # Question ouverte → seule, pour ne pas brider l'expression.
+                prochains_ids = [_premier]
+            else:
+                # Grouper les questions factuelles courtes consécutives (jusqu'à 4).
+                prochains_ids = []
+                for mid in manquants_ids:
+                    if mid in _CHAMPS_OUVERTS:
+                        break
+                    prochains_ids.append(mid)
+                    if len(prochains_ids) >= 4:
+                        break
+            prochains = [_id_to_label[mid] for mid in prochains_ids if mid in _id_to_label]
+            _groupe = len(prochains) > 1
+            # Relance douce : une de ces questions avait déjà été posée et est restée
+            # sans réponse (oubli, pas refus) → on la redemande avec délicatesse.
+            _oublies_ids = set(donnees.get("_champs_oublies") or [])
+            _relance_douce = any(mid in _oublies_ids for mid in prochains_ids)
+
             ctx += f"\nInformations à collecter MAINTENANT ({len(prochains)}/{len(manquants)} restantes) :\n"
             for m in prochains:
                 ctx += f"  → {m}\n"
-            ctx += (
-                "\nRègle absolue :\n"
-                "• Pose ces 1 ou 2 questions EN UN SEUL message, formulé naturellement\n"
-                "• JAMAIS de liste numérotée (1. 2. 3.)\n"
-                "• ATTENDS la réponse avant d'envoyer un autre message\n"
-                "• Si la réponse est partielle, ne redemande QUE ce qui manque\n"
-                "• Ton : chaleureux, simple, professionnel"
-            )
+            if _groupe:
+                ctx += (
+                    "\nRègle absolue :\n"
+                    "• Pose ces questions courtes ENSEMBLE, en UN SEUL message fluide et naturel "
+                    "(pas une par une) — par exemple en une phrase qui les enchaîne.\n"
+                    "• JAMAIS de liste numérotée (1. 2. 3.)\n"
+                    "• ATTENDS la réponse, puis ne redemande QUE ce qui manque encore\n"
+                    "• Ton : chaleureux, simple, FALC (facile à lire et à comprendre)"
+                )
+            else:
+                ctx += (
+                    "\nRègle absolue :\n"
+                    "• Pose CETTE seule question, ouverte, et laisse la personne s'exprimer librement\n"
+                    "• JAMAIS de liste numérotée\n"
+                    "• ATTENDS la réponse avant toute autre question\n"
+                    "• Ton : chaleureux, simple, FALC (facile à lire et à comprendre)"
+                )
+            if _relance_douce:
+                ctx += (
+                    "\n• RELANCE DOUCE : une de ces informations avait déjà été demandée et "
+                    "n'a pas encore été reçue. Redemande-la avec délicatesse, sans reproche, "
+                    "en commençant par « Sauf erreur de ma part, je n'ai pas encore noté… »."
+                )
         else:
             ctx += "\nToutes les informations sont collectées. Félicite chaleureusement et annonce la suite."
 
