@@ -37,10 +37,13 @@ def corriger_depuis_donnees_reelles(donnees: dict[str, Any]) -> list[dict[str, s
     if not donnees.get("departement"):
         m = re.search(r"\b(\d{5})\b", str(donnees.get("adresse_complete", "") or ""))
         if m:
-            dep = m.group(1)[:2]
-            donnees["departement"] = dep
-            corrections.append({"champ": "departement", "valeur": dep,
-                                "source": "code postal de l'adresse déclarée"})
+            # Helper partagé : gère les DOM (97400 → 974, et non « 97 »).
+            from app.services.collecte_schema import code_postal_vers_departement
+            dep = code_postal_vers_departement(m.group(1))
+            if dep:
+                donnees["departement"] = dep
+                corrections.append({"champ": "departement", "valeur": dep,
+                                    "source": "code postal de l'adresse déclarée"})
 
     # 2. Genre déduit d'une civilité déjà présente (nom, civilité, document, notes).
     if not donnees.get("genre"):
@@ -58,11 +61,8 @@ def corriger_depuis_donnees_reelles(donnees: dict[str, Any]) -> list[dict[str, s
                                 "source": "civilité déjà présente dans le dossier"})
 
     # 3. Miroir NIR : aligner les alias du numéro de sécurité sociale s'il existe.
-    _nir = donnees.get("num_secu") or donnees.get("numero_securite_sociale") or donnees.get("nss")
-    if _nir:
-        for alias in ("num_secu", "numero_securite_sociale", "nss"):
-            if not donnees.get(alias):
-                donnees[alias] = _nir
+    from app.services.collecte_schema import synchroniser_nir
+    synchroniser_nir(donnees)
 
     if corrections:
         logger.info("[BOUCLE] %d correction(s) depuis données réelles : %s",

@@ -359,12 +359,13 @@ def evaluer_richesse_reponse(texte: str) -> tuple[bool, str]:
     Utilisé par l'orchestrateur pour décider si une relance est nécessaire.
     """
     mots = texte.strip().split()
-    # Une réponse qui situe dans le temps (« en 2025 », « depuis plusieurs années »)
-    # répond pleinement à une question « depuis quand » : ne jamais la relancer,
-    # même si elle est courte. Sans ce garde-fou, la relance « depuis quand »
-    # tournait en boucle (test 11).
-    if repond_a_question_temporelle(texte):
-        return False, "réponse temporelle (date ou durée fournie)"
+    # NB : on ne court-circuite PLUS l'évaluation dès qu'un repère temporel est
+    # présent. Une réponse comme « ça fait 2 ans que c'est pareil » à une question
+    # sur les conséquences au quotidien contient une durée mais reste pauvre : la
+    # juger « riche » supprimait à tort la relance de fond. La boucle « depuis quand »
+    # que ce garde-fou visait est déjà bornée en amont (une seule relance par section,
+    # cf. _relances_faites dans l'orchestrateur), donc le risque de boucle ne revient
+    # pas. La première réponse pauvre déclenche UNE relance de précision, puis stop.
     if len(mots) < LONGUEUR_MIN_RICHE:
         return True, f"réponse trop courte ({len(mots)} mots)"
 

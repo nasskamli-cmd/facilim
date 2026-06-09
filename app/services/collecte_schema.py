@@ -201,7 +201,64 @@ def normaliser_collecte(donnees: dict[str, Any]) -> dict[str, Any]:
     """
     d = dict(donnees or {})
 
+    # Droits structurés → libellés texte (compat moteurs / CERFA qui lisent droits_demandes)
     droits = d.get("droits")
     if isinstance(droits, dict):
-        pass
+        labels = [_DROIT_LABEL.get(k, k.upper()) for k in DROITS_KEYS + ["aeeh"]
+                  if droits.get(k) is True]
+        if labels:
+            existant = str(d.get("droits_demandes", "") or "").strip()
+            # Le structuré fait autorité : fusionne sans doublonner
+            fusion = existant
+            for lab in labels:
+                if lab.upper() not in fusion.upper():
+                    fusion = (fusion + ", " + lab).strip(", ") if fusion else lab
+            d["droits_demandes"] = fusion
+
     return d
+
+
+def droits_objet_vers_liste(droits: Any) -> list[str]:
+    """Helper d'affichage : objet droits.* → liste de libellés actifs."""
+    if not isinstance(droits, dict):
+        return []
+    return [_DROIT_LABEL.get(k, k.upper()) for k in DROITS_KEYS + ["aeeh"] if droits.get(k) is True]
+
+
+# Alias historiques du numéro de sécurité sociale (NIR). L'interface, l'extraction
+# et la collecte WhatsApp utilisent des noms différents : on les garde tous alignés.
+_NIR_ALIASES = ("num_secu", "numero_securite_sociale", "nss")
+
+
+def synchroniser_nir(donnees: dict[str, Any]) -> None:
+    """
+    Aligne EN PLACE les alias du NIR dans `donnees`. Source = première valeur non
+    vide parmi `_NIR_ALIASES` ; sa valeur (espaces retirés) est recopiée sur tous
+    les alias. Idempotent. Centralise une logique jusqu'ici copiée-collée en
+    4 endroits (et déjà divergente : un seul site gérait l'alias `nss`), évitant
+    qu'un NIR saisi sur un canal soit redemandé sur un autre.
+    """
+    if not isinstance(donnees, dict):
+        return
+    nir = ""
+    for a in _NIR_ALIASES:
+        v = str(donnees.get(a) or "").strip()
+        if v:
+            nir = v.replace(" ", "")
+            break
+    if not nir:
+        return
+    for a in _NIR_ALIASES:
+        donnees[a] = nir
+
+
+def code_postal_vers_departement(cp: str | None) -> str:
+    """
+    Code postal → code département. Gère les DOM/COM : 971-976 et 98x utilisent
+    les 3 premiers chiffres (974 = La Réunion), les autres les 2 premiers.
+    Retourne "" si le code postal est inexploitable.
+    """
+    cp = str(cp or "").strip()
+    if len(cp) < 2 or not cp[:2].isdigit():
+        return ""
+    return cp[:3] if cp[:2] in ("97", "98") else cp[:2]

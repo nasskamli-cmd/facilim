@@ -96,6 +96,20 @@ _REFUS_PATTERNS = (
 )
 
 
+# Locutions qui CONTIENNENT un fragment de refus sans en être un (idiomes courants).
+# Leur présence neutralise la détection : sans ce garde-fou, des phrases comme
+# « je donne pas mal de détails… » ou « je ne réponds pas toujours vite mais voici
+# mon adresse… » étaient prises pour un refus et marquaient DÉFINITIVEMENT le champ
+# requis comme refusé (donc plus jamais reposé). Faux positif = donnée perdue.
+_REFUS_ANTI_PATTERNS = (
+    "pas mal",        # « pas mal de détails »
+    "pas toujours",   # « je ne réponds pas toujours vite »
+    "pas encore",
+    "pas que",
+    "pas seulement",
+)
+
+
 def _sans_accents(text: str) -> str:
     t = (text or "").lower()
     t = unicodedata.normalize("NFD", t)
@@ -109,4 +123,6 @@ def phrase_de_refus(text: str) -> bool:
     un refus) afin d'éviter les faux positifs.
     """
     t = _sans_accents(text)
+    if any(a in t for a in _REFUS_ANTI_PATTERNS):
+        return False  # idiome contenant « pas » : ce n'est pas un refus
     return any(p in t for p in _REFUS_PATTERNS)

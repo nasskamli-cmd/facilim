@@ -604,12 +604,9 @@ class OrchestrationEngine:
 
             # ── Alias NIR : l'extraction renvoie 'numero_securite_sociale', mais la
             # collecte surveille 'num_secu'. Sans synchronisation, Corrine croit le
-            # numéro absent et le redemande sans cesse. On garde les deux noms alignés.
-            _nir = donnees.get("num_secu") or donnees.get("numero_securite_sociale")
-            if _nir:
-                _nir = str(_nir).replace(" ", "")
-                donnees["num_secu"] = _nir
-                donnees["numero_securite_sociale"] = _nir
+            # numéro absent et le redemande sans cesse. Helper partagé (gère aussi 'nss').
+            from app.services.collecte_schema import synchroniser_nir
+            synchroniser_nir(donnees)
 
             # ── FACILIM V2 (ADDITIF) — projeter le domaine pilote en faits canoniques ──
             # N'efface aucune clé plate ; alimente uniquement donnees["faits"].
@@ -1001,7 +998,16 @@ class OrchestrationEngine:
             # ne doit PAS clôturer un dossier seulement parce qu'il a été bien pré-rempli
             # par le professionnel. On exige, pour ce raccourci, que les DEMANDES de droits
             # soient présentes — c'est l'objet même du dossier. Sans demande, jamais « prêt ».
-            _a_des_demandes = bool(donnees.get("droits_demandes") or donnees.get("droits"))
+            # Un dict `droits` NON vide mais dont aucune valeur n'est True (ex.
+            # {"aah": False, "pch": False}) ne constitue PAS une demande : la
+            # truthiness du dict seul laisserait passer la garde. On exige donc
+            # qu'au moins un droit soit explicitement coché (ou un texte présent).
+            _droits_obj = donnees.get("droits")
+            _a_des_demandes = bool(
+                str(donnees.get("droits_demandes") or "").strip()
+                or (isinstance(_droits_obj, dict)
+                    and any(v is True for v in _droits_obj.values()))
+            )
             _declencher_narratif = (
                 (
                     agent.is_complete(donnees)
@@ -1083,18 +1089,17 @@ class OrchestrationEngine:
         3. Persiste le tout en base
         Non bloquant : les erreurs sont loggées sans interrompre le pipeline.
         """
-        # ── Revue instructeur (lecture seule) : repère les points d'attention et
-        #    alerte le professionnel. Ne modifie rien, ne décide rien. Non bloquant.
-        _revue_resultat: dict = {}
+        # ── Correction depuis le réel AVANT le narratif ──────────────────────────
+        #    Renseigner genre / département / NIR depuis les données déjà connues
+        #    AVANT de générer les narratifs (la civilité du narratif lit `genre`).
+        #    Idempotent : ne remplit que ce qui manque, sans rien inventer.
+        #    La REVUE instructeur, elle, s'exécute APRÈS le narratif (voir plus bas) :
+        #    elle inspecte les clés narratives, encore vides à ce stade.
         try:
-            from app.engines.correction_loop import boucle_correction
-            # Boucle de correction bornée : corrige depuis le réel, relance l'instructeur,
-            # ne finalise jamais, n'envoie jamais à la MDPH (garde-fous dans le module).
-            _revue_resultat = boucle_correction(donnees, profil_mdph, dossier_id, db=self.db) or {}
-            # Conserver les signaux experts pour les exposer au tableau de bord.
-            donnees["_revue_instructeur"] = (_revue_resultat.get("revue") or {}).get("expert") or {}
-        except Exception as _revue_err:
-            logger.warning("[REVUE] non bloquant : %s", _revue_err)
+            from app.engines.correction_loop import corriger_depuis_donnees_reelles
+            corriger_depuis_donnees_reelles(donnees)
+        except Exception as _corr_err:
+            logger.warning("[BOUCLE] correction pré-narratif non bloquante : %s", _corr_err)
 
         # ── RACCORD dictionnaire → moteur narratif ───────────────────────────────
         # Le moteur narratif lit certains champs sous des noms historiques différents
@@ -1148,6 +1153,21 @@ class OrchestrationEngine:
 
             # Fusionner les textes narratifs dans donnees pour la persistance
             donnees.update(textes)
+
+            # ── Revue instructeur APRÈS le narratif ──────────────────────────────
+            #    La revue inspecte les clés narratives (texte_b/c/d/e…) via
+            #    champs_a_risque_de_perte : elle DOIT s'exécuter une fois celles-ci
+            #    produites, sinon chaque champ routé « narratif » serait faussement
+            #    signalé « non produit » (alerte ROUGE/HAUTE parasite à chaque
+            #    finalisation). Lecture seule, non bloquant.
+            try:
+                from app.engines.correction_loop import boucle_correction
+                # Boucle bornée : corrige depuis le réel (idempotent), relance
+                # l'instructeur, ne finalise jamais, n'envoie jamais à la MDPH.
+                _revue_resultat = boucle_correction(donnees, profil_mdph, dossier_id, db=self.db) or {}
+                donnees["_revue_instructeur"] = (_revue_resultat.get("revue") or {}).get("expert") or {}
+            except Exception as _revue_err:
+                logger.warning("[REVUE] non bloquant : %s", _revue_err)
 
             alertes = rapport.alertes_rouges + rapport.alertes_oranges
             self.db.execute(

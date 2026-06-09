@@ -19,7 +19,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
-from app.services.field_status import est_refuse
+from app.services.field_status import est_refuse, finalisation_bloquee
 
 logger = logging.getLogger("facilim.conversation")
 
@@ -120,7 +120,14 @@ class ConversationAgent(ABC):
         return ids
 
     def is_complete(self, donnees: dict[str, Any]) -> bool:
-        return len(self.missing_fields(donnees)) == 0
+        if self.missing_fields(donnees):
+            return False
+        # Un champ BLOQUANT refusé n'autorise JAMAIS la finalisation : missing_fields
+        # l'ignore volontairement (pour ne pas le redemander en boucle), mais un CERFA
+        # amputé d'une donnée légalement critique (n° sécu, date de naissance, adresse,
+        # droits demandés) ne doit pas être généré/transmis sans blocage dur. La main
+        # revient alors à l'humain.
+        return not finalisation_bloquee(donnees)
 
     # ── Contexte dynamique (onglet + données) ────────────────────────────────
 

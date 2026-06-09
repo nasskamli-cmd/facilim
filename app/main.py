@@ -627,9 +627,17 @@ async def email_inbound_webhook(request: Request, db=Depends(_get_db)):
         if not sender or not attachments:
             continue
         # Rattachement par email, dossier le plus récent (anti-fuite : jamais le 1er au hasard).
+        # Anti-fuite renforcé : l'adresse doit apparaître comme VALEUR JSON exacte
+        # ("email@x.fr"), jamais comme simple sous-chaîne d'un texte libre — sinon une
+        # note pro citant un email rattacherait des pièces médicales au mauvais dossier.
+        # On échappe aussi les métacaractères LIKE ('_' et '%') du local-part, qui
+        # élargiraient silencieusement la correspondance. Un email non rattaché est
+        # simplement loggé/ignoré : mode d'échec bien plus sûr qu'une fuite.
+        _sender_like = sender.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         row = db.execute(
-            "SELECT id FROM dossiers WHERE lower(synthese_json) LIKE ? ORDER BY updated_at DESC LIMIT 1",
-            (f'%{sender}%',),
+            "SELECT id FROM dossiers WHERE lower(synthese_json) LIKE ? ESCAPE '\\' "
+            "ORDER BY updated_at DESC LIMIT 1",
+            (f'%"{_sender_like}"%',),
         ).fetchone()
         if not row:
             logger.info("[EMAIL_IN] aucun dossier pour l'expéditeur — pièces ignorées")
@@ -892,9 +900,13 @@ def get_dossier(
     db=Depends(_get_db),
 ):
     """Détail d'un dossier avec consentement et scoring."""
-    row = db.execute("SELECT * FROM dossiers WHERE id = ?", (dossier_id,)).fetchone()
+    # deleted_at IS NULL : un dossier supprimé ne doit plus pouvoir être rouvert
+    # (sinon une alerte résiduelle le fait « revenir »).
+    row = db.execute(
+        "SELECT * FROM dossiers WHERE id = ? AND deleted_at IS NULL", (dossier_id,)
+    ).fetchone()
     if not row:
-        raise HTTPException(status_code=404, detail="Dossier non trouvé")
+        raise HTTPException(status_code=404, detail="Dossier non trouvé ou supprimé")
 
     d = dict(row)
     access_control.require_permission(user.get("role", "LECTEUR"), access_control.Permission.DOSSIER_READ)
@@ -1121,6 +1133,9 @@ def get_alertes(user=Depends(_get_current_user), db=Depends(_get_db)):
         FROM alertes a
         LEFT JOIN dossiers d ON d.id = a.dossier_id
         WHERE a.type_alerte IN ('FLAG_HUMAIN', 'CHAMP_NON_COMMUNIQUE', 'REVUE_INSTRUCTEUR') AND a.acquittee = 0
+          -- N'afficher que les alertes de dossiers existants ET non supprimés :
+          -- une alerte orpheline ne doit plus faire resurgir un dossier supprimé.
+          AND d.id IS NOT NULL AND d.deleted_at IS NULL
         ORDER BY a.created_at DESC LIMIT 50
         """
     ).fetchall()
@@ -2980,13 +2995,10 @@ def bulk_update_synthese(
                 synthese[champ] = valeur
             champs_mis_a_jour.append(champ)
 
-    # Alias NIR : garder 'num_secu' et 'numero_securite_sociale' synchronisés
-    # (l'interface peut enregistrer l'un ou l'autre ; la collecte WhatsApp lit 'num_secu').
-    _nir = synthese.get("numero_securite_sociale") or synthese.get("num_secu")
-    if _nir:
-        _nir = str(_nir).replace(" ", "")
-        synthese["numero_securite_sociale"] = _nir
-        synthese["num_secu"] = _nir
+    # Alias NIR : garder les noms du numéro de sécu synchronisés (l'interface peut
+    # enregistrer l'un ou l'autre ; la collecte WhatsApp lit 'num_secu'). Helper partagé.
+    from app.services.collecte_schema import synchroniser_nir
+    synchroniser_nir(synthese)
 
     db.execute(
         "UPDATE dossiers SET synthese_json = ?, updated_at = ? WHERE id = ?",
@@ -3020,12 +3032,10 @@ def update_cerfa_champ(
         synthese[body.champ] = body.valeur
 
     # Alias NIR : l'interface enregistre le numéro de Sécu sous 'numero_securite_sociale',
-    # mais la collecte WhatsApp surveille 'num_secu'. On synchronise les deux noms pour
-    # qu'un NIR saisi à l'écran ne soit JAMAIS redemandé sur WhatsApp.
-    if body.champ in ("numero_securite_sociale", "num_secu") and body.valeur:
-        _nir = str(body.valeur).replace(" ", "")
-        synthese["numero_securite_sociale"] = _nir
-        synthese["num_secu"] = _nir
+    # mais la collecte WhatsApp surveille 'num_secu'. On synchronise les noms pour qu'un
+    # NIR saisi à l'écran ne soit JAMAIS redemandé sur WhatsApp. Helper partagé (gère 'nss').
+    from app.services.collecte_schema import synchroniser_nir
+    synchroniser_nir(synthese)
 
     from app.engines.orchestration_engine import _calculer_completude_live
     score = _calculer_completude_live(synthese)

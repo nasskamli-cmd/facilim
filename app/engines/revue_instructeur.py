@@ -107,18 +107,23 @@ def controles_coherence(donnees: dict[str, Any], profil: str) -> list[dict[str, 
     else:
         import re as _re
         from datetime import datetime as _dt
-        _m = _re.search(r"(19|20)\d{2}", _cert)
         _sans_cert = any(w in _cert for w in ("non", "pas de", "aucun", "sans"))
+        # N'extraire l'année QUE depuis une VRAIE date (JJ/MM/AAAA ou MM/AAAA),
+        # jamais depuis un millésime isolé noyé dans une phrase (« médecin qui me
+        # suit depuis 2015 ») : sinon fausse alerte « plus d'un an » sur un
+        # certificat pourtant récent.
+        _md = _re.search(r"\b(?:\d{1,2}[/\-.])?\d{1,2}[/\-.]((?:19|20)\d{2})\b", _cert)
+        _annee_cert = int(_md.group(1)) if _md else None
         if _sans_cert:
             alertes.append({
                 "niveau": "ORANGE",
                 "label": ("La personne indique ne pas avoir de certificat médical. Il faudra "
                           "en obtenir un (cerfa 15695, moins d'un an) avant la transmission."),
             })
-        elif _m and (_dt.now().year - int(_m.group(0))) > 1:
+        elif _annee_cert is not None and (_dt.now().year - _annee_cert) > 1:
             alertes.append({
                 "niveau": "ORANGE",
-                "label": (f"Le certificat médical daterait de {_m.group(0)} : possiblement de plus "
+                "label": (f"Le certificat médical daterait de {_annee_cert} : possiblement de plus "
                           f"d'un an. La MDPH exige un certificat de moins d'un an, à vérifier."),
             })
 
