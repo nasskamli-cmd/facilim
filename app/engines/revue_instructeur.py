@@ -95,7 +95,53 @@ def controles_coherence(donnees: dict[str, Any], profil: str) -> list[dict[str, 
             "label": ("Le projet de vie et les attentes vis-à-vis de la MDPH ne sont "
                       "pas exprimés (section E)."),
         })
+
+    # 4. Donnée collectée mais à risque de ne pas être reportée sur le CERFA.
+    #    Garantit qu'aucune information recueillie ne se perd silencieusement entre
+    #    la collecte et le formulaire (jonction dictionnaire → remplissage).
+    try:
+        from app.services.cerfa_dictionary import champs_a_risque_de_perte
+        for r in champs_a_risque_de_perte(donnees, profil):
+            alertes.append({
+                "niveau": "ROUGE",
+                "label": (f"Information collectée non reportée sur le CERFA "
+                          f"({r['id']}) : {r['raison']}. À vérifier avant transmission."),
+            })
+    except Exception as _e:
+        logger.debug("[REVUE] contrôle de couverture non bloquant : %s", _e)
+
     return alertes
+
+
+def analyses_expertes(donnees: dict[str, Any], profil: str) -> dict[str, Any]:
+    """
+    Réveille les deux moteurs experts, en LECTURE SEULE et sans décider des droits :
+      - risque de refus par droit + incohérences (refusal_risk_engine)
+      - robustesse du dossier sur 100 + axes d'amélioration (dossier_strength_engine)
+    Tout est non bloquant : une erreur d'un moteur n'interrompt pas la revue.
+    Retourne un dict consolidé, vide en cas d'indisponibilité.
+    """
+    out: dict[str, Any] = {
+        "risque_global": "", "robustesse": None,
+        "axes": [], "incoherences_critiques": [],
+    }
+    try:
+        from app.engines.refusal_risk_engine import evaluer_risques_refus
+        rr = evaluer_risques_refus(donnees, profil)
+        out["risque_global"] = rr.risque_global
+        out["incoherences_critiques"] = [
+            i.description for i in rr.incoherences if i.gravite == "critique"
+        ]
+    except Exception as e:
+        logger.debug("[REVUE] moteur risque de refus indisponible : %s", e)
+    try:
+        from app.engines.dossier_strength_engine import noter_robustesse
+        rb = noter_robustesse(donnees, profil)
+        out["robustesse"] = rb.score_global
+        out["axes"] = list(rb.axes_amelioration or [])[:6]
+    except Exception as e:
+        logger.debug("[REVUE] moteur robustesse indisponible : %s", e)
+    return out
 
 
 def revue_dossier(
@@ -114,9 +160,11 @@ def revue_dossier(
     """
     pts = points_d_attention(donnees, profil)
     coherence = controles_coherence(donnees, profil)
-    if not pts and not coherence:
+    expert = analyses_expertes(donnees, profil)
+    _risque_eleve = expert.get("risque_global") == "élevé"
+    if not pts and not coherence and not _risque_eleve and not expert.get("incoherences_critiques"):
         logger.info("[REVUE] dossier=%s : aucun point d'attention", dossier_id)
-        return {"points": [], "coherence": [], "bloquants": 0}
+        return {"points": [], "coherence": [], "bloquants": 0, "expert": expert}
 
     bloquants = [p for p in pts if p["bloquant"]]
     rouges = [c for c in coherence if c.get("niveau") == "ROUGE"]
@@ -129,8 +177,17 @@ def revue_dossier(
                 parties.append("À compléter : " + " ; ".join(p["label"] for p in pts[:10]))
             if coherence:
                 parties.append("Cohérence : " + " ; ".join(c["label"] for c in coherence[:6]))
+            if expert.get("robustesse") is not None:
+                parties.append(f"Robustesse estimée : {expert['robustesse']}/100")
+            if expert.get("risque_global"):
+                parties.append(f"Risque de refus : {expert['risque_global']}")
+            if expert.get("incoherences_critiques"):
+                parties.append("Incohérences : " + " ; ".join(expert["incoherences_critiques"][:4]))
+            if expert.get("axes"):
+                parties.append("Axes d'amélioration : " + " ; ".join(expert["axes"][:4]))
             description = " | ".join(parties)[:1000]
-            severite = "HAUTE" if (bloquants or rouges) else "NORMALE"
+            severite = "HAUTE" if (bloquants or rouges or _risque_eleve
+                                    or expert.get("incoherences_critiques")) else "NORMALE"
             db.execute(
                 """
                 INSERT INTO alertes
@@ -173,4 +230,5 @@ def revue_dossier(
         "points": pts,
         "coherence": coherence,
         "bloquants": len(bloquants) + len(rouges),
+        "expert": expert,
     }

@@ -350,3 +350,76 @@ def hints_extraction() -> str:
         if c.get("extractible") and c.get("valeurs"):
             lignes.append(f"- {c['id']} : valeur attendue parmi {c['valeurs']}")
     return "\n".join(lignes)
+
+
+# ── ROUTE DE REMPLISSAGE — la jonction dictionnaire → CERFA ───────────────────
+# C'est le 3e pilier annoncé en tête de fichier : on rend EXPLICITE par quel
+# chemin chaque champ collecté atteint réellement le formulaire.
+#   "filler"   : écrit directement par services/cerfa_filler.py (champ texte / case)
+#   "narratif" : injecté via le texte narratif de sa section (B/C/D/E)
+# Tout champ collecté DOIT avoir une route. Un champ porteur d'une valeur mais
+# sans route, ou dont le narratif de section n'a pas été produit, est une donnée
+# à risque de perte : on la signale à l'instructeur, jamais en silence.
+ROUTE_REMPLISSAGE: dict[str, str] = {
+    "preference_contact":           "filler",
+    "organisme_payeur":             "filler",
+    "numero_allocataire":           "filler",
+    "organisme_assurance_maladie":  "filler",
+    "nationalite":                  "filler",
+    "nom_naissance":                "filler",
+    "commune_naissance":            "filler",
+    "pays_naissance":               "filler",
+    "aides_en_place":               "narratif",
+    "aides_techniques":             "narratif",
+    "frais_handicap":               "filler",
+    "type_etablissement_scolaire":  "filler",
+    "classe_scolaire":              "filler",
+    "accompagnement_scolaire":      "narratif",
+    "amenagements_scolaires":       "narratif",
+    "situation_professionnelle":    "filler",
+    "consequences_professionnelles":"narratif",
+    "projet_professionnel":         "filler",
+    "emploi_accompagne":            "filler",
+    "attentes_usager":              "narratif",
+    "projet_de_vie":                "narratif",
+    "aidant_identite":              "filler",
+    "aidant_reduction_travail":     "filler",
+}
+
+# Clé du texte narratif produit pour chaque section (lu ensuite par le pont V2).
+_NARRATIF_PAR_SECTION: dict[str, str] = {
+    "B": "texte_b_vie_quotidienne",
+    "C": "texte_c_scolarite",
+    "D": "texte_d_situation_pro",
+    "E": "texte_e_projet_vie",
+}
+
+
+def champs_a_risque_de_perte(donnees: dict, profil: str) -> list[dict[str, str]]:
+    """
+    Champs applicables AU profil, PORTEURS d'une valeur collectée, mais dont la
+    route vers le CERFA n'est pas garantie :
+      - aucune route déclarée, ou
+      - route narrative alors que le narratif de la section est absent.
+    Liste normalement vide. Tout retour signale une donnée collectée qui pourrait
+    ne pas figurer sur le formulaire — à vérifier par l'instructeur.
+    """
+    risques: list[dict[str, str]] = []
+    for c in _DICTIONNAIRE:
+        if not _applicable(c, profil):
+            continue
+        cid = c["id"]
+        if not donnees.get(cid):
+            continue
+        route = ROUTE_REMPLISSAGE.get(cid)
+        if route is None:
+            risques.append({"id": cid, "raison": "aucune route de remplissage déclarée"})
+        elif route == "narratif":
+            cle = _NARRATIF_PAR_SECTION.get(c.get("section", ""))
+            if cle and not donnees.get(cle):
+                risques.append({
+                    "id": cid,
+                    "raison": f"narratif de la section {c.get('section')} non produit "
+                              f"— contenu collecté possiblement non reporté",
+                })
+    return risques

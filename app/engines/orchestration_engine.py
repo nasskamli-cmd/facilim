@@ -1045,8 +1045,10 @@ class OrchestrationEngine:
         # ── Revue instructeur (lecture seule) : repère les points d'attention et
         #    alerte le professionnel. Ne modifie rien, ne décide rien. Non bloquant.
         try:
-            from app.engines.revue_instructeur import revue_dossier
-            revue_dossier(donnees, profil_mdph, dossier_id, db=self.db)
+            from app.engines.correction_loop import boucle_correction
+            # Boucle de correction bornée : corrige depuis le réel, relance l'instructeur,
+            # ne finalise jamais, n'envoie jamais à la MDPH (garde-fous dans le module).
+            boucle_correction(donnees, profil_mdph, dossier_id, db=self.db)
         except Exception as _revue_err:
             logger.warning("[REVUE] non bloquant : %s", _revue_err)
 

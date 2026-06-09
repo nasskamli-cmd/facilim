@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 96" role="img" aria-label="FACILIM — l'intelligence au service des droits des personnes">
+  <defs>
+    <linearGradient id="flGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%"  stop-color="#22c55e"/>
+      <stop offset="32%" stop-color="#14b8a6"/>
+      <stop offset="62%" stop-color="#2563eb"/>
+      <stop offset="100%" stop-color="#7c3aed"/>
+    </linearGradient>
+    <linearGradient id="flGradL" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%"  stop-color="#22c55e"/>
+      <stop offset="100%" stop-color="#14b8a6"/>
+    </linearGradient>
+    <linearGradient id="flGradR" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%"  stop-color="#14b8a6"/>
+      <stop offset="55%" stop-color="#2563eb"/>
+      <stop offset="100%" stop-color="#7c3aed"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Motif réseau de neurones : faisceaux convergents vers une colonne de noeuds -->
+  <g fill="none" stroke-width="2" stroke-linecap="round" opacity="0.95">
+    <g stroke="url(#flGradL)">
+      <path d="M2 30 C 30 30, 52 38, 70 48"/>
+      <path d="M2 40 C 30 40, 52 44, 70 48"/>
+      <path d="M2 48 C 30 48, 52 48, 70 48"/>
+      <path d="M2 56 C 30 56, 52 52, 70 48"/>
+      <path d="M2 66 C 30 66, 52 58, 70 48"/>
+    </g>
+    <g stroke="url(#flGradR)">
+      <path d="M90 48 C 108 38, 130 30, 158 30"/>
+      <path d="M90 48 C 108 44, 130 40, 158 40"/>
+      <path d="M90 48 C 130 48, 130 48, 158 48"/>
+      <path d="M90 48 C 108 52, 130 56, 158 56"/>
+      <path d="M90 48 C 108 58, 130 66, 158 66"/>
+    </g>
+  </g>
+  <!-- Colonne de noeuds centrale -->
+  <g>
+    <circle cx="72" cy="30" r="3" fill="#14b8a6"/>
+    <circle cx="78" cy="40" r="2.4" fill="#0891b2"/>
+    <circle cx="72" cy="48" r="3.4" fill="#2563eb"/>
+    <circle cx="80" cy="56" r="2.4" fill="#1d4ed8"/>
+    <circle cx="72" cy="66" r="3" fill="#7c3aed"/>
+    <circle cx="86" cy="30" r="3" fill="#7c3aed"/>
+    <circle cx="88" cy="48" r="2.6" fill="#2563eb"/>
+    <circle cx="86" cy="66" r="3" fill="#14b8a6"/>
+  </g>
+
+  <!-- Mot-symbole FACILIM -->
+  <text x="168" y="62" font-family="Segoe UI, Arial, Helvetica, sans-serif"
+        font-size="46" font-weight="800" letter-spacing="2">
+    <tspan fill="#16243f">FACI</tspan><tspan fill="url(#flGrad)">LIM</tspan>
+  </text>
+  <!-- Accent : point turquoise sous le A -->
+  <circle cx="214" cy="58" r="3.6" fill="#14b8a6"/>
+
+  <!-- Signature -->
+  <text x="170" y="84" font-family="Segoe UI, Arial, Helvetica, sans-serif"
+        font-size="10.5" font-weight="600" letter-spacing="1.1" fill="#3f4b66">
+    L'INTELLIGENCE AU SERVICE DES DROITS DES PERSONNES
+  </text>
+</svg>
