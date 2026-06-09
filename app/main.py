@@ -557,7 +557,7 @@ def verify_page():
     """Page de saisie du code 2FA."""
     verify_path = os.path.join(os.path.dirname(__file__), "..", "static", "verify.html")
     if os.path.isfile(verify_path):
-        return FileResponse(verify_path)
+        return FileResponse(verify_path, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
     return HTMLResponse("<h1>Page de vérification non trouvée</h1>", status_code=404)
 
 
@@ -1150,7 +1150,7 @@ def root():
     if not index_path.is_file():
         index_path = Path("/app/static/index.html")
     if index_path.is_file():
-        return FileResponse(str(index_path))
+        return FileResponse(str(index_path), headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
     logger.warning("[root] index.html introuvable — chemins tentés : %s", index_path)
     return RedirectResponse("/dashboard")
 
