@@ -127,6 +127,69 @@ def controles_coherence(donnees: dict[str, Any], profil: str) -> list[dict[str, 
                           f"d'un an. La MDPH exige un certificat de moins d'un an, à vérifier."),
             })
 
+    # 3 ter. Cohérence âge ↔ droit (page 17). Avant 20 ans c'est l'AEEH, à partir
+    #        de 20 ans l'AAH : une demande hors tranche est une faute classique
+    #        (une demande qui ne produira aucune case cochable sur le CERFA).
+    _droits_txt = ""
+    if isinstance(droits, str):
+        _droits_txt = droits.upper()
+    elif isinstance(droits, dict):
+        _droits_txt = " ".join(k.upper() for k, v in droits.items() if v)
+    elif isinstance(droits, (list, tuple)):
+        _droits_txt = " ".join(str(d).upper() for d in droits)
+
+    _age = None
+    _ddn = str(donnees.get("date_naissance", "") or "").strip()
+    try:
+        if _ddn and "/" in _ddn:
+            from datetime import date as _date
+            _jj, _mm, _aa = _ddn.split("/")
+            _age = (_date.today() - _date(int(_aa), int(_mm), int(_jj))).days // 365
+    except Exception:
+        _age = None
+
+    if _age is not None and "AAH" in _droits_txt and _age < 20:
+        alertes.append({
+            "niveau": "ROUGE",
+            "label": (f"AAH demandée mais la personne a {_age} ans (moins de 20) : avant "
+                      "20 ans, c'est l'AEEH qui s'applique, pas l'AAH."),
+        })
+    if _age is not None and "AEEH" in _droits_txt and _age >= 20:
+        alertes.append({
+            "niveau": "ROUGE",
+            "label": (f"AEEH demandée mais la personne a {_age} ans (20 ou plus) : à partir "
+                      "de 20 ans, c'est l'AAH qui s'applique, pas l'AEEH."),
+        })
+
+    # 3 quater. Une AAH oblige la MDPH à évaluer la RQTH + l'orientation pro :
+    #           le volet professionnel (section D) doit être renseigné.
+    if "AAH" in _droits_txt and (_age is None or _age >= 20):
+        _a_volet_pro = ("RQTH" in _droits_txt) or any(
+            str(donnees.get(k, "") or "").strip()
+            for k in ("projet_professionnel", "situation_professionnelle", "statut_emploi")
+        )
+        if not _a_volet_pro:
+            alertes.append({
+                "niveau": "ORANGE",
+                "label": ("Une AAH est demandée : la MDPH évalue alors obligatoirement la "
+                          "RQTH et l'orientation professionnelle. Le volet professionnel "
+                          "(section D) doit être renseigné."),
+            })
+
+    # 3 quinquies. CMI demandée sans préciser le type → aucune case cochable.
+    _cmi_type = (
+        donnees.get("cmi_priorite") or donnees.get("cmi_invalidite")
+        or donnees.get("cmi_stationnement")
+    )
+    if "CMI" in _droits_txt and not _cmi_type and not any(
+        t in _droits_txt for t in ("INVALIDITE", "PRIORITE", "STATIONNEMENT")
+    ):
+        alertes.append({
+            "niveau": "ORANGE",
+            "label": ("Une CMI est demandée sans préciser le type (invalidité/priorité ou "
+                      "stationnement) : aucune case ne pourra être cochée. À qualifier."),
+        })
+
     # 4. Donnée collectée mais à risque de ne pas être reportée sur le CERFA.
     #    Garantit qu'aucune information recueillie ne se perd silencieusement entre
     #    la collecte et le formulaire (jonction dictionnaire → remplissage).

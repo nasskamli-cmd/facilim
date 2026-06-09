@@ -477,6 +477,7 @@ def _mapper_droits(
     emploi_accompagne: bool = False,
     creton: bool = False,
     orientation_crp: bool = False,
+    moins_de_20: bool | None = None,
 ) -> list[str]:
     """
     Traduit la liste de droits identifiés par l'IA en noms de cases CERFA.
@@ -516,15 +517,22 @@ def _mapper_droits(
     # Normalisation : tokens majuscules, tirets → espaces
     droits_str = " ".join(str(d).upper().replace("-", " ") for d in droits)
 
+    # Frontière des ALLOCATIONS page 17 : AEEH < 20 ans, AAH >= 20 ans. Cette
+    # frontière (20 ans) est DISTINCTE de `is_enfant` (calé sur 18 ans pour
+    # l'autorité parentale, la scolarité, les besoins « enfant »). Un jeune de
+    # 18-19 ans est juridiquement adulte (A2) mais relève encore de l'AEEH.
+    # Si l'âge est inconnu, on retombe sur is_enfant (défaut conservateur, inchangé).
+    _e1_mineur = is_enfant if moins_de_20 is None else moins_de_20
+
     # ── PAGE 17 — E1 Allocations ─────────────────────────────────────────────
 
-    # AEEH : Allocation d'Éducation de l'Enfant Handicapé (enfants < 20 ans uniquement)
-    if is_enfant and "AEEH" in droits_str:
+    # AEEH : Allocation d'Éducation de l'Enfant Handicapé (< 20 ans uniquement)
+    if _e1_mineur and "AEEH" in droits_str:
         cases.append("Case à cocher P17 1")
 
     # PCH enfant (< 20 ans) — UNIQUEMENT si explicitement dans les droits identifiés
     # Ne jamais déduire automatiquement de besoins_aide_humaine : la personne doit valider
-    if is_enfant and "PCH" in droits_str:
+    if _e1_mineur and "PCH" in droits_str:
         cases.append("Case à cocher P17 2")
 
     # CMI priorité (invalidité) — station debout prolongée pénible
@@ -533,13 +541,13 @@ def _mapper_droits(
 
     # CMI priorité : coché uniquement si explicitement déclaré.
     if cmi_priorite:
-        cases.append("Case à cocher P17 3" if is_enfant else "Case à cocher P17 13")
+        cases.append("Case à cocher P17 3" if _e1_mineur else "Case à cocher P17 13")
 
     # CMI stationnement : coché uniquement si explicitement déclaré.
     # Suppression de la déduction par élimination (has_cmi_generic and not cmi_priorite).
     # "CMI" sans précision du type → aucune case cochée + signalement à l'éducateur.
     if cmi_stationnement:
-        cases.append("Case à cocher P17 4" if is_enfant else "Case à cocher P17 14")
+        cases.append("Case à cocher P17 4" if _e1_mineur else "Case à cocher P17 14")
 
     # Si has_cmi_generic mais aucun type précisé → log pour relecture manuelle
     if has_cmi_generic and not cmi_priorite and not cmi_stationnement:
@@ -548,12 +556,12 @@ def _mapper_droits(
             "Aucune case cochée — à qualifier par l'éducateur avant signature."
         )
 
-    # AAH : Allocation aux Adultes Handicapés (≥ 20 ans)
-    if "AAH" in droits_str:
+    # AAH : Allocation aux Adultes Handicapés (≥ 20 ans uniquement)
+    if not _e1_mineur and "AAH" in droits_str:
         cases.append("Case à cocher P17 6")
 
     # PCH adulte (≥ 20 ans) — UNIQUEMENT si explicitement dans les droits identifiés
-    if not is_enfant and "PCH" in droits_str:
+    if not _e1_mineur and "PCH" in droits_str:
         cases.append("Case à cocher P17 12")
 
     # Complément de ressources (toujours avec AAH si mentionné)
@@ -562,7 +570,7 @@ def _mapper_droits(
 
     # AVPF : Allocation Vieillesse des Parents au Foyer (sur demande explicite uniquement)
     if "AVPF" in droits_str:
-        cases.append("Case à cocher P17 5" if is_enfant else "Case à cocher P17 15")
+        cases.append("Case à cocher P17 5" if _e1_mineur else "Case à cocher P17 15")
 
     # Orientation ESMS adultes (case P17 8) — UNIQUEMENT structures adultes
     # IME/SESSAD/ITEP/ULIS sont des structures enfants → ne jamais déclencher P17 8
@@ -1328,6 +1336,17 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         organisme_formation, type_formation_pro,
     )
 
+    # ── Frontière des allocations (20 ans) — distincte de is_enfant (18 ans) ──
+    # AEEH < 20 ans, AAH >= 20 ans. Défaut conservateur = is_enfant si âge inconnu.
+    _moins_de_20: bool | None = None
+    try:
+        if ddn and "/" in ddn:
+            _j20, _m20, _a20 = ddn.split("/")
+            _age20 = (date.today() - date(int(_a20), int(_m20), int(_j20))).days // 365
+            _moins_de_20 = _age20 < 20
+    except Exception:
+        _moins_de_20 = None
+
     # ── Droits → liste de cases P17/P18 ─────────────────────────────────────
     cases_droits = _mapper_droits(
         droits,
@@ -1338,6 +1357,7 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         emploi_accompagne=emploi_accompagne,
         creton=creton,
         orientation_crp=_orientation_crp,
+        moins_de_20=_moins_de_20,
     )
 
     # ════════════════════════════════════════════════════════════════════════
