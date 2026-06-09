@@ -361,7 +361,9 @@ def hints_extraction() -> str:
 # sans route, ou dont le narratif de section n'a pas été produit, est une donnée
 # à risque de perte : on la signale à l'instructeur, jamais en silence.
 ROUTE_REMPLISSAGE: dict[str, str] = {
-    "preference_contact":           "filler",
+    # informatif : collecté pour le professionnel mais SANS case sur ce CERFA
+    # (vérifié par audit des champs réels du formulaire) — n'est donc pas une perte.
+    "preference_contact":           "informatif",
     "organisme_payeur":             "filler",
     "numero_allocataire":           "filler",
     "organisme_assurance_maladie":  "filler",
@@ -371,7 +373,7 @@ ROUTE_REMPLISSAGE: dict[str, str] = {
     "pays_naissance":               "filler",
     "aides_en_place":               "narratif",
     "aides_techniques":             "narratif",
-    "frais_handicap":               "filler",
+    "frais_handicap":               "narratif",
     "type_etablissement_scolaire":  "filler",
     "classe_scolaire":              "filler",
     "accompagnement_scolaire":      "narratif",

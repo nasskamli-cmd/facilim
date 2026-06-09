@@ -40,38 +40,59 @@
     }
 
     .brand { display: flex; align-items: center; gap: 10px; }
-    .logo-mark {
-      width: 38px; height: 38px;
-      background: #2ECC9A;
-      border-radius: 9px;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 16px; font-weight: 600; color: #0F3D2E;
-    }
-    .brand-name { color: #fff; font-size: 20px; font-weight: 600; letter-spacing: -0.3px; }
-    .brand-tag  { color: rgba(255,255,255,0.45); font-size: 12px; margin-top: 2px; }
 
-    .quote {
-      color: rgba(255,255,255,0.8);
-      font-size: 14px;
-      line-height: 1.75;
-      font-style: italic;
+    /* ── Message de marque (promesse + cadre, sans chiffres inventés) ── */
+    .promesse {
+      color: #ffffff;
+      font-size: 18px;
+      font-weight: 600;
+      line-height: 1.5;
+      letter-spacing: -0.2px;
     }
-    .author {
-      display: flex; align-items: center; gap: 10px;
-      margin-top: 1rem;
+    .benefits {
+      list-style: none;
+      margin-top: 1.1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.7rem;
     }
-    .avatar {
-      width: 30px; height: 30px; border-radius: 50%;
-      background: rgba(255,255,255,0.15);
-      display: flex; align-items: center; justify-content: center;
-      font-size: 11px; color: rgba(255,255,255,0.7); font-weight: 500;
+    .benefits li {
+      position: relative;
+      padding-left: 1.5rem;
+      color: rgba(255,255,255,0.9);
+      font-size: 13.5px;
+      line-height: 1.5;
     }
-    .author-name  { color: rgba(255,255,255,0.8); font-size: 12px; font-weight: 500; }
-    .author-role  { color: rgba(255,255,255,0.4); font-size: 11px; }
-
-    .stats { display: flex; gap: 2rem; margin-top: 1.5rem; }
-    .stat-num   { color: #2ECC9A; font-size: 22px; font-weight: 600; }
-    .stat-label { color: rgba(255,255,255,0.45); font-size: 11px; margin-top: 2px; }
+    .benefits li::before {
+      content: "";
+      position: absolute;
+      left: 0; top: 6px;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #2dd4bf;
+    }
+    .cadre {
+      color: rgba(255,255,255,0.72);
+      font-size: 12.5px;
+      line-height: 1.65;
+      margin-top: 1.4rem;
+      padding-top: 1.1rem;
+      border-top: 1px solid rgba(255,255,255,0.12);
+    }
+    .trust {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-top: 1.5rem;
+    }
+    .trust span {
+      font-size: 11.5px;
+      color: #d7f5ee;
+      background: rgba(45,212,191,0.16);
+      border: 1px solid rgba(45,212,191,0.35);
+      border-radius: 999px;
+      padding: 4px 11px;
+    }
 
     /* ── Panneau droit ── */
     .right {
@@ -85,7 +106,7 @@
 
     .step-dots { display: flex; gap: 6px; margin-bottom: 2rem; }
     .dot { width: 6px; height: 6px; border-radius: 50%; background: #E2E8F0; }
-    .dot.active { width: 20px; border-radius: 3px; background: #1B3A6B; }
+    .dot.active { width: 20px; border-radius: 3px; background: #14b8a6; }
 
     h2 { font-size: 20px; font-weight: 600; color: #1A202C; margin-bottom: 0.25rem; }
     .subtitle { font-size: 13px; color: #718096; margin-bottom: 2rem; }
@@ -109,7 +130,7 @@
       outline: none;
       transition: border-color 0.15s;
     }
-    .field input:focus { border-color: #1B3A6B; background: #fff; }
+    .field input:focus { border-color: #14b8a6; background: #fff; box-shadow: 0 0 0 3px rgba(20,184,166,0.15); }
 
     .forgot {
       text-align: right;
@@ -139,8 +160,8 @@
       margin-top: 2rem;
       padding-top: 1.25rem;
       border-top: 1px solid #F0F4F8;
-      font-size: 11px;
-      color: #A0AEC0;
+      font-size: 11.5px;
+      color: #64748B;
       text-align: center;
       line-height: 1.6;
     }
@@ -159,17 +180,17 @@
         </div>
       </div>
       <div>
-        <p class="quote">"Facilim nous a permis de réduire de 60 % le temps de traitement des dossiers incomplets."</p>
-        <div class="author">
-          <div class="avatar">SC</div>
-          <div>
-            <div class="author-name">Sophie C.</div>
-            <div class="author-role">Éducatrice spécialisée, MDPH 75</div>
-          </div>
-        </div>
-        <div class="stats">
-          <div><div class="stat-num">3 200+</div><div class="stat-label">Dossiers traités</div></div>
-          <div><div class="stat-num">94 %</div><div class="stat-label">Taux de complétion</div></div>
+        <p class="promesse">Le dossier MDPH, monté plus vite et plus complet.</p>
+        <ul class="benefits">
+          <li>L'autodétermination au cœur : les mots et les souhaits de la personne, recherchés systématiquement.</li>
+          <li>Le CERFA pré-rempli automatiquement, prêt à relire.</li>
+          <li>Moins de dossiers incomplets, moins d'allers-retours avec la MDPH.</li>
+          <li>Le système s'adapte à la personne : écrit, message vocal, langage simple (FALC) ou sa langue.</li>
+        </ul>
+        <p class="cadre">Facilim propose et structure. Le professionnel valide. Facilim ne décide jamais des droits à la place de la MDPH.</p>
+        <div class="trust">
+          <span>Validation humaine</span>
+          <span>Données hébergées en France</span>
         </div>
       </div>
     </div>
@@ -199,7 +220,7 @@
       </form>
 
       <p class="footer-note">
-        Connexion sécurisée &nbsp;·&nbsp; Données hébergées en France &nbsp;·&nbsp; Conforme RGPD
+        Connexion sécurisée &nbsp;·&nbsp; Données hébergées en France &nbsp;·&nbsp; Validation humaine du dossier
       </p>
 
   <script>

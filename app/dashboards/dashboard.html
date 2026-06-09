@@ -10,7 +10,7 @@
       theme: {
         extend: {
           colors: {
-            facilim: { 50:'#f0f9ff', 100:'#e0f2fe', 500:'#0ea5e9', 700:'#0369a1', 900:'#0c4a6e' },
+            facilim: { 50:'#f0fdfa', 100:'#cffafe', 500:'#14b8a6', 700:'#0f766e', 900:'#0c2340' },
             alerte: { bg:'#fef2f2', border:'#fca5a5', text:'#991b1b' },
             warning: { bg:'#fffbeb', border:'#fcd34d', text:'#92400e' },
             success: { bg:'#f0fdf4', border:'#86efac', text:'#166534' },
@@ -143,15 +143,15 @@
     <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4" id="metriques-kpi">
       <div class="text-center p-3 bg-gray-50 rounded-lg">
         <div class="text-xl font-bold text-gray-900" id="met-total">–</div>
-        <div class="text-xs text-gray-500 mt-1">Dossiers total</div>
+        <div class="text-xs text-gray-500 mt-1">Dossiers suivis</div>
       </div>
       <div class="text-center p-3 bg-facilim-50 rounded-lg">
         <div class="text-xl font-bold text-facilim-700" id="met-maturite">–</div>
-        <div class="text-xs text-gray-500 mt-1">Maturité moy.</div>
+        <div class="text-xs text-gray-500 mt-1">Maturité moyenne des dossiers prêts</div>
       </div>
       <div class="text-center p-3 bg-green-50 rounded-lg">
         <div class="text-xl font-bold text-green-700" id="met-enrichissement">–</div>
-        <div class="text-xs text-gray-500 mt-1">Taux enrichissement</div>
+        <div class="text-xs text-gray-500 mt-1">Informations ajoutées par l'échange</div>
       </div>
       <div class="text-center p-3 bg-orange-50 rounded-lg">
         <div class="text-xl font-bold text-orange-700" id="met-relances">–</div>
@@ -502,7 +502,9 @@ async function loadMetriques() {
     }
 
     document.getElementById('met-total').textContent       = u.nb_dossiers_total ?? '–';
-    document.getElementById('met-maturite').textContent    = q.maturite_moyenne != null ? q.maturite_moyenne + '/100' : '–';
+    // Maturité : n'afficher un score que s'il est significatif. Un 0/100 sur des
+    // dossiers encore en collecte se lit comme un échec ; on montre alors « — ».
+    document.getElementById('met-maturite').textContent    = (q.maturite_moyenne != null && q.maturite_moyenne > 0) ? q.maturite_moyenne + '/100' : '—';
     document.getElementById('met-enrichissement').textContent = q.taux_enrichissement_moyen != null ? '×' + q.taux_enrichissement_moyen : '–';
     document.getElementById('met-relances').textContent    = u.nb_relances_total ?? '–';
     document.getElementById('metriques-date').textContent  = new Date().toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'});
