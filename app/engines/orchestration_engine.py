@@ -1044,11 +1044,14 @@ class OrchestrationEngine:
         """
         # ── Revue instructeur (lecture seule) : repère les points d'attention et
         #    alerte le professionnel. Ne modifie rien, ne décide rien. Non bloquant.
+        _revue_resultat: dict = {}
         try:
             from app.engines.correction_loop import boucle_correction
             # Boucle de correction bornée : corrige depuis le réel, relance l'instructeur,
             # ne finalise jamais, n'envoie jamais à la MDPH (garde-fous dans le module).
-            boucle_correction(donnees, profil_mdph, dossier_id, db=self.db)
+            _revue_resultat = boucle_correction(donnees, profil_mdph, dossier_id, db=self.db) or {}
+            # Conserver les signaux experts pour les exposer au tableau de bord.
+            donnees["_revue_instructeur"] = (_revue_resultat.get("revue") or {}).get("expert") or {}
         except Exception as _revue_err:
             logger.warning("[REVUE] non bloquant : %s", _revue_err)
 
@@ -1110,6 +1113,7 @@ class OrchestrationEngine:
                         "niveau_maturite":       rapport.niveau_maturite,
                         "retentissement_absent": rapport.retentissement_absent,
                         "projet_vie_incomplet":  rapport.projet_vie_incomplet,
+                        "revue_instructeur":     donnees.get("_revue_instructeur") or {},
                     }, ensure_ascii=False),
                     dossier_id,
                 ),

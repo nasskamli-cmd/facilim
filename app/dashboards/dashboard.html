@@ -652,9 +652,15 @@ function renderCockpit(d) {
       : (d.cockpit_pro_json || {});
   } catch (e) { console.debug('cockpit_pro_json illisible:', e); return; }
 
-  const hasData = c && (c.cockpit_texte || c.score_solidite != null
-    || (c.droits_detectes || []).length || (c.plan_action || []).length);
-  if (!hasData) return;  // cockpit pas encore généré pour ce dossier
+  // Signaux experts de la revue instructeur (robustesse, risque, axes), exposés
+  // par l'API sous d.revue_instructeur. Servent de complément/repli au cockpit.
+  const ri = d.revue_instructeur || {};
+  const riHasData = !!(ri && (ri.robustesse != null || ri.risque_global
+    || (ri.axes || []).length || (ri.incoherences_critiques || []).length));
+
+  const hasData = (c && (c.cockpit_texte || c.score_solidite != null
+    || (c.droits_detectes || []).length || (c.plan_action || []).length)) || riHasData;
+  if (!hasData) return;  // ni cockpit ni revue → rien à montrer
 
   panel.classList.remove('hidden');
 
@@ -667,7 +673,7 @@ function renderCockpit(d) {
 
   // 1. Synthèse professionnelle
   set('cockpit-completude', (c.score_completude != null ? c.score_completude : '–') + '/100');
-  set('cockpit-solidite',   (c.score_solidite   != null ? c.score_solidite   : '–') + '/100');
+  set('cockpit-solidite',   (c.score_solidite != null ? c.score_solidite : (ri.robustesse != null ? ri.robustesse : '–')) + '/100');
   set('cockpit-niveau', c.niveau || '–');
   const decMap = { GO: 'bg-green-100 text-green-700', GO_AVEC_RISQUES: 'bg-orange-100 text-orange-700', NO_GO: 'bg-red-100 text-red-700' };
   const decEl = document.getElementById('cockpit-decision');
@@ -694,7 +700,7 @@ function renderCockpit(d) {
   const rr = c.risques_refus || {};
   const rgEl = document.getElementById('cockpit-risque-global');
   if (rgEl) {
-    const rg = rr.risque_global || '–';
+    const rg = rr.risque_global || ri.risque_global || '–';
     rgEl.className = 'text-xs font-semibold px-2 py-0.5 rounded-full ' + riskCls(rg);
     rgEl.textContent = 'Global : ' + rg;
   }
@@ -704,6 +710,21 @@ function renderCockpit(d) {
        <div class="text-xs font-semibold">${esc(r.label || r.droit || '')} — ${esc(r.risque || '')}</div>
        <div class="text-xs mt-0.5 opacity-90">${esc(r.justification || '')}</div></div>`
   ).join('') : '<div class="text-xs text-gray-400 italic">Aucun risque identifié.</div>');
+
+  // Compléments de la revue instructeur : incohérences critiques + axes d'amélioration.
+  const riskEl = document.getElementById('cockpit-risques');
+  if (riskEl) {
+    const inco = ri.incoherences_critiques || [];
+    const axes = ri.axes || [];
+    let extra = '';
+    if (inco.length) extra += inco.map(x =>
+      `<div class="rounded-lg px-3 py-2 text-red-700 bg-red-50">
+         <div class="text-xs font-semibold">Incohérence à lever — ${esc(x)}</div></div>`).join('');
+    if (axes.length) extra +=
+      `<div class="text-xs font-semibold text-gray-500 mt-1">Axes d'amélioration</div>` +
+      axes.map(a => `<div class="rounded-lg px-3 py-2 text-facilim-700 bg-facilim-50 text-xs">${esc(a)}</div>`).join('');
+    if (extra) riskEl.insertAdjacentHTML('beforeend', extra);
+  }
 
   // 5. Preuves recommandées
   const pp = c.pieces_prioritaires || [];

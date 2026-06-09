@@ -666,6 +666,10 @@ def get_dossier(
     d["synthese"] = json.loads(d.get("synthese_json", "{}") or "{}")
     d["questions"] = json.loads(d.get("questions_json", "[]") or "[]")
     d["conversation"] = json.loads(d.get("conversation_json", "[]") or "[]")
+    # Rapport qualité (inclut les signaux experts de la revue instructeur :
+    # robustesse, risque de refus, axes d'amélioration) pour le cockpit.
+    d["rapport_qualite"] = json.loads(d.get("rapport_qualite_json", "{}") or "{}")
+    d["revue_instructeur"] = d["rapport_qualite"].get("revue_instructeur", {})
 
     # Consentement
     usager_row = db.execute("SELECT id FROM usagers WHERE id = ?", (d.get("usager_id", ""),)).fetchone()
@@ -2331,9 +2335,10 @@ def _generer_cerfa_pdf(dossier_id: str, db) -> tuple[str, bytes]:
     """
     Génère le PDF CERFA pour un dossier et retourne (pdf_path, pdf_bytes).
 
-    Utilise le moteur V2 (services/cerfa_filler.py — 2197 lignes, 20 pages)
-    via le pont V3→V2 (v2_bridge.py).
-    Fallback sur le field_mapper V3 si le moteur V2 est indisponible.
+    UNIQUE moteur de remplissage : V2 (services/cerfa_filler.py), via le pont
+    v2_bridge.py. Il n'y a plus de second moteur de secours : en cas d'échec V2,
+    on remonte une erreur claire plutôt que de produire silencieusement un CERFA
+    issu d'un autre moteur, source d'incohérences entre dossiers.
     """
     import os
     from datetime import datetime, timezone
@@ -2421,17 +2426,16 @@ def _generer_cerfa_pdf(dossier_id: str, db) -> tuple[str, bytes]:
     )
     output_path = os.path.join(storage_path, output_filename)
 
-    # ── Moteur V2 (priorité) ──────────────────────────────────────────────────
-    # CORRECTION FIX-TEST4 : SEULE la génération V2 peut déclencher le fallback V3.
-    # L'audit (hash, SELECT version, journalisation) et la persistance sont
-    # désormais NON BLOQUANTS — une erreur d'audit (ex. « no such column: version »
-    # observée sur le dossier TEST4) ne doit JAMAIS détruire un PDF V2 déjà généré.
+    # ── Moteur V2 (unique) ──────────────────────────────────────────────────
+    # L'audit (hash, SELECT version, journalisation) et la persistance sont NON
+    # BLOQUANTS — une erreur d'audit (ex. « no such column: version ») ne doit
+    # JAMAIS détruire un PDF V2 déjà généré.
     pdf_bytes = None
     try:
         from app.engines.pdf.v2_bridge import generer_cerfa_depuis_synthese
         pdf_bytes = generer_cerfa_depuis_synthese(donnees, service_type, num_mdph)
     except Exception as e_v2:
-        logger.warning("[CERFA V2] Génération V2 échouée (%s) — fallback V3", e_v2)
+        logger.error("[CERFA] Génération V2 échouée (%s) — aucune bascule, erreur remontée", e_v2)
         pdf_bytes = None
 
     if pdf_bytes is not None:
@@ -2487,21 +2491,18 @@ def _generer_cerfa_pdf(dossier_id: str, db) -> tuple[str, bytes]:
                     dossier_id[:8], len(pdf_bytes), (_synthese_hash[:8] or "—"))
         return output_path, pdf_bytes
 
-    # ── Fallback V3 (UNIQUEMENT si la génération V2 a réellement échoué) ───────
-    logger.warning("[CERFA V2] Fallback V3 activé pour dossier=%s (génération V2 indisponible)", dossier_id[:8])
-    from app.engines.pdf.cerfa_filler import CerfaFiller
-    from app.database.schemas import DossierCERFA
-    filler = CerfaFiller(db_conn=db, storage_path=storage_path)
-    result = filler.generer(
-        dossier_cerfa=DossierCERFA(),
-        dossier_id=dossier_id,
-        donnees_brutes=donnees,
-        service_type=service_type,
+    # ── Échec V2 : moteur UNIQUE, donc aucune bascule silencieuse vers un autre
+    #    moteur. On remonte une erreur explicite : mieux vaut pas de document qu'un
+    #    CERFA produit par un moteur divergent, source d'incohérences.
+    logger.error(
+        "[CERFA] Génération indisponible pour dossier=%s — aucune bascule de moteur, "
+        "erreur remontée au professionnel.", dossier_id[:8],
     )
-    if not result.success or not result.pdf_path:
-        raise HTTPException(status_code=500, detail=result.error or "Génération PDF échouée")
-    pdf_bytes = open(result.pdf_path, "rb").read()
-    return result.pdf_path, pdf_bytes
+    raise HTTPException(
+        status_code=503,
+        detail=("La génération du CERFA a échoué temporairement. Vérifiez les données du "
+                "dossier puis réessayez ; aucun document partiel n'est produit."),
+    )
 
 
 @app.get("/api/v1/dossiers/{dossier_id}/cerfa.pdf")
