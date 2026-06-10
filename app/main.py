@@ -3135,6 +3135,21 @@ def delete_dossier(
     now = datetime.now(timezone.utc).isoformat()
     db.execute("UPDATE dossiers SET deleted_at = ?, updated_at = ? WHERE id = ?",
                (now, now, dossier_id))
+    # Nettoyer les éléments rattachés : un dossier supprimé ne doit plus laisser
+    # d'alerte « fantôme » ni de relance dans le tableau de bord. Sans cela,
+    # l'alerte orpheline restait visible et, au clic (openDossier), faisait
+    # « réapparaître » le dossier. On ACQUITTE les alertes et on ANNULE les relances
+    # planifiées (pas de suppression dure : l'historique reste auditable).
+    try:
+        db.execute("UPDATE alertes SET acquittee = 1 WHERE dossier_id = ? AND acquittee = 0",
+                   (dossier_id,))
+    except Exception as _al_err:
+        logger.warning("[DELETE] acquittement alertes échoué pour %s : %s", dossier_id, _al_err)
+    try:
+        db.execute("UPDATE relances SET statut = 'ANNULEE' WHERE dossier_id = ? AND statut = 'PLANIFIEE'",
+                   (dossier_id,))
+    except Exception as _rl_err:
+        logger.warning("[DELETE] annulation relances échouée pour %s : %s", dossier_id, _rl_err)
     event_logger.log_event("DOSSIER_SUPPRIME", dossier_id=dossier_id,
                            utilisateur_id=user.get("sub"), canal="dashboard", db_conn=db)
     return {"success": True}
