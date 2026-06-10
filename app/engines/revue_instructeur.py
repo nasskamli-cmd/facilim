@@ -32,30 +32,30 @@ TYPE_ALERTE = "REVUE_INSTRUCTEUR"
 
 def points_d_attention(donnees: dict[str, Any], profil: str) -> list[dict[str, Any]]:
     """
-    Champs APPLICABLES au profil (via le dictionnaire CERFA), obligatoires, mais
-    restés vides et non refusés. Un champ refusé est déjà traité par ailleurs.
+    Champs APPLICABLES au profil, obligatoires, et NON fournis. Chacun est rendu
+    VISIBLE avec son état — 'en_attente' (à reposer à l'usager), 'a_completer_pro'
+    (l'usager ne sait pas → au professionnel) ou 'refuse' (refus explicite). On ne
+    masque AUCUN champ exigé : un champ délégué ou refusé reste signalé au pro.
     """
-    from app.services.collecte_schema import checklist_for, criticite_champ
-    from app.services.field_status import est_refuse
+    from app.services.collecte_schema import checklist_for, condition_remplie, criticite_champ
+    from app.services.field_status import statut_champ
 
     pts: list[dict[str, Any]] = []
     for item in checklist_for(profil):
         if not item.get("requis", True):
             continue
         cid = item["id"]
-        cond = item.get("condition")
-        if cond:
-            val = str(donnees.get(cond["champ"], "")).lower()
-            if not val.startswith(str(cond["valeur"]).lower()):
-                continue  # condition non remplie → champ non applicable ici
-        if est_refuse(donnees, cid):
+        if not condition_remplie(donnees, item.get("condition")):
+            continue  # condition non remplie → champ non applicable ici
+        etat = statut_champ(donnees, cid)
+        if etat == "fourni":
             continue
-        if not donnees.get(cid):
-            pts.append({
-                "id": cid,
-                "label": item.get("label", cid),
-                "bloquant": criticite_champ(cid) == "bloquant",
-            })
+        pts.append({
+            "id": cid,
+            "label": item.get("label", cid),
+            "etat": etat,                       # en_attente | a_completer_pro | refuse
+            "bloquant": criticite_champ(cid) == "bloquant",
+        })
     return pts
 
 
@@ -270,10 +270,19 @@ def validite_dossier(donnees: dict[str, Any], profil: str) -> dict[str, Any]:
     orientation_justifiee = (not orientation_demandee) or _a_projet
 
     try:
-        from app.services.field_status import finalisation_bloquee
+        from app.services.field_status import finalisation_bloquee, statut_champ
+        from app.services.conversation.base import CHAMPS_COEUR_SOLIDITE
         pas_de_blocage = not finalisation_bloquee(donnees)
+        # Dossier SOLIDE : le cœur substantiel (retentissement + attentes + projet)
+        # est réellement FOURNI — pas vide, pas seulement délégué/refusé. Empêche
+        # qu'un dossier creux (« une demande et rien d'autre ») passe en « prêt ».
+        coeur_manquant = [c for c in CHAMPS_COEUR_SOLIDITE
+                          if statut_champ(donnees, c) != "fourni"]
+        dossier_solide = not coeur_manquant
     except Exception:
         pas_de_blocage = True
+        dossier_solide = True
+        coeur_manquant = []
 
     manquants: list[str] = []
     if not au_moins_une_demande:
@@ -282,13 +291,18 @@ def validite_dossier(donnees: dict[str, Any], profil: str) -> dict[str, Any]:
         manquants.append("orientation professionnelle non justifiée (projet à préciser, page 16)")
     if not pas_de_blocage:
         manquants.append("un champ critique a été refusé (finalisation bloquée)")
+    if not dossier_solide:
+        manquants.append("cœur du dossier incomplet (retentissement / attentes / projet) : "
+                         + ", ".join(coeur_manquant))
 
     return {
-        "pret": au_moins_une_demande and orientation_justifiee and pas_de_blocage,
+        "pret": (au_moins_une_demande and orientation_justifiee
+                 and pas_de_blocage and dossier_solide),
         "criteres": {
             "au_moins_une_demande": au_moins_une_demande,
             "orientation_justifiee": orientation_justifiee,
             "pas_de_blocage": pas_de_blocage,
+            "dossier_solide": dossier_solide,
         },
         "manquants": manquants,
     }
@@ -362,14 +376,18 @@ def revue_dossier(
     # 2. Message bienveillant à la famille (optionnel) — seulement sur les champs manquants
     if notifier_famille and wa is not None and phone and pts:
         try:
-            manquants = ", ".join(p["label"] for p in pts[:6])
-            msg = (
-                "Avant de finaliser votre dossier, j'attire votre attention sur quelques "
-                "informations encore manquantes qui pourraient peser sur son traitement : "
-                f"{manquants}. Vous pouvez les compléter quand vous le souhaitez, "
-                "et un professionnel vérifiera l'ensemble."
-            )
-            wa.send_text(phone, msg, dossier_id=dossier_id, db_conn=db)
+            # Ne reposer à la famille QUE les champs encore en attente (ni refusés,
+            # ni délégués au pro) — ces derniers restent visibles côté professionnel.
+            _a_reposer = [p for p in pts if p.get("etat") == "en_attente"]
+            manquants = ", ".join(p["label"] for p in _a_reposer[:6])
+            if manquants:  # rien à reposer à la famille → pas de message
+                msg = (
+                    "Avant de finaliser votre dossier, j'attire votre attention sur quelques "
+                    "informations encore manquantes qui pourraient peser sur son traitement : "
+                    f"{manquants}. Vous pouvez les compléter quand vous le souhaitez, "
+                    "et un professionnel vérifiera l'ensemble."
+                )
+                wa.send_text(phone, msg, dossier_id=dossier_id, db_conn=db)
         except Exception as e:
             logger.warning("[REVUE] message famille échoué : %s", e)
 

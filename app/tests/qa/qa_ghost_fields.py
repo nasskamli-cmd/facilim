@@ -50,7 +50,6 @@ _FANTOMES_CONNUS = {
     "Case à cocher P2 contact courrier",
     "Case à cocher P2 contact email",
     "Case à cocher P2 contact tel",
-    "Champ de texte P2 5",
     "Champ de texte P3 NSS Parent",
     "Champ de texte P4 enfants",
     "Champ de texte P5 frais",

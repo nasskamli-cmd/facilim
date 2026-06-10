@@ -1450,7 +1450,8 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     # Lieu de naissance — uniquement si renseigné
     if commune_naissance:
         champs["Champ de texte P2 4"] = commune_naissance
-        champs["Champ de texte P2 5"] = commune_naissance   # doublon parfois présent dans le PDF
+        # (« Champ de texte P2 5 » n'existe pas dans le PDF — doublon fantôme retiré.
+        #  La commune est déjà écrite dans P2 4, champ réel. Aucune perte de donnée.)
     if departement_naissance:
         champs["Champ de texte P2 6"] = departement_naissance
     if pays_naissance and pays_naissance.lower() not in ("france", ""):

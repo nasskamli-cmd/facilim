@@ -19,7 +19,22 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
-from app.services.field_status import est_refuse, finalisation_bloquee
+from app.services.field_status import (
+    est_a_completer_pro,
+    est_refuse,
+    finalisation_bloquee,
+    statut_champ,
+)
+
+# Cœur substantiel d'un dossier MDPH « solide » : ces champs ne peuvent PAS être
+# tous délégués/refusés sans vider le dossier de son sens. Un dossier n'est
+# « prêt à transmettre » que s'ils sont réellement FOURNIS (cf. dossier_solide).
+CHAMPS_COEUR_SOLIDITE = (
+    "impact_quotidien",     # retentissement (B) — ce que la MDPH évalue
+    "aides_en_place",       # besoins de compensation (B2)
+    "attentes_usager",      # attentes (E) — autodétermination
+    "projet_de_vie",        # projet de vie (E)
+)
 
 logger = logging.getLogger("facilim.conversation")
 
@@ -85,48 +100,83 @@ class ConversationAgent(ABC):
                 return f"Merci. Pourriez-vous me préciser : {manquants[0]} ?"
             return "Merci pour vos informations. — L'équipe Facilim"
 
+    def _applicable(self, item: dict, donnees: dict[str, Any]) -> bool:
+        """True si un champ requis est applicable ici (condition remplie)."""
+        if not item.get("requis", True):
+            return False
+        from app.services.collecte_schema import condition_remplie
+        return condition_remplie(donnees, item.get("condition"))
+
     def missing_fields(self, donnees: dict[str, Any]) -> list[str]:
-        """Retourne les libellés des champs obligatoires non encore renseignés."""
-        missing = []
-        for item in self.CHECKLIST:
-            if not item.get("requis", True):
-                continue
-            cond = item.get("condition")
-            if cond:
-                val = str(donnees.get(cond["champ"], "")).lower()
-                if not val.startswith(cond["valeur"].lower()):
-                    continue
-            if est_refuse(donnees, item["id"]):
-                continue  # la famille a refusé : champ traité et signalé, ne pas redemander
-            if not donnees.get(item["id"]):
-                missing.append(item["label"])
-        return missing
+        """
+        Libellés des champs obligatoires encore À POSER À L'USAGER. Exclut les
+        champs refusés ET ceux délégués au professionnel (« à compléter par pro ») :
+        on ne les repose pas à l'usager — mais ils restent comptés et VISIBLES
+        ailleurs (synthese_completude / points_d_attention), jamais effacés.
+        """
+        return [it["label"] for it in self.CHECKLIST
+                if self._applicable(it, donnees)
+                and statut_champ(donnees, it["id"]) == "en_attente"]
 
     def missing_field_ids(self, donnees: dict[str, Any]) -> list[str]:
-        """Comme missing_fields() mais retourne les IDS — utilisé pour la détection de refus."""
-        ids = []
-        for item in self.CHECKLIST:
-            if not item.get("requis", True):
+        """Comme missing_fields() mais retourne les IDS (détection refus / relance)."""
+        return [it["id"] for it in self.CHECKLIST
+                if self._applicable(it, donnees)
+                and statut_champ(donnees, it["id"]) == "en_attente"]
+
+    def etat_par_champ(self, donnees: dict[str, Any]) -> list[dict[str, str]]:
+        """
+        État de CHAQUE champ requis applicable : 'fourni' | 'refuse' |
+        'a_completer_pro' | 'en_attente'. Aucun champ exigé n'est masqué.
+        """
+        out: list[dict[str, str]] = []
+        for it in self.CHECKLIST:
+            if not self._applicable(it, donnees):
                 continue
-            cond = item.get("condition")
-            if cond:
-                val = str(donnees.get(cond["champ"], "")).lower()
-                if not val.startswith(cond["valeur"].lower()):
-                    continue
-            if est_refuse(donnees, item["id"]):
-                continue
-            if not donnees.get(item["id"]):
-                ids.append(item["id"])
-        return ids
+            out.append({
+                "id": it["id"],
+                "label": it.get("label", it["id"]),
+                "etat": statut_champ(donnees, it["id"]),
+            })
+        return out
+
+    def synthese_completude(self, donnees: dict[str, Any]) -> dict[str, Any]:
+        """
+        Synthèse de complétude différenciée d'un dossier. Distingue clairement
+        complet / en_attente / à compléter par pro / refusé, sans rien masquer.
+        """
+        etats = self.etat_par_champ(donnees)
+        par = {e["etat"]: [] for e in etats}
+        for e in etats:
+            par.setdefault(e["etat"], []).append(e)
+        requis = len(etats)
+        fournis = len(par.get("fourni", []))
+        return {
+            "requis_total": requis,
+            "fournis": fournis,
+            "en_attente": [e["label"] for e in par.get("en_attente", [])],
+            "a_completer_pro": [e["label"] for e in par.get("a_completer_pro", [])],
+            "refuses": [e["label"] for e in par.get("refuse", [])],
+            "taux_completude": round(fournis / requis, 2) if requis else 1.0,
+        }
+
+    def dossier_solide(self, donnees: dict[str, Any]) -> bool:
+        """
+        True si le CŒUR substantiel du dossier est réellement FOURNI (pas vide, pas
+        refusé, pas seulement délégué). Empêche qu'un dossier creux passe « prêt ».
+        """
+        return all(statut_champ(donnees, cid) == "fourni" for cid in CHAMPS_COEUR_SOLIDITE)
 
     def is_complete(self, donnees: dict[str, Any]) -> bool:
+        """
+        COLLECTE RÉSOLUE côté usager : plus aucun champ requis « en_attente » (tout
+        est fourni, refusé ou délégué au pro) ET aucun champ bloquant refusé. C'est
+        le signal de fin de collecte (stoppe les relances), PAS le feu vert de
+        transmission : un dossier « prêt à transmettre » exige en plus dossier_solide
+        (cf. revue_instructeur.validite_dossier) — un dossier creux ne passe jamais.
+        """
         if self.missing_fields(donnees):
             return False
-        # Un champ BLOQUANT refusé n'autorise JAMAIS la finalisation : missing_fields
-        # l'ignore volontairement (pour ne pas le redemander en boucle), mais un CERFA
-        # amputé d'une donnée légalement critique (n° sécu, date de naissance, adresse,
-        # droits demandés) ne doit pas être généré/transmis sans blocage dur. La main
-        # revient alors à l'humain.
         return not finalisation_bloquee(donnees)
 
     # ── Contexte dynamique (onglet + données) ────────────────────────────────

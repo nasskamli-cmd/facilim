@@ -624,11 +624,22 @@ class OrchestrationEngine:
             # Si la famille refuse : marque le champ (jamais inventé), message
             # bienveillant à la famille, alerte au professionnel. Non bloquant.
             try:
-                from app.services.refus_handler import traiter_refus_eventuel
-                traiter_refus_eventuel(
+                from app.services.refus_handler import (
+                    traiter_ne_sait_pas_eventuel,
+                    traiter_refus_eventuel,
+                )
+                _refuse_id = traiter_refus_eventuel(
                     donnees, text or "", _manquants_avant_ids, _id_to_label,
                     self.wa, self.db, dossier_id, phone_wa,
                 )
+                # Si ce n'était pas un refus, c'est peut-être un « je ne sais pas » :
+                # on délègue alors le champ au professionnel (évite la boucle/abandon),
+                # sans jamais l'effacer ni inventer de valeur.
+                if not _refuse_id:
+                    traiter_ne_sait_pas_eventuel(
+                        donnees, text or "", _manquants_avant_ids, _id_to_label,
+                        self.wa, self.db, dossier_id, phone_wa,
+                    )
             except Exception as _refus_err:
                 logger.warning("[REFUS] traitement non bloquant : %s", _refus_err)
 
@@ -641,10 +652,15 @@ class OrchestrationEngine:
             #    pour une relance DOUCE (« sauf erreur de ma part… »), sans insister ni
             #    confondre avec un refus.
             try:
-                from app.services.field_status import est_refuse as _est_refuse
+                from app.services.field_status import (
+                    est_refuse as _est_refuse,
+                    est_a_completer_pro as _est_acp,
+                )
                 donnees["_champs_oublies"] = [
                     fid for fid in (_manquants_avant_ids or [])
-                    if not donnees.get(fid) and not _est_refuse(donnees, fid)
+                    if not donnees.get(fid)
+                    and not _est_refuse(donnees, fid)
+                    and not _est_acp(donnees, fid)   # délégué au pro → ne pas relancer l'usager
                 ]
             except Exception:
                 donnees["_champs_oublies"] = []

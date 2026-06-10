@@ -29,6 +29,14 @@ except Exception:
 from app.engines.revue_instructeur import validite_dossier
 from app.services.field_status import marquer_refus
 
+# Cœur substantiel d'un dossier solide (sinon « pas prêt », même avec une demande).
+_COEUR = {
+    "impact_quotidien": "fatigue importante, douleurs au quotidien",
+    "aides_en_place": "aide de ma compagne pour les courses",
+    "attentes_usager": "besoin d'une reconnaissance et d'aides",
+    "projet_de_vie": "rester autonome à domicile",
+}
+
 
 def run() -> bool:
     res: dict[str, bool] = {}
@@ -36,25 +44,32 @@ def run() -> bool:
     v1 = validite_dossier({}, "adulte")
     res["QA-VAL-1 — sans demande → pas prêt"] = (v1["pret"] is False) and not v1["criteres"]["au_moins_une_demande"]
 
-    v2 = validite_dossier({"droits_demandes": "AAH"}, "adulte")
-    res["QA-VAL-2 — demande sans orientation → prêt"] = v2["pret"] is True
+    # Demande + cœur solide, sans orientation pro → prêt.
+    v2 = validite_dossier({"droits_demandes": "AAH", **_COEUR}, "adulte")
+    res["QA-VAL-2 — demande + cœur solide → prêt"] = v2["pret"] is True
 
-    v3 = validite_dossier({"droits_demandes": "RQTH, orientation professionnelle"}, "adulte")
+    v3 = validite_dossier({"droits_demandes": "RQTH, orientation professionnelle", **_COEUR}, "adulte")
     res["QA-VAL-3 — orientation sans projet → pas prêt"] = (
         v3["pret"] is False and not v3["criteres"]["orientation_justifiee"]
     )
 
     v4 = validite_dossier(
         {"droits_demandes": "RQTH, orientation professionnelle",
-         "projet_professionnel": "reconversion via ESRP"}, "adulte",
+         "projet_professionnel": "reconversion via ESRP", **_COEUR}, "adulte",
     )
-    res["QA-VAL-4 — orientation + projet → prêt"] = v4["pret"] is True
+    res["QA-VAL-4 — orientation + projet + cœur → prêt"] = v4["pret"] is True
 
-    d5 = {"droits_demandes": "AAH"}
+    d5 = {"droits_demandes": "AAH", **_COEUR}
     marquer_refus(d5, "num_secu", "je ne veux pas donner mon numéro")
     v5 = validite_dossier(d5, "adulte")
     res["QA-VAL-5 — champ critique refusé → pas prêt"] = (
         v5["pret"] is False and not v5["criteres"]["pas_de_blocage"]
+    )
+
+    # Dossier creux (une demande, cœur vide) → PAS prêt (critère validation clé).
+    v6 = validite_dossier({"droits_demandes": "AAH"}, "adulte")
+    res["QA-VAL-6 — dossier creux → pas prêt"] = (
+        v6["pret"] is False and not v6["criteres"]["dossier_solide"]
     )
 
     print("=" * 64)

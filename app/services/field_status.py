@@ -8,10 +8,18 @@ prévient la famille avec bienveillance, et on alerte le professionnel.
 Tout vit dans synthese_json["_champs_metadata"], déjà persisté avec le dossier.
 Aucune table à créer.
 
-États possibles d'un champ :
-  - "fourni"      : la famille a répondu (valeur présente dans les données)
-  - "refuse"      : la famille a refusé / préféré ne pas répondre
-  - "en_attente"  : ni renseigné ni refusé (collecte à poursuivre)
+États possibles d'un champ (modèle de complétude différenciée) :
+  - "fourni"           : l'usager a répondu (valeur présente dans les données)
+  - "refuse"           : l'usager a explicitement refusé de répondre
+  - "a_completer_pro"  : l'usager ne sait pas / ne peut pas → délégué au pro
+                         (la donnée reste EXIGÉE et VISIBLE, juste plus posée à l'usager)
+  - "en_attente"       : ni renseigné, ni refusé, ni délégué (collecte à poursuivre)
+  - "non_applicable"   : champ conditionnel dont la condition n'est pas remplie
+                         (porté par la checklist, pas par les métadonnées)
+
+Principe : on ne transforme JAMAIS un champ exigé en facultatif silencieux. Un champ
+exigé non fourni reste compté comme manquant — soit à reposer à l'usager, soit à
+compléter par le professionnel, soit refusé — mais jamais invisible.
 """
 
 from __future__ import annotations
@@ -22,6 +30,7 @@ META_KEY = "_champs_metadata"
 
 FOURNI = "fourni"
 REFUSE = "refuse"
+A_COMPLETER_PRO = "a_completer_pro"
 EN_ATTENTE = "en_attente"
 
 _VIDES = (None, "", 0, [])
@@ -37,18 +46,28 @@ def _meta(donnees: dict[str, Any]) -> dict[str, Any]:
 
 
 def statut_champ(donnees: dict[str, Any], field_id: str) -> str:
-    """Statut courant d'un champ : refuse > fourni > en_attente."""
-    meta = donnees.get(META_KEY) or {}
-    entry = meta.get(field_id)
-    if isinstance(entry, dict) and entry.get("statut") == REFUSE:
-        return REFUSE
+    """
+    Statut courant d'un champ. Priorité : valeur présente → fourni ; sinon le
+    statut explicite (refuse / a_completer_pro) ; sinon en_attente.
+    Une valeur réellement fournie prime sur tout marquage antérieur.
+    """
     if donnees.get(field_id) not in _VIDES:
         return FOURNI
+    meta = donnees.get(META_KEY) or {}
+    entry = meta.get(field_id)
+    if isinstance(entry, dict):
+        st = entry.get("statut")
+        if st in (REFUSE, A_COMPLETER_PRO):
+            return st
     return EN_ATTENTE
 
 
 def est_refuse(donnees: dict[str, Any], field_id: str) -> bool:
     return statut_champ(donnees, field_id) == REFUSE
+
+
+def est_a_completer_pro(donnees: dict[str, Any], field_id: str) -> bool:
+    return statut_champ(donnees, field_id) == A_COMPLETER_PRO
 
 
 def marquer_refus(donnees: dict[str, Any], field_id: str, message_personne: str = "") -> None:
@@ -80,6 +99,50 @@ def champs_bloquants_refuses(donnees: dict[str, Any]) -> list[str]:
 def finalisation_bloquee(donnees: dict[str, Any]) -> bool:
     """True si au moins un champ critique a été refusé (gate de finalisation pro)."""
     return len(champs_bloquants_refuses(donnees)) > 0
+
+
+# ── « À compléter par le professionnel » ─────────────────────────────────────
+# Quand l'usager ne SAIT pas / ne PEUT pas répondre, on ne boucle pas et on
+# n'invente pas : le champ EXIGÉ est délégué au professionnel. Il reste manquant
+# et visible (liste dédiée), mais n'est plus reposé à l'usager.
+
+def marquer_a_completer_pro(donnees: dict[str, Any], field_id: str, raison: str = "") -> None:
+    """
+    Marque un champ exigé comme « à compléter par le professionnel ». N'écrit
+    aucune valeur : le champ reste vide, son statut est enregistré. Réversible
+    (une valeur fournie ensuite reprend le dessus, cf. statut_champ).
+    """
+    meta = _meta(donnees)
+    meta[field_id] = {
+        "statut": A_COMPLETER_PRO,
+        "raison": (raison or "").strip()[:300],
+    }
+
+
+def champs_a_completer_pro(donnees: dict[str, Any]) -> list[str]:
+    """Liste des ids de champs délégués au professionnel (encore vides)."""
+    meta = donnees.get(META_KEY) or {}
+    return [fid for fid, e in meta.items()
+            if isinstance(e, dict) and e.get("statut") == A_COMPLETER_PRO
+            and donnees.get(fid) in _VIDES]
+
+
+# Détection « je ne sais pas » (distincte d'un refus : l'usager n'oppose pas un
+# refus, il n'a simplement pas l'information → délégation au pro, pas blocage).
+import unicodedata as _ud
+
+_NE_SAIT_PAS_PATTERNS = (
+    "je ne sais pas", "je sais pas", "j en sais rien", "aucune idee",
+    "je ne sais plus", "je sais plus", "je ne me souviens pas",
+    "je ne me rappelle pas", "pas sur", "pas sure", "je l ignore", "aucune idée",
+)
+
+
+def phrase_ne_sait_pas(text: str) -> bool:
+    """True si le message exprime une absence d'information (et non un refus)."""
+    t = _ud.normalize("NFD", (text or "").lower())
+    t = "".join(c for c in t if _ud.category(c) != "Mn")
+    return any(p in t for p in _NE_SAIT_PAS_PATTERNS)
 
 
 # ── Détection d'un refus exprimé par la famille ───────────────────────────────

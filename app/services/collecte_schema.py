@@ -194,6 +194,26 @@ def checklist_for(profil: str) -> list[dict]:
     return items
 
 
+def condition_remplie(donnees: dict[str, Any], condition: dict | None) -> bool:
+    """
+    Évalue la condition d'applicabilité d'un champ (source unique, partagée par la
+    collecte, la revue et l'extraction). Formes supportées :
+      - {"champ": X, "valeur": "y"}      → la valeur de X commence par « y »
+      - {"champ": X, "valeur_in": [...]} → la valeur de X commence par l'une d'elles
+      - {"champ": X, "present": True}    → X est renseigné (non vide)
+    Pas de condition → champ toujours applicable.
+    """
+    if not condition:
+        return True
+    brut = donnees.get(condition.get("champ"))
+    if condition.get("present"):
+        return brut not in (None, "", 0, [])
+    val = str(brut or "").lower()
+    if "valeur_in" in condition:
+        return any(val.startswith(str(v).lower()) for v in condition["valeur_in"])
+    return val.startswith(str(condition.get("valeur", "")).lower())
+
+
 # ── Normalisation (compat structuré ↔ legacy) — fonction PURE ────────────────
 def normaliser_collecte(donnees: dict[str, Any]) -> dict[str, Any]:
     """

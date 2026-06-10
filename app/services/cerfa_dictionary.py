@@ -233,6 +233,10 @@ SECTION_D: list[dict[str, Any]] = [
         "section": "D",
         "profils": ("adulte", "mixte", "protege"),
         "requis": True,
+        # Conditionnel : ne se pose QUE si la personne a un lien avec l'emploi
+        # (en emploi ou en arrêt maladie). Sans travail, « conséquences sur le
+        # travail » n'a pas d'objet → champ non applicable (ni demandé ni manquant).
+        "condition": {"champ": "situation_professionnelle", "valeur_in": ["emploi", "arret"]},
         "extractible": True,
         "label": "Conséquences de la santé sur le travail",
         "question": "Votre santé a-t-elle des conséquences sur votre travail : fatigabilité, restrictions, inaptitude, besoin d'aménagement du poste ?",
@@ -253,6 +257,9 @@ SECTION_D: list[dict[str, Any]] = [
         "section": "D",
         "profils": ("adulte", "mixte", "protege"),
         "requis": True,
+        # Conditionnel : ne se pose QUE si un projet professionnel est exprimé
+        # (la question d'accompagnement vers/dans l'emploi découle d'un projet).
+        "condition": {"champ": "projet_professionnel", "present": True},
         "extractible": True,
         "label": "Besoin d'accompagnement vers ou dans l'emploi",
         "question": "Avez-vous besoin d'un accompagnement pour trouver ou garder un emploi (emploi accompagné, ESRP, ou milieu protégé type ESAT) ?",

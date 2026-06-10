@@ -465,11 +465,9 @@ def detect_missing_fields(donnees: dict[str, Any], profil_mdph: str = "inconnu")
         if not item.get("requis", True):
             continue
         # Champs conditionnels : évaluer la condition avant d'exiger le champ
-        condition = item.get("condition")
-        if condition:
-            valeur_condition = str(donnees.get(condition["champ"], "")).lower()
-            if not valeur_condition.startswith(condition["valeur"].lower()):
-                continue  # condition non remplie → champ ignoré pour l'instant
+        from app.services.collecte_schema import condition_remplie
+        if not condition_remplie(donnees, item.get("condition")):
+            continue  # condition non remplie → champ ignoré pour l'instant
         if not donnees.get(item["id"]):
             missing.append(item["label"])
     return missing
