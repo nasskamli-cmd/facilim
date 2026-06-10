@@ -238,6 +238,62 @@ def analyses_expertes(donnees: dict[str, Any], profil: str) -> dict[str, Any]:
     return out
 
 
+def validite_dossier(donnees: dict[str, Any], profil: str) -> dict[str, Any]:
+    """
+    Validité MÉTIER d'un dossier (« ouvre des droits »), distincte du taux de
+    remplissage. Conforme à la cartographie : un dossier est « prêt » seulement si
+      - au moins une demande de droit est exprimée,
+      - toute orientation professionnelle est justifiée (projet renseigné, page 16),
+      - aucune donnée critique refusée ne bloque la finalisation.
+    (La fidélité du récit et l'absence de données prescripteur sont garanties en
+     amont : garde-fou anti-invention du narratif et cloisonnement à l'extraction.)
+    Retourne {"pret": bool, "criteres": {...}, "manquants": [str]}.
+    """
+    droits = donnees.get("droits_demandes") or donnees.get("droits")
+    droits_txt = ""
+    if isinstance(droits, str):
+        droits_txt = droits.upper()
+    elif isinstance(droits, dict):
+        droits_txt = " ".join(k.upper() for k, v in droits.items() if v)
+    elif isinstance(droits, (list, tuple)):
+        droits_txt = " ".join(str(d).upper() for d in droits)
+
+    au_moins_une_demande = bool(droits_txt.strip())
+
+    _orient_tokens = ("ORIENTATION PROFESSIONNELLE", "ORIENTATION PRO", "RQTH",
+                      "CRP", "ESRP", "CPO", "ESPO", "UEROS", "ESAT", "RECLASSEMENT")
+    orientation_demandee = any(t in droits_txt for t in _orient_tokens)
+    _a_projet = any(
+        str(donnees.get(k, "") or "").strip()
+        for k in ("projet_professionnel", "projet_orientation", "situation_professionnelle")
+    )
+    orientation_justifiee = (not orientation_demandee) or _a_projet
+
+    try:
+        from app.services.field_status import finalisation_bloquee
+        pas_de_blocage = not finalisation_bloquee(donnees)
+    except Exception:
+        pas_de_blocage = True
+
+    manquants: list[str] = []
+    if not au_moins_une_demande:
+        manquants.append("aucune demande de droit exprimée")
+    if not orientation_justifiee:
+        manquants.append("orientation professionnelle non justifiée (projet à préciser, page 16)")
+    if not pas_de_blocage:
+        manquants.append("un champ critique a été refusé (finalisation bloquée)")
+
+    return {
+        "pret": au_moins_une_demande and orientation_justifiee and pas_de_blocage,
+        "criteres": {
+            "au_moins_une_demande": au_moins_une_demande,
+            "orientation_justifiee": orientation_justifiee,
+            "pas_de_blocage": pas_de_blocage,
+        },
+        "manquants": manquants,
+    }
+
+
 def revue_dossier(
     donnees: dict[str, Any],
     profil: str,
@@ -255,10 +311,11 @@ def revue_dossier(
     pts = points_d_attention(donnees, profil)
     coherence = controles_coherence(donnees, profil)
     expert = analyses_expertes(donnees, profil)
+    validite = validite_dossier(donnees, profil)
     _risque_eleve = expert.get("risque_global") == "élevé"
     if not pts and not coherence and not _risque_eleve and not expert.get("incoherences_critiques"):
         logger.info("[REVUE] dossier=%s : aucun point d'attention", dossier_id)
-        return {"points": [], "coherence": [], "bloquants": 0, "expert": expert}
+        return {"points": [], "coherence": [], "bloquants": 0, "expert": expert, "validite": validite}
 
     bloquants = [p for p in pts if p["bloquant"]]
     rouges = [c for c in coherence if c.get("niveau") == "ROUGE"]
@@ -325,4 +382,5 @@ def revue_dossier(
         "coherence": coherence,
         "bloquants": len(bloquants) + len(rouges),
         "expert": expert,
+        "validite": validite,
     }
