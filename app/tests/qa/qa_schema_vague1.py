@@ -4,7 +4,8 @@ app/tests/qa/qa_schema_vague1.py
 QA-SCHEMA-1→5 — Vague 1 (NIVEAU A) : checklist unique + champs structurés bout-en-bout.
 
   QA-SCHEMA-1 : structure — checklist unique (agents = checklist_for), NIVEAU A présent, pas de doublon, modèle parallèle déprécié.
-  QA-SCHEMA-2 : collecte — les nouveaux ids existent ; is_complete INCHANGÉ (NIVEAU A non requis).
+  QA-SCHEMA-2 : validité MÉTIER — les nouveaux ids existent ; un dossier valide est « prêt »
+                (validite_dossier.pret), un dossier creux ne l'est PAS (exigence maintenue).
   QA-SCHEMA-3 : synthèse — normaliser_collecte : droits.* → droits_demandes ; champs structurés préservés ; idempotent.
   QA-SCHEMA-4 : cockpit — facilim_prod consomme un dossier structuré (cockpit généré).
   QA-SCHEMA-5 : CERFA — build_field_map mappe avq_* → P6/P7, droits.* → P17, prenom/nom_naissance → P2.
@@ -59,19 +60,29 @@ def main():
     s1 = s1 and ("DÉPRÉCIÉ (Vague 1)" in src_ce)
     res["QA-SCHEMA-1 — checklist unique + NIVEAU A + parallèle déprécié"] = s1
 
-    # ── QA-SCHEMA-2 : nouveaux champs + is_complete inchangé ──
+    # ── QA-SCHEMA-2 : validité MÉTIER (doctrine du renforcement légitime) ──
+    # Le « prêt » ne se mesure plus en taux de remplissage (is_complete) mais en
+    # VALIDITÉ : au moins une demande, orientation justifiée, cœur réellement fourni,
+    # pas de blocage. On NE baisse AUCUNE exigence — preuve : un dossier creux reste
+    # NON prêt. (Ancien test : is_complete sur un dossier « ancien-complet » — notion
+    # périmée car le cœur métier pouvait être vide.)
+    from app.engines.revue_instructeur import validite_dossier
     new_present = all(x in a_ids for x in NIVEAU_A_IDS)
-    # dossier complet sur les ANCIENS requis (sans NIVEAU A) → is_complete True (NIVEAU A non requis)
-    d_old_complet = {
-        "nom_prenom": "DURAND Marie", "date_naissance": "01/01/1980", "genre": "F",
-        "adresse_complete": "1 rue X 75000 Paris", "num_secu": "280017512300120",
-        "telephone": "0600000000", "departement": "75", "situation_familiale": "celibataire",
-        "enfants_a_charge": "0", "diagnostics": "X", "traitements": "Y",
-        "medecin_traitant": "Dr Z", "impact_quotidien": "limitations", "historique_mdph": "1ere",
-        "qualification_section_c": "non", "qualification_section_d": "non",
+    _coeur = {
+        "impact_quotidien": "ne peut rester debout longtemps, douleurs au quotidien",
+        "aides_en_place": "aide d'un proche pour les courses et le ménage",
+        "attentes_usager": "obtenir une reconnaissance et des aides adaptées",
+        "projet_de_vie": "rester autonome à domicile",
     }
-    s2 = new_present and (AG.is_complete(d_old_complet) is True)
-    res["QA-SCHEMA-2 — nouveaux champs présents + is_complete inchangé"] = s2
+    d_valide = {"nom_prenom": "DURAND Marie", "date_naissance": "01/01/1980",
+                "droits_demandes": "AAH", **_coeur}
+    d_creux = {"droits_demandes": "AAH"}   # une demande mais cœur vide
+    s2 = (
+        new_present
+        and validite_dossier(d_valide, "adulte")["pret"] is True       # valide → prêt
+        and validite_dossier(d_creux, "adulte")["pret"] is False        # creux → PAS prêt (exigence tenue)
+    )
+    res["QA-SCHEMA-2 — validité métier : dossier valide prêt, creux non prêt"] = s2
 
     # ── QA-SCHEMA-3 : normalisation ──
     n = normaliser_collecte({"droits": {"aah": True, "rqth": True, "cmi_invalidite": True},

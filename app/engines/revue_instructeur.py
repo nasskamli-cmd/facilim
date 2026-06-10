@@ -59,6 +59,76 @@ def points_d_attention(donnees: dict[str, Any], profil: str) -> list[dict[str, A
     return pts
 
 
+# Domaines AVQ (les « cases » structurées P6/P7) ↔ mots-clés attendus dans le récit.
+_AVQ_DOMAINES = {
+    "avq_toilette":            ("Toilette / hygiène",       ("toilette", "se laver", "douche", "hygiène", "laver")),
+    "avq_habillage":           ("Habillage",                ("habiller", "habillage", "vêtir", "vetir")),
+    "avq_repas":               ("Repas / alimentation",     ("repas", "manger", "cuisine", "alimentation", "préparer à manger")),
+    "avq_deplacements":        ("Déplacements / mobilité",  ("déplace", "deplace", "marche", "sortir", "mobilité", "fauteuil", "transport")),
+    "avq_gestion_quotidienne": ("Gestion du quotidien",     ("démarches", "demarches", "gérer", "gerer", "budget", "papiers", "administrat", "organiser")),
+}
+
+
+def coherence_cases_recit(donnees: dict[str, Any]) -> list[dict[str, Any]]:
+    """
+    Cohérence BIDIRECTIONNELLE entre les cases (besoins AVQ structurés) et le récit
+    (texte_b / description). Le doute de l'instructeur se paie en refus.
+      - case → récit : un besoin coché mais absent du récit est signalé (à expliciter).
+      - récit/verbatim → case : une difficulté évoquée par la personne mais SANS case
+        AVQ renseignée est signalée (retentissement possiblement perdu, à qualifier).
+    Déterministe, ne crée AUCUNE case ni AUCUN texte : signale seulement au pro.
+    """
+    from app.services.collecte_schema import AVQ_BESOIN_AIDE
+    alertes: list[dict[str, Any]] = []
+    recit = (str(donnees.get("texte_b_vie_quotidienne", "") or "") + " "
+             + str(donnees.get("description_situation", "") or "")).lower()
+    verbatim = (str(donnees.get("impact_quotidien", "") or "") + " "
+                + str(donnees.get("expression_directe", "") or "") + " "
+                + str(donnees.get("difficultes_quotidiennes", "") or "")).lower()
+    recit_existe = len(recit.strip()) > 30
+
+    _impact = str(donnees.get("impact_quotidien", "") or "").lower()
+    for champ, (libelle, mots) in _AVQ_DOMAINES.items():
+        niveau = str(donnees.get(champ, "") or "").strip().upper()
+        besoin = niveau in AVQ_BESOIN_AIDE
+        non_renseigne = (niveau == "")
+        dans_recit = any(m in recit for m in mots)
+        dans_verbatim = any(m in verbatim for m in mots)
+        dans_impact = any(m in _impact for m in mots)
+
+        # CONTRADICTION (avocat du diable doux) : évalué AUTONOME mais évoqué dans les
+        # DIFFICULTÉS (impact quotidien) → l'évaluation sous-estime peut-être le réel.
+        # C'est l'exemple-type de la doctrine (« 40 min à s'habiller mais répond ça va »).
+        # Signal NON bloquant : le pro vérifie et écarte si c'est un faux positif.
+        if niveau == "AUTONOME" and dans_impact:
+            alertes.append({
+                "niveau": "ORANGE",
+                "label": (f"À vérifier : « {libelle} » est évalué AUTONOME, mais la personne "
+                          "l'évoque dans ses difficultés. L'évaluation sous-estime peut-être le "
+                          "retentissement réel — reformuler la question pour en avoir le cœur net."),
+            })
+
+        # case → récit : un besoin coché doit se retrouver dans le récit.
+        if besoin and recit_existe and not dans_recit:
+            alertes.append({
+                "niveau": "ORANGE",
+                "label": (f"Cohérence case/récit : « {libelle} » est coché comme un besoin "
+                          "mais n'apparaît pas dans le récit — l'instructeur risque le doute. "
+                          "À expliciter dans le texte de la vie quotidienne."),
+            })
+
+        # récit/verbatim → case : difficulté évoquée mais aucune case AVQ renseignée.
+        if dans_verbatim and non_renseigne:
+            alertes.append({
+                "niveau": "ORANGE",
+                "label": (f"Cohérence récit/case : la personne évoque « {libelle} » mais aucune "
+                          "évaluation (case AVQ) n'est renseignée — retentissement possiblement "
+                          "perdu, à qualifier avec elle."),
+            })
+
+    return alertes
+
+
 def controles_coherence(donnees: dict[str, Any], profil: str) -> list[dict[str, Any]]:
     """
     Contrôles de cohérence d'un instructeur senior, au niveau des DONNÉES
@@ -126,6 +196,26 @@ def controles_coherence(donnees: dict[str, Any], profil: str) -> list[dict[str, 
                 "label": (f"Le certificat médical daterait de {_annee_cert} : possiblement de plus "
                           f"d'un an. La MDPH exige un certificat de moins d'un an, à vérifier."),
             })
+
+    # 3 bis-2. Pièces attendues selon la situation (réutilise justificatifs_engine).
+    #          Un dossier complet ne se fait pas refuser sur la forme : on remonte au
+    #          professionnel toute pièce OBLIGATOIRE manquante tant qu'elle est encore
+    #          corrigeable (GEVASco scolaire, identité, domicile, pièces par droit…).
+    #          Le certificat médical est déjà traité ci-dessus (fraîcheur < 1 an).
+    try:
+        from app.engines.justificatifs_engine import justificatifs_requis
+        for _j in justificatifs_requis(donnees, profil):
+            if not getattr(_j, "obligatoire", False):
+                continue
+            if "certificat" in _j.nom.lower():
+                continue  # déjà couvert par le contrôle de fraîcheur ci-dessus
+            _niv = "ROUGE" if "gevasco" in _j.nom.lower() else "ORANGE"
+            alertes.append({
+                "niveau": _niv,
+                "label": f"Pièce obligatoire à joindre : {_j.nom} — {_j.raison}.",
+            })
+    except Exception as _pieces_err:
+        logger.debug("[REVUE] pièces attendues non évaluées : %s", _pieces_err)
 
     # 3 ter. Cohérence âge ↔ droit (page 17). Avant 20 ans c'est l'AEEH, à partir
     #        de 20 ans l'AAH : une demande hors tranche est une faute classique
@@ -203,6 +293,35 @@ def controles_coherence(donnees: dict[str, Any], profil: str) -> list[dict[str, 
             })
     except Exception as _e:
         logger.debug("[REVUE] contrôle de couverture non bloquant : %s", _e)
+
+    # 5. Cohérence BIDIRECTIONNELLE case ↔ récit (besoins AVQ ↔ texte de vie quotidienne).
+    try:
+        alertes.extend(coherence_cases_recit(donnees))
+    except Exception as _e:
+        logger.debug("[REVUE] cohérence case/récit non bloquante : %s", _e)
+
+    # 6. Conclusions d'aide AMBIGUËS dans le récit, non étayées par les DONNÉES DÉCLARÉES :
+    #    on ne les rejette pas (la traduction est parfois légitime), on demande au pro de
+    #    les étayer ou de les préciser. Avocat du diable doux, jamais bloquant.
+    try:
+        from app.services.anti_invention import conclusions_a_etayer, source_depuis_donnees
+        # Source = uniquement le DÉCLARÉ (on exclut les textes générés, sinon ils
+        # s'auto-justifieraient).
+        _declare = {k: v for k, v in donnees.items()
+                    if not str(k).startswith("texte_") and k != "description_situation"}
+        _src_declare = source_depuis_donnees(_declare)
+        _recits = " ".join(str(donnees.get(k, "") or "") for k in (
+            "texte_b_vie_quotidienne", "texte_c_scolarite", "texte_d_situation_pro",
+            "texte_e_projet_vie", "description_situation"))
+        for _c in sorted(set(conclusions_a_etayer(_recits, _src_declare))):
+            alertes.append({
+                "niveau": "ORANGE",
+                "label": (f"Le récit conclut à « {_c} » sans appui explicite dans ce que la "
+                          "personne a déclaré : à étayer (préciser la difficulté concrète) ou à "
+                          "reformuler. Jamais d'invention au dossier."),
+            })
+    except Exception as _e:
+        logger.debug("[REVUE] conclusions à étayer non évaluées : %s", _e)
 
     return alertes
 

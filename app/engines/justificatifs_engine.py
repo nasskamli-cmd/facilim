@@ -38,9 +38,9 @@ def justificatifs_requis(donnees: dict[str, Any], profil_mdph: str = "adulte") -
     # ── PIÈCES SYSTÉMATIQUES ─────────────────────────────────────────────────
 
     result.append(Justificatif(
-        nom="Certificat médical de moins de 3 mois",
+        nom="Certificat médical de moins d'un an",
         obligatoire=True,
-        raison="Obligatoire pour tout dossier MDPH",
+        raison="Obligatoire pour tout dossier MDPH (cerfa 15695, moins d'un an)",
         categorie="medical",
     ))
 

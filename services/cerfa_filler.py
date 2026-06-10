@@ -69,15 +69,13 @@ def _terme_relationnel_enfant(lien: str, genre: str) -> str:
     return ""
 
 
-# Actes d'aide / de dépendance qui ne doivent JAMAIS apparaître dans le récit P8
-# s'ils ne figurent pas dans les faits réellement déclarés. Sert de garde-fou
-# anti-invention déterministe (le modèle déduit parfois une dépendance d'une fatigue).
-_ACTES_INVENTABLES = [
-    "toilette", "se laver", "se doucher", "douche", "s'habiller",
-    "habiller", "habillage", "fauteuil roulant", "aide pour",
-    "besoin d'aide", "aidant", "aide humaine", "incapable de",
-    "ne peut pas se", "dépendant",
-]
+# Garde-fou anti-invention P8 — SOURCE UNIQUE : la liste d'actes CONCRETS de
+# app/services/anti_invention (toilette, habillage, douche, fauteuil, aidant). Un acte
+# concret absent des faits déclarés EST une invention → rejet (repli fidèle à la source).
+# Les CONCLUSIONS d'aide ambiguës (« aide humaine », « dépendant »…) ne sont PLUS
+# rejetées ici (cela blanchissait des traductions légitimes : « je n'arrive plus seul »
+# → « aide humaine ») : la revue instructeur les SIGNALE au pro pour étayage.
+from app.services.anti_invention import ACTES_AIDES_MARQUEURS as _ACTES_INVENTABLES
 
 
 def _composer_description_p8(

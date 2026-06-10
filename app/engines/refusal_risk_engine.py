@@ -101,17 +101,41 @@ def _texte_analyse(donnees: dict) -> str:
     return " ".join(str(donnees.get(c, "") or "") for c in champs).lower()
 
 
+def _a_certificat(donnees: dict) -> bool:
+    """Existence du certificat médical (le diagnostic/taux y vivent, pas dans Facilim)."""
+    return bool(str(donnees.get("certificat_medical_date", "") or "").strip())
+
+
+def _a_retentissement_fonctionnel(donnees: dict) -> bool:
+    """
+    Le RETENTISSEMENT FONCTIONNEL réellement collecté par Facilim (médical hors CERFA).
+    La MDPH évalue ça, pas le diagnostic : besoins AVQ, impact quotidien, aides en place.
+    """
+    try:
+        from app.services.collecte_schema import AVQ_CHAMPS, AVQ_BESOIN_AIDE
+        if any(str(donnees.get(c, "") or "").strip().upper() in AVQ_BESOIN_AIDE for c in AVQ_CHAMPS):
+            return True
+    except Exception:
+        pass
+    txt = " ".join(str(donnees.get(c, "") or "") for c in (
+        "impact_quotidien", "aides_en_place", "texte_b_vie_quotidienne",
+        "restrictions_emploi", "difficultes_quotidiennes")).strip()
+    return len(txt) > 20
+
+
 def _risque_rqth(donnees: dict, texte: str) -> RisqueDroit:
     forts, faibles, pieces = [], [], []
 
-    has_diag = bool(donnees.get("diagnostics", ""))
+    has_certif = _a_certificat(donnees)
     has_impact_emploi = bool(re.search(r"(restriction|impact|inaptitude|limitation).{0,20}(emploi|travail|poste)", texte))
     has_at = bool(re.search(r"accident.{0,15}travail|\bAT\b", texte))
     has_statut = bool(donnees.get("statut_emploi", ""))
     has_medecin_travail = bool(re.search(r"m[eé]decin.{0,10}travail|aptitude|inaptitude", texte))
 
-    if has_diag: forts.append("Diagnostic documenté")
-    else: faibles.append("Diagnostic absent"); pieces.append("Certificat médical")
+    # Médical HORS CERFA : on n'exige PAS un diagnostic dans le dossier — on vérifie la
+    # présence du CERTIFICAT (qui le porte), et on évalue le retentissement fonctionnel.
+    if has_certif: forts.append("Certificat médical signalé")
+    else: faibles.append("Certificat médical non signalé"); pieces.append("Certificat médical (cerfa 15695, < 1 an)")
 
     if has_impact_emploi: forts.append("Impact professionnel documenté")
     else: faibles.append("Impact sur l'emploi non objectivé"); pieces.append("Description limitations au travail")
@@ -145,26 +169,31 @@ def _risque_rqth(donnees: dict, texte: str) -> RisqueDroit:
 def _risque_aah(donnees: dict, texte: str) -> RisqueDroit:
     forts, faibles, pieces = [], [], []
 
-    has_arret = bool(re.search(r"arr[eê]t.{0,20}(longue dur[eé]e|\d+.{0,5}(ans?|mois))", texte))
+    has_retentissement = _a_retentissement_fonctionnel(donnees)
+    has_certif = _a_certificat(donnees)
     has_invalidite = bool(re.search(r"invalidit[eé]|pension d.invalidit[eé]|inapte", texte))
-    has_taux = bool(re.search(r"taux.{0,10}(80|90|100)\s*%|incapacit[eé].{0,15}\d+%", texte))
-    has_chronique = bool(re.search(r"maladie chronique|fibromyal|SLA|parkinson|scl[eé]rose", texte))
+    has_restriction_emploi = bool(re.search(r"(restriction|inaptitude|impossib|ne peut plus|fatigab).{0,25}(emploi|travail|poste|activit)", texte))
     travaille = bool(re.search(r"travaille.{0,20}(actuellement|temps plein|CDI active)", texte))
 
-    if has_taux:
-        forts.append("Taux d'incapacité documenté")
+    # AAH : la MDPH apprécie un taux >= 80 %, OU 50-79 % + restriction substantielle et
+    # durable d'accès à l'emploi (RSDAE). Le TAUX est évalué par la MDPH d'après le
+    # CERTIFICAT — Facilim ne le connaît pas et ne le réclame pas dans le dossier. Ce que
+    # Facilim doit objectiver, c'est le RETENTISSEMENT FONCTIONNEL et la restriction d'emploi.
+    if has_retentissement:
+        forts.append("Retentissement fonctionnel documenté")
     else:
-        faibles.append("Taux d'incapacité non documenté")
-        pieces.append("Certificat médical avec taux d'incapacité permanente")
+        faibles.append("Retentissement trop mince au regard de l'AAH")
+        pieces.append("Décrire le retentissement au quotidien (besoins d'aide, activités empêchées)")
 
-    if has_arret or has_invalidite:
-        forts.append("Arrêt de travail / invalidité documenté")
+    if has_restriction_emploi or has_invalidite:
+        forts.append("Restriction d'accès à l'emploi / invalidité documentée (favorable RSDAE)")
     else:
-        faibles.append("Durée d'inactivité professionnelle non précisée")
-        pieces.append("Attestation arrêt longue durée ou pension d'invalidité")
+        faibles.append("Restriction substantielle et durable d'accès à l'emploi non objectivée (critère RSDAE 50-79 %)")
 
-    if has_chronique:
-        forts.append("Pathologie chronique identifiée")
+    if has_certif:
+        forts.append("Certificat médical signalé")
+    else:
+        pieces.append("Certificat médical (cerfa 15695) — il porte le taux d'incapacité évalué par la MDPH")
 
     pieces.append("Avis d'imposition ou de non-imposition (ressources)")
 
@@ -172,21 +201,22 @@ def _risque_aah(donnees: dict, texte: str) -> RisqueDroit:
         faibles.append("Activité professionnelle actuelle — vérifier compatibilité ressources AAH")
 
     score_forts = len(forts)
-    if score_forts >= 2 and has_taux:
+    if score_forts >= 2 and has_retentissement:
         risque = "faible"
-        justif = "Incapacité documentée avec taux — dossier AAH solide"
-    elif score_forts >= 1:
+        justif = "Retentissement fonctionnel objectivé — dossier AAH crédible (la MDPH fixe le taux d'après le certificat)"
+    elif has_retentissement:
         risque = "moyen"
-        justif = "Inactivité présente mais taux d'incapacité manquant — à compléter"
+        justif = "Retentissement présent mais restriction d'accès à l'emploi à objectiver (critère RSDAE)"
     else:
         risque = "élevé"
-        justif = "Dossier AAH insuffisamment documenté — risque élevé de refus"
+        justif = "Retentissement trop mince au regard de l'AAH — risque élevé de refus"
 
     return RisqueDroit(
         droit="AAH", label="Allocation aux Adultes Handicapés",
         niveau_risque=risque, justification=justif,
         pieces_manquantes=pieces[:3], points_forts=forts, points_faibles=faibles,
-        conseils=["Obtenir certificat médical avec taux IPP", "Joindre avis imposition"] if risque != "faible" else [],
+        conseils=["Étoffer le retentissement (activités empêchées, aides au quotidien)",
+                  "Objectiver la restriction d'accès à l'emploi"] if risque != "faible" else [],
     )
 
 
@@ -239,7 +269,8 @@ def _risque_pch(donnees: dict, texte: str) -> RisqueDroit:
 def _risque_aeeh(donnees: dict, texte: str, profil_mdph: str) -> RisqueDroit:
     forts, faibles, pieces = [], [], []
 
-    has_diag = bool(donnees.get("diagnostics", ""))
+    has_certif = _a_certificat(donnees)
+    has_retentissement = _a_retentissement_fonctionnel(donnees)
     has_aesh = bool(re.search(r"AESH|AVS|tiers.?temps", texte, re.I))
     has_sessad = bool(re.search(r"SESSAD|suivi sp[eé]cialis[eé]", texte, re.I))
     has_gevasco = bool(re.search(r"GEVASCO|évaluation scolaire", texte, re.I))
@@ -248,8 +279,10 @@ def _risque_aeeh(donnees: dict, texte: str, profil_mdph: str) -> RisqueDroit:
     if is_adulte:
         faibles.append("AEEH demandée pour un profil adulte — incohérence majeure")
 
-    if has_diag: forts.append("Diagnostic documenté")
-    else: faibles.append("Diagnostic absent"); pieces.append("Certificat médical pédiatrique")
+    # Médical hors CERFA : certificat (qui porte le diagnostic) + retentissement scolaire.
+    if has_certif: forts.append("Certificat médical signalé")
+    else: faibles.append("Certificat médical non signalé"); pieces.append("Certificat médical pédiatrique (cerfa 15695)")
+    if has_retentissement: forts.append("Retentissement documenté")
 
     if has_aesh: forts.append("AESH ou tiers-temps documenté")
     else: pieces.append("Attestation AESH et nombre d'heures")
@@ -264,13 +297,13 @@ def _risque_aeeh(donnees: dict, texte: str, profil_mdph: str) -> RisqueDroit:
         justif = "AEEH ne peut être attribuée qu'à une personne < 20 ans — incohérence de profil"
     elif len(forts) >= 2:
         risque = "faible"
-        justif = "Aménagements et diagnostic documentés — dossier AEEH solide"
+        justif = "Retentissement scolaire et aménagements documentés — dossier AEEH solide"
     elif len(forts) >= 1:
         risque = "moyen"
         justif = "Éléments partiels — GEVASCO et AESH à compléter"
     else:
         risque = "élevé"
-        justif = "AEEH sans preuves — GEVASCO et diagnostic obligatoires"
+        justif = "AEEH sans preuves — GEVASCO et retentissement scolaire à objectiver"
 
     return RisqueDroit(
         droit="AEEH", label="Allocation Éducation Enfant Handicapé",

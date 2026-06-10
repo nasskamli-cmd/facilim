@@ -411,6 +411,10 @@ def generer_textes_narratifs(
     pronoms   = _resoudre_pronoms(profil_mdph, donnees)
     resultats: dict[str, str] = {}
 
+    # Source de vérité (valeurs déclarées) pour le garde-fou anti-invention généralisé.
+    from app.services.anti_invention import source_depuis_donnees, detecter_inventions
+    _source_verite = source_depuis_donnees(donnees)
+
     _generation_map = {
         "B": ("texte_b_vie_quotidienne", _prompt_section_b(donnees, pronoms, profil_handicap)),
         "C": ("texte_c_scolarite",       _prompt_section_c(donnees, pronoms)),
@@ -443,7 +447,7 @@ def generer_textes_narratifs(
             )
             texte = response.choices[0].message.content.strip()
 
-            # Vérification anti-supposition post-génération
+            # Vérification anti-supposition post-génération (signalement)
             marqueurs = _detecter_supposition(texte)
             if marqueurs:
                 logger.warning(
@@ -451,6 +455,18 @@ def generer_textes_narratifs(
                     section, marqueurs,
                 )
                 # Pas de blocage — signalement au rapport qualité uniquement
+
+            # GARDE-FOU ANTI-INVENTION GÉNÉRALISÉ (doctrine) : un acte ou une aide
+            # introduit par le texte mais ABSENT des données déclarées est une
+            # invention → on écarte la rédaction (jamais d'invention au dossier).
+            _inventions = detecter_inventions(texte, _source_verite)
+            if _inventions:
+                logger.warning(
+                    "[NARRATIVE] Section %s — invention écartée (acte/aide non déclaré) : %s",
+                    section, _inventions,
+                )
+                texte = (f"[INFO MANQUANTE : {cle_champ} — rédaction automatique écartée "
+                         f"(élément non déclaré : {', '.join(_inventions)}) ; à rédiger par le professionnel]")
 
             resultats[cle_champ] = texte
             logger.info("[NARRATIVE] Section %s générée (%d chars)", section, len(texte))
