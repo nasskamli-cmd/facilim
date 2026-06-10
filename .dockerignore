@@ -41,3 +41,12 @@ _archive/
 # Code mort et archives - non deployes
 _legacy/
 _archive/
+
+# Artefacts de dev / session — ne JAMAIS embarquer dans l'image
+*.db-wal
+*.db-shm
+PROMPT_*.md
+*.patch
+*.bat
+*.cmd
+.claude/

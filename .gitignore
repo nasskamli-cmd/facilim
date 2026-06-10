@@ -32,3 +32,12 @@ static/generate_pptx.js
 storage/cerfa/*.pdf
 # Rapports de rendu QA regeneres
 app/tests/qa/reports/*.html
+
+# ── Artefacts de dev / session (ne pas versionner) ──
+*.db-wal
+*.db-shm
+PROMPT_*.md
+*.patch
+*.bat
+*.cmd
+.claude/
