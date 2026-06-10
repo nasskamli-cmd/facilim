@@ -1067,7 +1067,7 @@ function renderModalContent(d) {
         <ul class="list-disc list-inside text-sm text-red-800 space-y-0.5">
           ${_manq.map(m => `<li>${m}</li>`).join('')}
         </ul>
-        ${_enAttente.length ? `<div class="text-sm text-gray-700 mt-2"><span class="font-semibold">À renseigner&nbsp;:</span> ${_enAttente.join(', ')}</div>` : ''}
+        ${_enAttente.length ? `<div class="text-sm text-gray-700 mt-2"><span class="font-semibold">À renseigner (${_enAttente.length})&nbsp;:</span> ${_enAttente.slice(0,6).join(', ')}${_enAttente.length > 6 ? ` … +${_enAttente.length - 6} autres` : ''}</div>` : ''}
       </div>` : ''}
 
       <!-- BLOC 4 — Progression -->
