@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 80" role="img" aria-label="FACILIM">
+  <defs>
+    <linearGradient id="fmGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#22c55e"/>
+      <stop offset="35%" stop-color="#14b8a6"/>
+      <stop offset="65%" stop-color="#2563eb"/>
+      <stop offset="100%" stop-color="#7c3aed"/>
+    </linearGradient>
+    <linearGradient id="fmGradL" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#22c55e"/><stop offset="100%" stop-color="#14b8a6"/>
+    </linearGradient>
+    <linearGradient id="fmGradR" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#14b8a6"/><stop offset="55%" stop-color="#2563eb"/><stop offset="100%" stop-color="#7c3aed"/>
+    </linearGradient>
+  </defs>
+  <g fill="none" stroke-width="2.2" stroke-linecap="round">
+    <g stroke="url(#fmGradL)">
+      <path d="M2 24 C 26 24, 44 32, 60 40"/>
+      <path d="M2 40 C 26 40, 44 40, 60 40"/>
+      <path d="M2 56 C 26 56, 44 48, 60 40"/>
+    </g>
+    <g stroke="url(#fmGradR)">
+      <path d="M76 40 C 92 32, 110 24, 134 24"/>
+      <path d="M76 40 C 110 40, 110 40, 134 40"/>
+      <path d="M76 40 C 92 48, 110 56, 134 56"/>
+    </g>
+  </g>
+  <g>
+    <circle cx="62" cy="24" r="2.8" fill="#14b8a6"/>
+    <circle cx="62" cy="40" r="3.2" fill="#2563eb"/>
+    <circle cx="62" cy="56" r="2.8" fill="#7c3aed"/>
+    <circle cx="74" cy="24" r="2.8" fill="#7c3aed"/>
+    <circle cx="74" cy="56" r="2.8" fill="#14b8a6"/>
+  </g>
+  <text x="146" y="54" font-family="Segoe UI, Arial, Helvetica, sans-serif"
+        font-size="42" font-weight="800" letter-spacing="1.5">
+    <tspan fill="#16243f">FACI</tspan><tspan fill="url(#fmGrad)">LIM</tspan>
+  </text>
+  <circle cx="188" cy="50" r="3.2" fill="#14b8a6"/>
+</svg>

@@ -74,6 +74,15 @@ class Settings(BaseSettings):
     brevo_smtp_login: str = ""
     brevo_sender_email: str = "noreply@facilim.fr"
     brevo_sender_name: str = "Facilim"
+    # Boîte qui reçoit les demandes de renseignement du formulaire de contact.
+    contact_email: str = "contactfacilim@gmail.com"
+    # Jeton partagé protégeant le webhook d'email entrant (inbound parsing).
+    inbound_email_secret: str = ""
+
+    # ── Observabilité (Sentry) — suivi des erreurs en production ────────────
+    # Vide = désactivé. On ne transmet jamais de donnée de santé brute (scrubbing).
+    sentry_dsn: str = ""
+    sentry_environment: str = "production"
 
     # ── Stockage documents ─────────────────────────────────────────────────
     storage_backend: Literal["local", "s3", "gcs"] = "local"

@@ -377,6 +377,63 @@ def _dedupliquer(items: list[EvidenceItem]) -> list[EvidenceItem]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# FACILIM V2 (ADDITIF) — FAITS CANONIQUES → PREUVES
+# Lit synthese["faits"] s'il existe (domaines migrés). Sinon : aucun effet,
+# les sources historiques (WhatsApp/Document/Narratif/Déclaration) restent seules.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_FAIT_SOURCE_TO_TYPE = {
+    "whatsapp":     "WhatsApp",
+    "document":     "Document",
+    "professionnel": "Déclaration",
+}
+
+# Configuration par domaine MIGRÉ (les autres domaines sont ignorés ici → pas de régression).
+_FAIT_DOMAINE_CFG: dict[str, dict] = {
+    "projet_professionnel": {
+        "section": "E",
+        "droits":  ["RQTH"],
+        "labels":  {
+            "projet_professionnel": "Projet professionnel exprimé",
+            "formation_cible":      "Formation visée",
+            "etablissement_cible":  "Établissement visé",
+            "orientation_souhaitee": "Orientation professionnelle souhaitée",
+        },
+    },
+}
+
+
+def _extraire_faits(donnees: dict[str, Any]) -> list[EvidenceItem]:
+    """Convertit les faits canoniques (domaines migrés) en preuves traçables."""
+    items: list[EvidenceItem] = []
+    faits = donnees.get("faits")
+    if not isinstance(faits, list):
+        return items
+    for f in faits:
+        if not isinstance(f, dict):
+            continue
+        cfg = _FAIT_DOMAINE_CFG.get(f.get("domaine"))
+        if not cfg:
+            continue  # domaine non encore migré → ignoré (pas de preuve inventée)
+        valeur = str(f.get("valeur") or "").strip()
+        if not valeur:
+            continue
+        src_type = _FAIT_SOURCE_TO_TYPE.get(f.get("source"), "Déclaration")
+        label    = cfg["labels"].get(f.get("champ"), str(f.get("champ")))
+        citation = str(f.get("extrait") or valeur)
+        items.append(EvidenceItem(
+            information=label,
+            source_type=src_type,
+            source_champ=f"faits:{f.get('id')}",
+            confiance=_CONFIANCE_SOURCE.get(src_type, 0.70),
+            citation=citation,
+            droits_concernes=list(cfg["droits"]),
+            section_cerfa=cfg["section"],
+        ))
+    return items
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # POINT D'ENTRÉE
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -440,6 +497,12 @@ def construire_graphe_preuves(
     all_items.extend(inf_items)
     if inf_items:
         sources_presentes.append("Inférence")
+
+    # Faits canoniques (FACILIM V2, additif) — domaines migrés uniquement
+    faits_items = _extraire_faits(donnees)
+    all_items.extend(faits_items)
+    if faits_items and "Fait" not in sources_presentes:
+        sources_presentes.append("Fait")
 
     # Déduplication
     items_nets = _dedupliquer(all_items)

@@ -116,13 +116,28 @@ def synthese_to_v2_dossier(
         dossier["protection_juridique"] = str(synthese.get("type_protection", ""))
         dossier["tribunal_protection"]  = str(synthese.get("jugement_tribunal", ""))
 
-    # ── Genre (normalisation : homme/masculin/m → "m", femme/féminin/f → "f") ────
+    # ── Genre (normalisation) ───────────────────────────────────────────────────
+    # On accepte aussi la CIVILITÉ : à la question « votre genre ? », une personne
+    # répond souvent « Mr », « Monsieur », « Mme »… La civilité est une déclaration
+    # de genre explicite, donc on la mappe (ce n'est pas une invention).
     _genre_raw = str(synthese.get("genre", "") or synthese.get("sexe", "")).lower().strip()
+    _genre_raw = _genre_raw.replace(".", " ").strip()  # "m." → "m"
     _genre_map = {
         "homme": "m", "masculin": "m", "male": "m", "m": "m", "h": "m",
+        "mr": "m", "monsieur": "m", "mister": "m",
         "femme": "f", "féminin": "f", "feminin": "f", "female": "f", "f": "f",
+        "mme": "f", "madame": "f", "mlle": "f", "mademoiselle": "f", "mrs": "f",
     }
-    dossier["genre"] = _genre_map.get(_genre_raw, _genre_raw)
+    _g = _genre_map.get(_genre_raw)
+    if _g is None:
+        # Tolérance : civilité ou variante en tout début de chaîne.
+        if _genre_raw.startswith(("mr", "monsieur", "homme", "mascul", "m ")):
+            _g = "m"
+        elif _genre_raw.startswith(("mme", "mlle", "madame", "mademoiselle", "femme", "fémin", "femin")):
+            _g = "f"
+        else:
+            _g = _genre_raw
+    dossier["genre"] = _g
 
     # ── Situation matrimoniale / familiale ──────────────────────────────────────
     _sit_mat = str(synthese.get("situation_familiale", "") or synthese.get("situation_matrimoniale", "")).lower()
@@ -239,6 +254,12 @@ def synthese_to_v2_dossier(
     dossier["cerfa_reponses"] = {
         # Vie quotidienne : texte narratif B en priorité
         "difficultes_quotidiennes":   _texte_b[:2000] if _texte_b else synthese.get("impact_quotidien", ""),
+        # Narratif B DÉJÀ RÉDIGÉ par le moteur V3 : le filler doit le réutiliser tel
+        # quel pour la page 8, sans le réécrire (évite la double génération et une
+        # seconde surface d'invention). Vide s'il n'existe pas encore.
+        "description_p8_prete":       _texte_b[:2000] if _texte_b else "",
+        # Faits bruts réellement déclarés — référence du garde-fou anti-invention.
+        "impact_quotidien_brut":      synthese.get("impact_quotidien", ""),
         # Scolarité : texte narratif C
         "situation_scolaire_narrative": _texte_c[:1500] if _texte_c else synthese.get("situation_scolaire", ""),
         # Emploi : texte narratif D
@@ -269,6 +290,28 @@ def synthese_to_v2_dossier(
         "nationalite":                synthese.get("nationalite", ""),
         "statut_occupation":          synthese.get("statut_occupation", ""),
     }
+
+    # ── RACCORD dictionnaire → moteur de remplissage ─────────────────────────────
+    # Ces champs sont collectés via le dictionnaire CERFA mais n'étaient PAS
+    # acheminés par le pont : recueillis, jamais reportés sur le formulaire. On les
+    # transmet ici sous le nom EXACT que le moteur lit, dans les deux sources qu'il
+    # consulte (donnees_structurees et cerfa_reponses), sans jamais écraser une
+    # valeur déjà posée. Un champ vide n'est pas transmis (pas d'invention).
+    _champs_dico = (
+        "preference_contact", "organisme_payeur", "numero_allocataire",
+        "organisme_assurance_maladie", "commune_naissance", "pays_naissance",
+        "nom_naissance", "frais_handicap", "situation_professionnelle",
+        "emploi_accompagne", "type_etablissement_scolaire", "classe_scolaire",
+        "accompagnement_scolaire", "amenagements_scolaires", "aides_en_place",
+        "aides_techniques", "consequences_professionnelles", "attentes_usager",
+        "aidant_identite", "aidant_reduction_travail", "projet_professionnel",
+    )
+    for _cd in _champs_dico:
+        _val = synthese.get(_cd)
+        if _val not in (None, "", [], {}):
+            if _cd not in donnees_structurees:
+                donnees_structurees[_cd] = _val
+            dossier["cerfa_reponses"].setdefault(_cd, _val)
 
     # ── Notes pro pour contexte narratif page 8 ──────────────────────────────────
     notes = str(synthese.get("notes_pro", ""))
@@ -311,7 +354,11 @@ def _normaliser_date(date_str: str) -> str:
       02/04/1985    → 02/04/1985 (inchangé)
     """
     if not date_str:
-        return date_str
+        return ""
+    # Gabarit non daté (ex. « JJ/MM/AAAA », « à compléter ») : aucune date réelle,
+    # ne rien transmettre plutôt que d'inscrire un faux sur le CERFA.
+    if not any(c.isdigit() for c in str(date_str)):
+        return ""
     import re as _re
     # Supprimer séparateurs existants
     cleaned = _re.sub(r"[-./\s]", "", date_str.strip())

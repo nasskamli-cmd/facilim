@@ -50,6 +50,34 @@ logger = logging.getLogger(__name__)
 #  Description narrative Page 8 du CERFA
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _terme_relationnel_enfant(lien: str, genre: str) -> str:
+    """
+    Terme affectueux du proche qui remplit le dossier d'un enfant, selon le lien et
+    le sexe de l'enfant : « mon fils », « ma fille », « mon neveu », « ma nièce »...
+    Retourne "" si le lien est inconnu (→ on retombe sur le prénom à la 3e personne).
+    """
+    l = (lien or "").lower()
+    fille = str(genre or "").lower() in ("fille", "femme", "f", "féminin", "feminin")
+    if "grand" in l:
+        return "ma petite-fille" if fille else "mon petit-fils"
+    if "oncle" in l or "tante" in l:
+        return "ma nièce" if fille else "mon neveu"
+    if any(w in l for w in ("frère", "frere", "sœur", "soeur")):
+        return "ma sœur" if fille else "mon frère"
+    if any(w in l for w in ("mère", "mere", "père", "pere", "parent", "maman", "papa")):
+        return "ma fille" if fille else "mon fils"
+    return ""
+
+
+# Garde-fou anti-invention P8 — SOURCE UNIQUE : la liste d'actes CONCRETS de
+# app/services/anti_invention (toilette, habillage, douche, fauteuil, aidant). Un acte
+# concret absent des faits déclarés EST une invention → rejet (repli fidèle à la source).
+# Les CONCLUSIONS d'aide ambiguës (« aide humaine », « dépendant »…) ne sont PLUS
+# rejetées ici (cela blanchissait des traductions légitimes : « je n'arrive plus seul »
+# → « aide humaine ») : la revue instructeur les SIGNALE au pro pour étayage.
+from app.services.anti_invention import ACTES_AIDES_MARQUEURS as _ACTES_INVENTABLES
+
+
 def _composer_description_p8(
     geva_pro: str,
     juriste: str,
@@ -60,6 +88,11 @@ def _composer_description_p8(
     besoins_aide: str = "",
     prenom: str = "",
     nom: str = "",
+    protege: bool = False,
+    lien_enfant: str = "",
+    genre: str = "",
+    texte_pret: str = "",
+    source_verite: str = "",
 ) -> str:
     """
     Compose le texte narratif de la page 8 du CERFA 15692 :
@@ -88,6 +121,28 @@ def _composer_description_p8(
             parties.append(probants_str.strip())
 
     contexte_brut = "\n\n".join(parties).strip()
+
+    # ── Réutilisation du narratif déjà rédigé par le moteur V3 ────────────────
+    # Si un texte de section B a déjà été rédigé en amont, on le REPREND TEL QUEL
+    # plutôt que de le réécrire via un second appel LLM : cela supprime la double
+    # génération et la seconde surface d'invention. Garde-fou conservé : si ce texte
+    # introduit un acte d'aide absent des faits réellement déclarés, on retombe sur
+    # un rendu fidèle.
+    if texte_pret and texte_pret.strip():
+        _ref = (str(source_verite) + "\n" + contexte_brut).lower()
+        _bad = [m for m in _ACTES_INVENTABLES if m in texte_pret.lower() and m not in _ref]
+        if _bad:
+            logger.warning(
+                "[CERFA P8] Narratif V3 réutilisé mais invention détectée %s — "
+                "rendu fidèle des faits déclarés à la place.", _bad,
+            )
+            return (str(source_verite) or contexte_brut)[:2000]
+        logger.info(
+            "[CERFA P8] Narratif V3 réutilisé tel quel (%d chars) — pas de regénération.",
+            len(texte_pret),
+        )
+        return texte_pret[:2000]
+
     if not contexte_brut:
         return ""
 
@@ -106,47 +161,86 @@ def _composer_description_p8(
         _civilite     = _identite  # ex. "Yasmine BENALI" ou "M. Dupont"
 
         sujet    = f"de {_identite}" if _identite not in ("l'enfant", "la personne") else ("de l'enfant" if is_enfant else "de la personne")
-        personne = (
-            f"{_civilite} (à la 3ème personne, ex : « {_civilite} ne peut pas… », « il/elle ne peut pas… »)"
-            if is_enfant else
-            f"{_civilite} elle-même (à la 1ère personne, ex : « je ne peux pas… »)"
-        )
+        # Voix du récit :
+        #  - enfant : voix du proche qui remplit (« mon fils / ma fille / mon neveu… »)
+        #             si le lien est connu, sinon prénom à la 3e personne.
+        #  - majeur protégé (tutelle/curatelle) : 3e personne, c'est le représentant qui parle.
+        #  - adulte autonome : 1ère personne.
+        if is_enfant:
+            _terme = _terme_relationnel_enfant(lien_enfant, genre)
+            if _terme:
+                personne = (
+                    f"le proche qui remplit le dossier, qui parle de l'enfant en disant « {_terme} » "
+                    f"(ex : « {_terme} a besoin d'aide pour… », « {_terme} ne peut pas… »). "
+                    f"Écris à la 1ère personne de ce proche, à propos de l'enfant."
+                )
+            else:
+                personne = (
+                    f"{_identite}, à la 3ème personne "
+                    f"(ex : « {_prenom_clean or 'il/elle'} ne peut pas… », « il/elle ne peut pas… »)"
+                )
+        elif protege:
+            personne = (
+                f"{_civilite}, à la 3ème personne, car c'est son représentant légal qui s'exprime "
+                f"(ex : « il/elle ne peut pas… »)"
+            )
+        else:
+            personne = f"{_civilite} elle-même, à la 1ère personne (ex : « je ne peux pas… »)"
         projet_str = f"\nProjet de vie : {projet_professionnel}" if projet_professionnel else ""
 
         prompt = (
             f"Tu rédiges la section 'Description de la situation et des difficultés' "
             f"d'un formulaire MDPH pour {sujet}.\n"
             f"Rédige ce texte du point de vue de {personne}.\n\n"
-            f"Structure OBLIGATOIRE en 4 parties (sans titres, texte continu) :\n"
-            f"1. SITUATION ACTUELLE — qui est la personne, quel est son handicap/sa pathologie, "
-            f"   dans quel contexte elle vit (2-3 phrases)\n"
-            f"2. RETENTISSEMENTS FONCTIONNELS — ce qu'elle ne peut pas faire seule, "
-            f"   ce qui est difficile ou épuisant (3-5 phrases courtes et concrètes, fort impact)\n"
-            f"3. RETENTISSEMENTS DANS LA VIE QUOTIDIENNE HORS TRAVAIL — "
-            f"   ce que le handicap change concrètement au quotidien EN DEHORS du travail : "
-            f"   repas/alimentation, courses, déplacements, sorties en famille, loisirs, "
-            f"   vie à domicile, relations sociales, gestion de la fatigue et/ou des douleurs "
-            f"   (2-4 phrases concrètes, ne pas parler de travail dans cette partie)\n"
-            f"4. PROJET DE VIE — ce que la personne souhaite accomplir : aspirations personnelles, "
-            f"   autonomie souhaitée, projet professionnel ou de formation si pertinent "
-            f"   (1-2 phrases){projet_str}\n\n"
-            f"Règles strictes :\n"
-            f"- Phrases simples, courtes, concrètes (pas de jargon médical ni administratif)\n"
-            f"- Ne mentionne JAMAIS : RSDAE, PCH, AAH, MDPH, score, algorithme, GEVA\n"
-            f"- Exemples de formulations : 'ne peut pas faire ses courses seul', "
-            f"  'fatigue intense après 20 min de marche', 'a besoin d'aide pour préparer ses repas', "
-            f"  'ne peut pas accompagner ses enfants en sortie scolaire'\n"
-            f"- Maximum 500 mots, pas de titres, pas de listes à puces, texte continu\n\n"
-            f"Informations disponibles :\n{contexte_brut}"
+            f"RÈGLE ABSOLUE — ANTI-INVENTION (la plus importante) :\n"
+            f"- Utilise STRICTEMENT et UNIQUEMENT les informations fournies plus bas.\n"
+            f"- N'invente JAMAIS une difficulté, une dépendance, une aide humaine, un aidant "
+            f"ou un besoin qui n'est pas EXPLICITEMENT décrit dans ces informations.\n"
+            f"- Si une dimension (toilette, habillage, repas, douche, déplacements, aides à domicile...) "
+            f"n'est pas mentionnée, NE L'ÉVOQUE PAS du tout. Ne la suppose pas, ne la déduis pas.\n"
+            f"- N'extrapole JAMAIS un profil de dépendance à partir d'un diagnostic, d'une douleur "
+            f"ou d'une fatigue. Une fatigue déclarée ne signifie pas un besoin d'aide pour se laver.\n"
+            f"- Reste fidèle aux mots de la personne. En cas de doute, écris MOINS plutôt que d'inventer.\n\n"
+            f"Structure (texte continu, sans titres ; n'écris une partie QUE si l'information existe) :\n"
+            f"1. SITUATION ACTUELLE — qui est la personne, sa situation de handicap (au sens du "
+            f"RETENTISSEMENT, jamais le diagnostic médical) et son contexte de vie, tels que "
+            f"réellement décrits (2-3 phrases). N'écris AUCUNE donnée médicale (diagnostic, "
+            f"traitement, médecin) : elle figure sur le certificat médical 15695, pas ici.\n"
+            f"2. RETENTISSEMENTS RÉELLEMENT DÉCRITS — uniquement les difficultés effectivement "
+            f"mentionnées dans les informations, sans en ajouter aucune autre.\n"
+            f"3. VIE QUOTIDIENNE HORS TRAVAIL — seulement les éléments du quotidien réellement "
+            f"documentés (ne parle pas de travail ici). Si rien n'est documenté, n'écris pas cette partie.\n"
+            f"4. PROJET DE VIE — ce que la personne souhaite, tel qu'exprimé{projet_str}.\n\n"
+            f"Règles de forme :\n"
+            f"- Phrases simples, concrètes, sans jargon (ne mentionne jamais RSDAE, PCH, AAH, MDPH, score, GEVA).\n"
+            f"- Maximum 500 mots, pas de titres, pas de listes à puces, texte continu.\n\n"
+            f"Informations disponibles (SEULE source autorisée, n'ajoute rien d'autre) :\n{contexte_brut}"
         )
 
         resp = _client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=700,
-            temperature=0.3,
+            temperature=0.0,
         )
         texte = resp.choices[0].message.content.strip()
+
+        # ── GARDE-FOU ANTI-INVENTION DÉTERMINISTE ────────────────────────────
+        # Une consigne ne suffit pas : le modèle déduit parfois une dépendance
+        # (toilette, habillage…) à partir d'une simple fatigue. On vérifie donc
+        # APRÈS COUP : si le texte introduit un acte ou une aide ABSENT des
+        # informations sources, c'est une invention → on rejette le texte du
+        # modèle et on retombe sur un rendu fidèle des informations déclarées.
+        _src = (contexte_brut or "").lower()
+        _txt = texte.lower()
+        _inventions = [m for m in _ACTES_INVENTABLES if m in _txt and m not in _src]
+        if _inventions:
+            logger.warning(
+                "[CERFA P8] Invention détectée %s — texte du modèle rejeté, rendu "
+                "fidèle des informations déclarées à la place.", _inventions,
+            )
+            return contexte_brut[:2000]
+
         logger.info(f"[CERFA P8] Description générée par LLM ({len(texte)} chars)")
         return texte[:2000]
 
@@ -339,6 +433,41 @@ def _cocher_option_nth(writer: PdfWriter, field_name: str, n: int) -> bool:
 #  Mapping droits → cases P17 / P18 / P19
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Marqueurs d'une orientation en Centre de Rééducation/Réadaptation Professionnelle
+# (CRP/ESRP/CPO/UEROS). Un ESRP EST un CRP : il ouvre P18 3 (réadaptation pro), jamais
+# le marché du travail ordinaire (P18 5) ni la scolarité. Détection sur texte sans accents.
+_MARQUEURS_CRP = re.compile(
+    r"\b(esrp|crp|cpo|espo|ueros)\b"
+    r"|re[ae]ducation professionnelle"
+    r"|readaptation professionnelle"
+    r"|pre.?orientation"
+    r"|centre de re[ae]ducation"
+    r"|centre de readaptation",
+    re.IGNORECASE,
+)
+
+
+def _detecter_orientation_crp(a_cible_esrp: bool, *textes: str) -> bool:
+    """
+    Détecte une orientation CRP/ESRP depuis TOUS les signaux disponibles, pas
+    seulement la liste des droits : champ structuré `a_cible_esrp`, nom d'ESRP,
+    nom/organisme de formation, et projet professionnel en texte libre.
+
+    Sans cette détection partagée, un ESRP mentionné uniquement dans le projet
+    (ex. « formation CADGA à l'ESRP La Rose ») n'atteignait pas le mapping P18,
+    qui cochait alors « marché du travail » (P18 5) au lieu de « CRP » (P18 3).
+    """
+    if a_cible_esrp:
+        return True
+    import unicodedata
+    blob = " ".join(str(t or "") for t in textes)
+    blob = "".join(
+        c for c in unicodedata.normalize("NFD", blob.lower())
+        if unicodedata.category(c) != "Mn"
+    )
+    return bool(_MARQUEURS_CRP.search(blob))
+
+
 def _mapper_droits(
     droits: list,
     is_enfant: bool,
@@ -347,6 +476,8 @@ def _mapper_droits(
     cmi_stationnement: bool = False,
     emploi_accompagne: bool = False,
     creton: bool = False,
+    orientation_crp: bool = False,
+    moins_de_20: bool | None = None,
 ) -> list[str]:
     """
     Traduit la liste de droits identifiés par l'IA en noms de cases CERFA.
@@ -386,15 +517,22 @@ def _mapper_droits(
     # Normalisation : tokens majuscules, tirets → espaces
     droits_str = " ".join(str(d).upper().replace("-", " ") for d in droits)
 
+    # Frontière des ALLOCATIONS page 17 : AEEH < 20 ans, AAH >= 20 ans. Cette
+    # frontière (20 ans) est DISTINCTE de `is_enfant` (calé sur 18 ans pour
+    # l'autorité parentale, la scolarité, les besoins « enfant »). Un jeune de
+    # 18-19 ans est juridiquement adulte (A2) mais relève encore de l'AEEH.
+    # Si l'âge est inconnu, on retombe sur is_enfant (défaut conservateur, inchangé).
+    _e1_mineur = is_enfant if moins_de_20 is None else moins_de_20
+
     # ── PAGE 17 — E1 Allocations ─────────────────────────────────────────────
 
-    # AEEH : Allocation d'Éducation de l'Enfant Handicapé (enfants < 20 ans uniquement)
-    if is_enfant and "AEEH" in droits_str:
+    # AEEH : Allocation d'Éducation de l'Enfant Handicapé (< 20 ans uniquement)
+    if _e1_mineur and "AEEH" in droits_str:
         cases.append("Case à cocher P17 1")
 
     # PCH enfant (< 20 ans) — UNIQUEMENT si explicitement dans les droits identifiés
     # Ne jamais déduire automatiquement de besoins_aide_humaine : la personne doit valider
-    if is_enfant and "PCH" in droits_str:
+    if _e1_mineur and "PCH" in droits_str:
         cases.append("Case à cocher P17 2")
 
     # CMI priorité (invalidité) — station debout prolongée pénible
@@ -403,13 +541,13 @@ def _mapper_droits(
 
     # CMI priorité : coché uniquement si explicitement déclaré.
     if cmi_priorite:
-        cases.append("Case à cocher P17 3" if is_enfant else "Case à cocher P17 13")
+        cases.append("Case à cocher P17 3" if _e1_mineur else "Case à cocher P17 13")
 
     # CMI stationnement : coché uniquement si explicitement déclaré.
     # Suppression de la déduction par élimination (has_cmi_generic and not cmi_priorite).
     # "CMI" sans précision du type → aucune case cochée + signalement à l'éducateur.
     if cmi_stationnement:
-        cases.append("Case à cocher P17 4" if is_enfant else "Case à cocher P17 14")
+        cases.append("Case à cocher P17 4" if _e1_mineur else "Case à cocher P17 14")
 
     # Si has_cmi_generic mais aucun type précisé → log pour relecture manuelle
     if has_cmi_generic and not cmi_priorite and not cmi_stationnement:
@@ -418,12 +556,12 @@ def _mapper_droits(
             "Aucune case cochée — à qualifier par l'éducateur avant signature."
         )
 
-    # AAH : Allocation aux Adultes Handicapés (≥ 20 ans)
-    if "AAH" in droits_str:
+    # AAH : Allocation aux Adultes Handicapés (≥ 20 ans uniquement)
+    if not _e1_mineur and "AAH" in droits_str:
         cases.append("Case à cocher P17 6")
 
     # PCH adulte (≥ 20 ans) — UNIQUEMENT si explicitement dans les droits identifiés
-    if not is_enfant and "PCH" in droits_str:
+    if not _e1_mineur and "PCH" in droits_str:
         cases.append("Case à cocher P17 12")
 
     # Complément de ressources (toujours avec AAH si mentionné)
@@ -432,7 +570,7 @@ def _mapper_droits(
 
     # AVPF : Allocation Vieillesse des Parents au Foyer (sur demande explicite uniquement)
     if "AVPF" in droits_str:
-        cases.append("Case à cocher P17 5" if is_enfant else "Case à cocher P17 15")
+        cases.append("Case à cocher P17 5" if _e1_mineur else "Case à cocher P17 15")
 
     # Orientation ESMS adultes (case P17 8) — UNIQUEMENT structures adultes
     # IME/SESSAD/ITEP/ULIS sont des structures enfants → ne jamais déclencher P17 8
@@ -463,12 +601,18 @@ def _mapper_droits(
     _orp_tokens = ("ORP", "ORIENTATION PROFESSIONNELLE", "ORIENTATION PRO",
                    "RECLASSEMENT PROFESSIONNEL", "INSERTION PROFESSIONNELLE")
     _is_esat_projet = "ESAT" in droits_str and not is_enfant
-    _is_crp_projet  = any(t in droits_str for t in (
-        "CRP", "CPO", "UEROS", "ESRP", "VISA PRO",
+    # CRP/ESRP : détecté soit dans la liste des droits, soit via le signal partagé
+    # `orientation_crp` (projet pro en texte libre, nom d'ESRP, formation…).
+    _is_crp_projet  = orientation_crp or any(t in droits_str for t in (
+        "CRP", "CPO", "ESPO", "UEROS", "ESRP", "VISA PRO", "PRE ORIENTATION",
         "REEDUCATION PROFESSIONNELLE", "READAPTATION PROFESSIONNELLE",
         "CENTRE DE REEDUCATION", "CENTRE DE READAPTATION",
     ))
-    if any(t in droits_str for t in _orp_tokens):
+    _a_orp_explicite = any(t in droits_str for t in _orp_tokens)
+    # On entre dans l'orientation pro dès qu'un signal existe : ORP explicite, OU
+    # une cible identifiée (CRP/ESRP via texte libre), OU un projet ESAT. Ainsi un
+    # ESRP nommé seulement dans le projet coche bien « orientation pro » + « CRP ».
+    if _a_orp_explicite or _is_crp_projet or _is_esat_projet:
         cases.append("Case à cocher P18 2")  # Case parente ORP
         if _is_esat_projet and not _is_crp_projet:
             # Projet ESAT uniquement → milieu protégé
@@ -481,7 +625,8 @@ def _mapper_droits(
             cases.append("Case à cocher P18 4")
             logger.warning("[CERFA C5] ESAT + CRP tous deux présents — P18 4 (ESAT) retenu, P18 3 ignoré.")
         else:
-            # Marché du travail (milieu ordinaire)
+            # Marché du travail (milieu ordinaire) — uniquement si AUCUNE cible
+            # CRP/ESAT n'est identifiée (orientation pro « ordinaire »).
             cases.append("Case à cocher P18 5")
             if emploi_accompagne or "EMPLOI ACCOMPAGNE" in droits_str:
                 cases.append("Case à cocher P18 6")
@@ -813,7 +958,7 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     nom_usage              = ds.get("nom_usage") or ""
     organisme_payeur       = (ds.get("organisme_payeur") or cerfa_rep.get("organisme_payeur") or "").lower()
     numero_allocataire     = ds.get("numero_allocataire") or ""
-    organisme_assurance    = (ds.get("organisme_assurance_maladie") or "cpam").lower()
+    organisme_assurance    = (ds.get("organisme_assurance_maladie") or "").lower()  # pas de défaut CPAM
     # Protection juridique — V3 : lecture depuis SituationJuridique.type_mesure
     if _dv2 and _dv2.section_a.situation_juridique.type_mesure != "aucune":
         _sj = _dv2.section_a.situation_juridique
@@ -872,6 +1017,19 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         or cerfa_rep.get("difficultes_quotidiennes")
         or ""
     )
+    # Narratif P8 déjà rédigé par le moteur V3 (à réutiliser tel quel, sans réécrire)
+    # et faits bruts déclarés (référence du garde-fou anti-invention).
+    _p8_pret = (
+        ds.get("description_p8_prete")
+        or cerfa_rep.get("description_p8_prete")
+        or ""
+    ).strip()
+    _impact_brut = (
+        ds.get("impact_quotidien_brut")
+        or cerfa_rep.get("impact_quotidien_brut")
+        or ds.get("impact_quotidien")
+        or ""
+    ).strip()
     besoins_aide_str = (
         ds.get("besoins_aide_narrative")
         or ds.get("besoins_aide")
@@ -1162,7 +1320,32 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         besoins_aide=besoins_aide_str,
         prenom=prenom,
         nom=nom,
+        protege=(protection_juridique not in ("aucune", "", "none", "non")),
+        lien_enfant=(ds.get("representant_legal_lien") or ds.get("lien_interlocuteur") or ds.get("lien_parent") or ""),
+        genre=genre,
+        texte_pret=_p8_pret,
+        source_verite=_impact_brut,
     )
+
+    # ── Orientation CRP/ESRP : détection partagée (P18 + P16) ───────────────
+    # Calculée UNE fois depuis tous les signaux, puis réutilisée par le mapping
+    # des droits (P18 3) et par la page 16 (P16 2/5), pour qu'ils ne divergent plus.
+    _orientation_crp = _detecter_orientation_crp(
+        a_cible_esrp,
+        projet_professionnel, nom_esrp, nom_formation,
+        organisme_formation, type_formation_pro,
+    )
+
+    # ── Frontière des allocations (20 ans) — distincte de is_enfant (18 ans) ──
+    # AEEH < 20 ans, AAH >= 20 ans. Défaut conservateur = is_enfant si âge inconnu.
+    _moins_de_20: bool | None = None
+    try:
+        if ddn and "/" in ddn:
+            _j20, _m20, _a20 = ddn.split("/")
+            _age20 = (date.today() - date(int(_a20), int(_m20), int(_j20))).days // 365
+            _moins_de_20 = _age20 < 20
+    except Exception:
+        _moins_de_20 = None
 
     # ── Droits → liste de cases P17/P18 ─────────────────────────────────────
     cases_droits = _mapper_droits(
@@ -1173,6 +1356,8 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         cmi_stationnement=cmi_stationnement,
         emploi_accompagne=emploi_accompagne,
         creton=creton,
+        orientation_crp=_orientation_crp,
+        moins_de_20=_moins_de_20,
     )
 
     # ════════════════════════════════════════════════════════════════════════
@@ -1215,10 +1400,11 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         # FIX 3d : décochage explicite de P1 A au niveau des octets PDF
         # (le template peut avoir P1 A coché par défaut → on force /Off)
         _decocher_case(writer, "Case à cocher P1 A")
-        if procedure_simplifiee or urgence_droits:
-            cases.append("Case à cocher P1 1")   # Renouvellement à l'identique (simplifié)
-        else:
-            cases.append("Case à cocher P1 C")   # Réévaluation (renouvellement avec révision)
+        # CORRECTION : un renouvellement = « renouvellement à l'identique » (P1 1).
+        # Avant, sans procédure simplifiée ni urgence, le code cochait par erreur
+        # « réévaluation » (P1 C), l'inverse du choix de l'utilisateur. La réévaluation
+        # est gérée séparément par la branche _is_reevaluation ci-dessus.
+        cases.append("Case à cocher P1 1")   # Renouvellement à l'identique
     # Si type_demande inconnu → aucune case cochée (pas de défaut "première demande")
 
     # Déjà connu de la MDPH — utilise deja_connu_mdph (déjà normalisé ci-dessus)
@@ -1262,7 +1448,8 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     # Lieu de naissance — uniquement si renseigné
     if commune_naissance:
         champs["Champ de texte P2 4"] = commune_naissance
-        champs["Champ de texte P2 5"] = commune_naissance   # doublon parfois présent dans le PDF
+        # (« Champ de texte P2 5 » n'existe pas dans le PDF — doublon fantôme retiré.
+        #  La commune est déjà écrite dans P2 4, champ réel. Aucune perte de donnée.)
     if departement_naissance:
         champs["Champ de texte P2 6"] = departement_naissance
     if pays_naissance and pays_naissance.lower() not in ("france", ""):
@@ -1468,20 +1655,15 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
     # Consentement partage informations — géré via le radio OPTION P4 1 dans la section radios
     # (valeur /J'accepte ou /Je n'accepte pas — cochée via _cocher_option_nth plus bas)
 
-    # Case de certification sur l'honneur (page 4) — toujours cochée
-    # "En cochant cette case, je certifie sur l'honneur l'exactitude des informations"
-    try:
-        cases.append("Case à cocher P4 certification")
-    except Exception:
-        pass
+    # Certification sur l'honneur (page 4) : ACTE HUMAIN. Conformément à la
+    # cartographie (« Facilim ne signe ni ne certifie jamais »), Facilim NE coche
+    # PAS cette case — elle reste à la personne / au représentant à l'impression.
+    # (De plus « Case à cocher P4 certification » n'existe pas dans le PDF : l'ancien
+    #  append était un champ fantôme silencieux. Voir l'audit anti-fantôme.)
 
-    # Difficultés remplissage dossier médical — UNIQUEMENT si question posée et réponse "oui"
-    _difficultes_med_rep = (cerfa_rep.get("difficultes_dossier_medical") or "").lower()
-    if any(w in _difficultes_med_rep for w in ["oui", "yes", "difficile", "aide", "aidé"]):
-        try:
-            cases.append("Case à cocher P4 difficultes_med")
-        except Exception:
-            pass
+    # Difficultés à obtenir le certificat médical : la cartographie en fait un
+    # TEXTE facultatif, et le PDF n'expose pas de case « P4 difficultes_med »
+    # (champ fantôme). Rien à cocher ici ; à traiter en texte libre si besoin.
 
     # Date de rédaction du dossier médical — remplir si connue
     date_dossier_medical = (
@@ -2186,33 +2368,44 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         # D3 = "Orientation vers [NOM] pour [RAISON]"
         # ou projet libre si pas d'établissement identifié
 
-        _raison_d3 = ""
-        # Raison depuis besoins_aide ou difficultes_quotidiennes
-        _besoins_court = (cerfa_rep.get("besoins_aide") or besoins_aide_str or "").strip()
-        if _besoins_court and len(_besoins_court) > 10:
-            _raison_d3 = _besoins_court[:200]
-        elif difficultes_quotidiennes and len(difficultes_quotidiennes) > 10:
-            _raison_d3 = difficultes_quotidiennes[:200]
+        # D3 = PROJET PROFESSIONNEL. La « raison » ne doit JAMAIS provenir de la vie
+        # quotidienne (besoins_aide / difficultes_quotidiennes) : c'était une
+        # contamination — le récit de dépendance se recopiait dans le champ projet.
+        # On s'appuie UNIQUEMENT sur le projet professionnel réellement déclaré.
+        _raison_d3 = (projet_professionnel or "").strip()[:200]
 
         if _nom_etab_cible:
             # Cas 1 : nom d'établissement identifié → formulation précise
             _d3_text = f"Orientation vers {_nom_etab_cible}"
             if _raison_d3:
-                _d3_text += f" afin de bénéficier d'un accompagnement adapté aux besoins suivants : {_raison_d3}"
+                _d3_text += f" dans le cadre du projet suivant : {_raison_d3}"
             _d3_text = _d3_text[:500]
             champs["Champ de texte P16 1"] = _d3_text
             logger.info(f"[CERFA D3] Établissement identifié : {_nom_etab_cible!r}")
         elif projet_professionnel:
             # Cas 2 : projet pro libre (sans établissement nommé)
             champs["Champ de texte P16 1"] = projet_professionnel[:500]
-        elif _raison_d3:
-            # Cas 3 : aucun établissement, aucun projet explicite → résumé des besoins
-            champs["Champ de texte P16 1"] = (
-                f"Accompagnement et orientation adaptés aux besoins identifiés : {_raison_d3}"
-            )[:500]
+        # Plus de cas « résumé des besoins » : il copiait la vie quotidienne dans le projet.
+
+        # JUSTIFICATION de l'orientation CRP/ESRP — page 16 = OÙ SE LÉGITIME le choix.
+        # Sans cet argumentaire, l'orientation cochée en page 18 ne suffit pas (cartographie).
+        # Justification STRUCTURELLE (cadre adapté / médico-social / rythme aménagé), pas une
+        # donnée médicale ni une recopie de la vie quotidienne.
+        if _orientation_crp:
+            _justif_crp = (
+                "Un centre de rééducation / réadaptation professionnelle (CRP / ESRP) est "
+                "sollicité plutôt qu'une formation de droit commun : il apporte un cadre "
+                "adapté, un accompagnement médico-social et un rythme aménagé que le milieu "
+                "ordinaire ne permet pas, au regard des difficultés déclarées."
+            )
+            _p16_actuel = str(champs.get("Champ de texte P16 1", "") or "")
+            if _justif_crp[:40] not in _p16_actuel:
+                champs["Champ de texte P16 1"] = (f"{_p16_actuel} {_justif_crp}".strip())[:500]
 
         # Case à cocher P16 2 = Orientation vers CRP/ESRP
-        _cible_crp = a_cible_esrp or any(t in droits_str for t in ("CRP", "ESRP", "CPO", "UEROS"))
+        # Même signal partagé que P18 3 (détection depuis projet libre / formation /
+        # nom d'ESRP), pour que page 16 et page 18 racontent la même orientation.
+        _cible_crp = _orientation_crp or any(t in droits_str for t in ("CRP", "ESRP", "CPO", "ESPO", "UEROS"))
         if _cible_crp:
             cases.append("Case à cocher P16 2")
             _esrp_label = nom_esrp or organisme_formation or ""
@@ -2434,14 +2627,18 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
         _cocher_option_nth(writer, "Case à cocher OPTION P2 4", 2)
 
     # Assurance maladie (OPTION P2 5) — 0:CPAM | 1:MSA | 2:RSI | 3:Autre
+    # CORRECTION : ne rien cocher si la caisse d'assurance maladie n'est pas
+    # renseignée. Avant, CPAM était coché par défaut même sans information,
+    # ce qui faisait apparaître deux caisses cochées sur le CERFA.
     if "msa" in organisme_assurance:
         _cocher_option_nth(writer, "Case à cocher OPTION P2 5", 1)
     elif "rsi" in organisme_assurance:
         _cocher_option_nth(writer, "Case à cocher OPTION P2 5", 2)
     elif "autre" in organisme_assurance:
         _cocher_option_nth(writer, "Case à cocher OPTION P2 5", 3)
-    else:
+    elif "cpam" in organisme_assurance:
         _cocher_option_nth(writer, "Case à cocher OPTION P2 5", 0)
+    # sinon : radio laissé vide (caisse non renseignée)
 
     # Classe ordinaire (OPTION P9 1) — 0:Oui | 1:Non
     if age_tranche in ("enfant", "jeune_majeur") and scolarise:

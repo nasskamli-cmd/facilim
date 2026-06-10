@@ -237,6 +237,18 @@ def _dim_projet_vie(donnees: dict, profil_mdph: str) -> DimensionCompletude:
     texte_c  = str(donnees.get("texte_c_scolarite", "") or "")
     texte_d  = str(donnees.get("texte_d_situation_pro", "") or "")
 
+    # ── FACILIM V2 (ADDITIF) — lire les FAITS du domaine projet si présents ──
+    # Source fiable si disponible ; sinon fallback intégral sur le dict plat ci-dessus.
+    _faits_projet_champs: set = set()
+    try:
+        from app.services.faits import faits_domaine
+        _faits_projet_champs = {
+            f.get("champ") for f in faits_domaine(donnees, "projet_professionnel")
+            if f.get("valeur")
+        }
+    except Exception:
+        _faits_projet_champs = set()
+
     # Texte E / projet de vie
     if len(texte_e) > 200:
         presents.append("Section E (projet de vie) documentée")
@@ -254,8 +266,14 @@ def _dim_projet_vie(donnees: dict, profil_mdph: str) -> DimensionCompletude:
     else:
         manquants.append("Droits demandés non identifiés")
 
-    # Orientation précisée
-    if proj.strip() or re.search(r"(ESAT|ESPO|SESSAD|milieu ordinaire|foyer|SAVS)", droits + texte_e):
+    # Orientation précisée — clé plate OU fait canonique projet (V2, additif)
+    _orientation_via_fait = bool(_faits_projet_champs & {
+        "orientation_souhaitee", "projet_professionnel",
+        "formation_cible", "etablissement_cible",
+    })
+    if proj.strip() or _orientation_via_fait or re.search(
+        r"(ESAT|ESPO|SESSAD|milieu ordinaire|foyer|SAVS)", droits + texte_e
+    ):
         presents.append("Orientation ou structure souhaitée précisée")
         score += 20
     else:

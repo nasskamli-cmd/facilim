@@ -175,6 +175,62 @@ def detecter_type_document(texte: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# CLOISONNEMENT DU PRESCRIPTEUR (RGPD)
+# ─────────────────────────────────────────────────────────────────────────────
+# Un bilan (PCR/ESRP/France Travail…) contient une section prescripteur :
+# conseiller référent, son nom, son email, sa structure. Ces données ne sont
+# JAMAIS celles de l'usager et ne doivent entrer NI dans son identité, NI dans
+# un récit, NI sur le CERFA. Deux défenses complémentaires :
+#   1. le prompt d'extraction l'interdit explicitement (voir _PROMPT_EXTRACTION) ;
+#   2. ce garde-fou déterministe écarte tout item dont la VALEUR est une
+#      coordonnée de tiers, et nettoie emails/téléphones des extraits d'audit.
+
+_RE_EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+", re.IGNORECASE)
+# Téléphone FR : 0X ou +33X suivi de 4 paires de chiffres (séparateurs tolérés).
+_RE_TEL = re.compile(r"(?:\+33|0)\s?[1-9](?:[\s.\-]?\d{2}){4}")
+
+# Étiquettes de rôle du rédacteur/prescripteur. Recherchées EN DÉBUT de valeur
+# (« Conseillère : S. Martin », « Référent : … ») pour viser l'identité du
+# professionnel, sans écarter une mention légitime (« besoin d'un conseiller »).
+_MARQUEURS_PRESCRIPTEUR_DEBUT = (
+    "prescripteur", "conseiller", "conseillere", "referent", "referente",
+    "redige par", "redigee par", "redacteur", "redactrice", "signataire",
+)
+
+
+def _sans_accents_min(texte: str) -> str:
+    import unicodedata
+    t = unicodedata.normalize("NFD", (texte or "").lower().strip())
+    return "".join(c for c in t if unicodedata.category(c) != "Mn")
+
+
+def _scrub_pii(texte: str) -> str:
+    """Retire emails et numéros de téléphone d'un texte (coordonnées de tiers)."""
+    t = _RE_EMAIL.sub("", texte)
+    t = _RE_TEL.sub("", t)
+    return re.sub(r"\s{2,}", " ", t).strip(" ;,-—\t")
+
+
+def cloisonner_prescripteur_item(valeur: str, extrait: str) -> tuple[str, str] | None:
+    """
+    Garde-fou RGPD déterministe sur un item extrait.
+
+    Écarte l'item (retourne None) si la VALEUR est :
+      - une coordonnée de tiers (email / téléphone), ou
+      - une identité de rédacteur/prescripteur (commence par « Conseiller : »,
+        « Référent : », « Rédigé par … », etc.).
+    Sinon conserve l'item en nettoyant une éventuelle coordonnée résiduelle dans
+    l'extrait source (audit).
+    """
+    if _RE_EMAIL.search(valeur) or _RE_TEL.search(valeur):
+        return None
+    _v = _sans_accents_min(valeur)
+    if any(_v.startswith(m) for m in _MARQUEURS_PRESCRIPTEUR_DEBUT):
+        return None
+    return valeur, _scrub_pii(extrait)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # MAPPING VERS LA CHECKLIST AGENT
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -248,6 +304,15 @@ MISSION : Extraire les informations utiles de ce document professionnel et les c
 RÈGLE ABSOLUE : extraire UNIQUEMENT ce qui est explicitement écrit.
 Aucune inférence. Aucune déduction. Aucune interprétation clinique.
 Si une information est absente → ne pas créer d'item.
+
+RÈGLE DE CLOISONNEMENT (RGPD) — IMPÉRATIVE :
+Le document peut contenir une section « prescripteur / rédacteur » : conseiller
+référent, France Travail / Pôle emploi / Cap emploi / mission locale, médecin ou
+psychologue rédacteur, avec leur NOM, EMAIL, TÉLÉPHONE, structure et signature.
+Ces personnes ne sont PAS l'usager. N'extrais JAMAIS leur identité ni leurs
+coordonnées. N'inclus AUCUN email ni numéro de téléphone dans tes items. Tu
+extrais seulement ce qui décrit la situation de l'USAGER (la personne concernée
+par le dossier MDPH), jamais le professionnel qui a rédigé le bilan.
 
 Pour chaque information extraite, fournir OBLIGATOIREMENT :
 - "valeur" : reformulation courte et précise (max 15 mots)
@@ -380,6 +445,16 @@ def _construire_knowledge(
             valeur  = str(item.get("valeur", "")).strip()
             extrait = str(item.get("extrait_source", "")).strip()
             if valeur and extrait:   # REJET si extrait vide — règle absolue
+                # Cloisonnement prescripteur (RGPD) : écarter tout contact tiers,
+                # nettoyer les coordonnées résiduelles des extraits d'audit.
+                cloisonne = cloisonner_prescripteur_item(valeur, extrait)
+                if cloisonne is None:
+                    logger.info(
+                        "[EXTRACTOR] Item écarté (donnée prescripteur/contact tiers) : %s",
+                        valeur[:60],
+                    )
+                    continue
+                valeur, extrait = cloisonne
                 items_valides.append(ExtractedItem(
                     valeur=valeur,
                     source=nom_fichier,

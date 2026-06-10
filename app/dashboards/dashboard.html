@@ -10,7 +10,7 @@
       theme: {
         extend: {
           colors: {
-            facilim: { 50:'#f0f9ff', 100:'#e0f2fe', 500:'#0ea5e9', 700:'#0369a1', 900:'#0c4a6e' },
+            facilim: { 50:'#f0fdfa', 100:'#cffafe', 500:'#14b8a6', 700:'#0f766e', 900:'#0c2340' },
             alerte: { bg:'#fef2f2', border:'#fca5a5', text:'#991b1b' },
             warning: { bg:'#fffbeb', border:'#fcd34d', text:'#92400e' },
             success: { bg:'#f0fdf4', border:'#86efac', text:'#166534' },
@@ -36,13 +36,8 @@
 <!-- ── Navigation ─────────────────────────────────────────────────────────── -->
 <nav class="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between sticky top-0 z-40 shadow-sm">
   <div class="flex items-center gap-3">
-    <div class="w-8 h-8 bg-facilim-700 rounded-lg flex items-center justify-center">
-      <span class="text-white text-xs font-bold">F</span>
-    </div>
-    <div>
-      <span class="font-semibold text-gray-900 text-sm">Facilim</span>
-      <span class="text-gray-400 text-xs ml-2">Poste de pilotage ESSMS</span>
-    </div>
+    <img src="/static/img/facilim-logomark.png?v=2" alt="FACILIM" class="h-12 w-auto" />
+    <span class="text-gray-400 text-xs border-l border-gray-200 pl-3">Poste de pilotage ESSMS</span>
   </div>
   <div class="flex items-center gap-4">
     <span id="alertes-count" class="hidden items-center gap-1 bg-red-100 text-red-700 text-xs font-semibold px-2.5 py-1 rounded-full badge-urgent">
@@ -148,15 +143,15 @@
     <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4" id="metriques-kpi">
       <div class="text-center p-3 bg-gray-50 rounded-lg">
         <div class="text-xl font-bold text-gray-900" id="met-total">–</div>
-        <div class="text-xs text-gray-500 mt-1">Dossiers total</div>
+        <div class="text-xs text-gray-500 mt-1">Dossiers suivis</div>
       </div>
       <div class="text-center p-3 bg-facilim-50 rounded-lg">
         <div class="text-xl font-bold text-facilim-700" id="met-maturite">–</div>
-        <div class="text-xs text-gray-500 mt-1">Maturité moy.</div>
+        <div class="text-xs text-gray-500 mt-1">Maturité moyenne des dossiers prêts</div>
       </div>
       <div class="text-center p-3 bg-green-50 rounded-lg">
         <div class="text-xl font-bold text-green-700" id="met-enrichissement">–</div>
-        <div class="text-xs text-gray-500 mt-1">Taux enrichissement</div>
+        <div class="text-xs text-gray-500 mt-1">Informations ajoutées par l'échange</div>
       </div>
       <div class="text-center p-3 bg-orange-50 rounded-lg">
         <div class="text-xl font-bold text-orange-700" id="met-relances">–</div>
@@ -507,7 +502,9 @@ async function loadMetriques() {
     }
 
     document.getElementById('met-total').textContent       = u.nb_dossiers_total ?? '–';
-    document.getElementById('met-maturite').textContent    = q.maturite_moyenne != null ? q.maturite_moyenne + '/100' : '–';
+    // Maturité : n'afficher un score que s'il est significatif. Un 0/100 sur des
+    // dossiers encore en collecte se lit comme un échec ; on montre alors « — ».
+    document.getElementById('met-maturite').textContent    = (q.maturite_moyenne != null && q.maturite_moyenne > 0) ? q.maturite_moyenne + '/100' : '—';
     document.getElementById('met-enrichissement').textContent = q.taux_enrichissement_moyen != null ? '×' + q.taux_enrichissement_moyen : '–';
     document.getElementById('met-relances').textContent    = u.nb_relances_total ?? '–';
     document.getElementById('metriques-date').textContent  = new Date().toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'});
@@ -657,9 +654,15 @@ function renderCockpit(d) {
       : (d.cockpit_pro_json || {});
   } catch (e) { console.debug('cockpit_pro_json illisible:', e); return; }
 
-  const hasData = c && (c.cockpit_texte || c.score_solidite != null
-    || (c.droits_detectes || []).length || (c.plan_action || []).length);
-  if (!hasData) return;  // cockpit pas encore généré pour ce dossier
+  // Signaux experts de la revue instructeur (robustesse, risque, axes), exposés
+  // par l'API sous d.revue_instructeur. Servent de complément/repli au cockpit.
+  const ri = d.revue_instructeur || {};
+  const riHasData = !!(ri && (ri.robustesse != null || ri.risque_global
+    || (ri.axes || []).length || (ri.incoherences_critiques || []).length));
+
+  const hasData = (c && (c.cockpit_texte || c.score_solidite != null
+    || (c.droits_detectes || []).length || (c.plan_action || []).length)) || riHasData;
+  if (!hasData) return;  // ni cockpit ni revue → rien à montrer
 
   panel.classList.remove('hidden');
 
@@ -672,7 +675,7 @@ function renderCockpit(d) {
 
   // 1. Synthèse professionnelle
   set('cockpit-completude', (c.score_completude != null ? c.score_completude : '–') + '/100');
-  set('cockpit-solidite',   (c.score_solidite   != null ? c.score_solidite   : '–') + '/100');
+  set('cockpit-solidite',   (c.score_solidite != null ? c.score_solidite : (ri.robustesse != null ? ri.robustesse : '–')) + '/100');
   set('cockpit-niveau', c.niveau || '–');
   const decMap = { GO: 'bg-green-100 text-green-700', GO_AVEC_RISQUES: 'bg-orange-100 text-orange-700', NO_GO: 'bg-red-100 text-red-700' };
   const decEl = document.getElementById('cockpit-decision');
@@ -699,7 +702,7 @@ function renderCockpit(d) {
   const rr = c.risques_refus || {};
   const rgEl = document.getElementById('cockpit-risque-global');
   if (rgEl) {
-    const rg = rr.risque_global || '–';
+    const rg = rr.risque_global || ri.risque_global || '–';
     rgEl.className = 'text-xs font-semibold px-2 py-0.5 rounded-full ' + riskCls(rg);
     rgEl.textContent = 'Global : ' + rg;
   }
@@ -709,6 +712,21 @@ function renderCockpit(d) {
        <div class="text-xs font-semibold">${esc(r.label || r.droit || '')} — ${esc(r.risque || '')}</div>
        <div class="text-xs mt-0.5 opacity-90">${esc(r.justification || '')}</div></div>`
   ).join('') : '<div class="text-xs text-gray-400 italic">Aucun risque identifié.</div>');
+
+  // Compléments de la revue instructeur : incohérences critiques + axes d'amélioration.
+  const riskEl = document.getElementById('cockpit-risques');
+  if (riskEl) {
+    const inco = ri.incoherences_critiques || [];
+    const axes = ri.axes || [];
+    let extra = '';
+    if (inco.length) extra += inco.map(x =>
+      `<div class="rounded-lg px-3 py-2 text-red-700 bg-red-50">
+         <div class="text-xs font-semibold">Incohérence à lever — ${esc(x)}</div></div>`).join('');
+    if (axes.length) extra +=
+      `<div class="text-xs font-semibold text-gray-500 mt-1">Axes d'amélioration</div>` +
+      axes.map(a => `<div class="rounded-lg px-3 py-2 text-facilim-700 bg-facilim-50 text-xs">${esc(a)}</div>`).join('');
+    if (extra) riskEl.insertAdjacentHTML('beforeend', extra);
+  }
 
   // 5. Preuves recommandées
   const pp = c.pieces_prioritaires || [];
@@ -996,6 +1014,20 @@ function renderModalContent(d) {
   const questions = Array.isArray(d.questions) ? d.questions : (JSON.parse(d.questions_json||'[]'));
   const hasFlag = d.flag_humain_requis;
 
+  // ── VISIBILITÉ MÉTIER — données déjà exposées par l'API (get_dossier) :
+  //    d.validite_dossier (pret + manquants) et d.completude (5 états). Aucune
+  //    nouvelle règle métier : on REND VISIBLE l'existant.
+  const _v = d.validite_dossier || {};
+  const _comp = d.completude || {};
+  const _pret = _v.pret === true;
+  const _manq = Array.isArray(_v.manquants) ? _v.manquants : [];
+  const _enAttente = Array.isArray(_comp.en_attente) ? _comp.en_attente : [];
+  const _aPro = Array.isArray(_comp.a_completer_pro) ? _comp.a_completer_pro : [];
+  const _refuses = Array.isArray(_comp.refuses) ? _comp.refuses : [];
+  const _fournis = _comp.fournis != null ? _comp.fournis : 0;
+  const _requis = _comp.requis_total != null ? _comp.requis_total : 0;
+  const _evalue = (_v.pret !== undefined) || (_comp.requis_total != null);
+
   // Activer/désactiver bouton validation flag
   const btnFlag = document.getElementById('btn-validate-flag');
   if (hasFlag) btnFlag.classList.remove('hidden'); else btnFlag.classList.add('hidden');
@@ -1019,6 +1051,45 @@ function renderModalContent(d) {
       </div>
       ${d.raison_flag ? `<p class="text-xs text-red-600 mt-2 italic">${d.raison_flag}</p>` : ''}
     </div>
+
+    <!-- ════ ÉTAT MÉTIER DU DOSSIER (visibilité complétude) ════ -->
+    ${_evalue ? `
+    <!-- BLOC 1 — État du dossier -->
+    <div class="rounded-xl p-4 ${_pret ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}">
+      <div class="text-base font-bold ${_pret ? 'text-green-700' : 'text-red-700'}">
+        ${_pret ? '🟢 Prêt à transmettre' : '🔴 Dossier incomplet'}
+      </div>
+
+      <!-- BLOC 2 — Pourquoi le dossier est bloqué -->
+      ${!_pret && (_manq.length || _enAttente.length) ? `
+      <div class="mt-3">
+        <div class="text-xs font-semibold text-red-700 uppercase tracking-wide mb-1">Pourquoi le dossier n'est pas prêt</div>
+        <ul class="list-disc list-inside text-sm text-red-800 space-y-0.5">
+          ${_manq.map(m => `<li>${m}</li>`).join('')}
+        </ul>
+        ${_enAttente.length ? `<div class="text-sm text-gray-700 mt-2"><span class="font-semibold">À renseigner (${_enAttente.length})&nbsp;:</span> ${_enAttente.slice(0,6).join(', ')}${_enAttente.length > 6 ? ` … +${_enAttente.length - 6} autres` : ''}</div>` : ''}
+      </div>` : ''}
+
+      <!-- BLOC 4 — Progression -->
+      <div class="text-xs text-gray-600 mt-3">${_fournis} / ${_requis} champs requis complétés · score ${score}/100</div>
+    </div>
+
+    <!-- BLOC 3 — À compléter par le professionnel -->
+    ${_aPro.length ? `
+    <div class="rounded-xl p-4 bg-amber-50 border border-amber-200">
+      <div class="text-xs font-semibold text-amber-800 uppercase tracking-wide mb-1">À compléter par le professionnel</div>
+      <ul class="list-disc list-inside text-sm text-amber-900 space-y-0.5">
+        ${_aPro.map(x => `<li>${x}</li>`).join('')}
+      </ul>
+    </div>` : ''}
+
+    ${_refuses.length ? `<div class="text-xs text-gray-500 italic">Refusés par l'usager&nbsp;: ${_refuses.join(', ')}</div>` : ''}
+
+    <!-- BLOC 5 — Export CERFA -->
+    <div class="rounded-xl p-3 text-sm font-semibold ${_pret ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}">
+      ${_pret ? '✅ Export CERFA autorisé' : '❌ Export CERFA bloqué' + (_manq.length ? ' — ' + _manq[0] : '')}
+    </div>
+    ` : ''}
 
     <!-- Droits identifiés -->
     ${droits.length ? `

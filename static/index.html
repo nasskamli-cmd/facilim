@@ -306,15 +306,15 @@
     <div class="flex items-center justify-between h-16">
 
       <!-- Logo -->
-      <a href="/" class="flex items-center gap-2.5 group" aria-label="Facilim — Accueil">
-        <div class="w-9 h-9 rounded-xl flex items-center justify-center font-black text-white text-lg" style="background:var(--green)">F</div>
-        <span class="font-bold text-lg" style="color:var(--navy)">Facilim</span>
+      <a href="/" class="flex items-center group" aria-label="FACILIM — Accueil">
+        <img src="/static/img/facilim-logomark.png?v=2" alt="FACILIM — l'intelligence au service des droits des personnes" class="h-11 w-auto" />
       </a>
 
       <!-- Desktop nav -->
       <div class="hidden md:flex items-center gap-1">
         <a href="#comment" class="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 hover:text-navy hover:bg-slate-50 transition-colors">Comment ça marche</a>
         <a href="#professionnels" class="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 hover:text-navy hover:bg-slate-50 transition-colors">Structures</a>
+        <a href="#cadre" class="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 hover:text-navy hover:bg-slate-50 transition-colors">Le cadre</a>
         <a href="#temoignages" class="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 hover:text-navy hover:bg-slate-50 transition-colors">Témoignages</a>
         <a href="#contact" class="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 hover:text-navy hover:bg-slate-50 transition-colors">Contact</a>
       </div>
@@ -384,8 +384,8 @@
         </h1>
 
         <!-- Subtext -->
-        <p class="text-lg text-slate-600 leading-relaxed mb-8 reveal reveal-delay-2" style="max-width:480px">
-          Facilim aide les familles et les structures médico-sociales à structurer et préparer le dossier MDPH. L'outil collecte l'information, la structure et pré-remplit le CERFA ; chaque dossier est relu et validé par un professionnel. Facilim ne décide jamais des droits.
+        <p class="text-lg text-slate-600 leading-relaxed mb-8 reveal reveal-delay-2" style="max-width:520px">
+          Une innovation au service des droits et de l'autodétermination des personnes en situation de handicap. Pour les équipes médico-sociales, un gain de temps concret : Facilim recueille l'information, la structure et pré-remplit le CERFA. Chaque dossier reste relu et validé par un professionnel, et la MDPH seule décide des droits.
         </p>
 
         <!-- CTAs -->
@@ -400,15 +400,19 @@
           </a>
         </div>
 
-        <!-- Social proof -->
-        <div class="flex items-center gap-4 reveal reveal-delay-4">
-          <div class="flex -space-x-2">
-            <div class="w-8 h-8 rounded-full border-2 border-white flex items-center justify-center text-xs font-bold text-white" style="background:#1B3A6B">SC</div>
-            <div class="w-8 h-8 rounded-full border-2 border-white flex items-center justify-center text-xs font-bold text-white" style="background:#7C3AED">MA</div>
-            <div class="w-8 h-8 rounded-full border-2 border-white flex items-center justify-center text-xs font-bold text-white" style="background:#C2410C">PL</div>
-          </div>
+        <!-- Reassurance strip -->
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-1.5 mb-6 text-[13px] font-medium reveal reveal-delay-3" style="color:var(--text-m)">
+          <span class="inline-flex items-center gap-1.5"><span style="color:var(--green-d)">✓</span> Facilim ne décide pas des droits</span>
+          <span class="inline-flex items-center gap-1.5"><span style="color:var(--green-d)">✓</span> La MDPH / CDAPH décide</span>
+          <span class="inline-flex items-center gap-1.5"><span style="color:var(--green-d)">✓</span> Le professionnel vérifie</span>
+          <span class="inline-flex items-center gap-1.5"><span style="color:var(--green-d)">✓</span> La personne valide</span>
+        </div>
+
+        <!-- Cadre / positionnement -->
+        <div class="flex items-center gap-3 reveal reveal-delay-4">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--navy)" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           <div class="text-sm text-slate-500">
-            <strong class="text-slate-700">+2 500 familles</strong> accompagnées en 2024
+            <strong class="text-slate-700">Conçu avec et pour</strong> les structures médico-sociales, dans le respect du cadre MDPH
           </div>
         </div>
       </div>
@@ -533,21 +537,25 @@
 ════════════════════════════════════════════════ -->
 <section class="py-16 bg-white" aria-label="Chiffres clés">
   <div class="max-w-5xl mx-auto px-5 sm:px-8">
+    <div class="text-center mb-10 reveal">
+      <p class="section-label mb-2">Nos engagements</p>
+      <h2 class="text-xl font-semibold" style="color:var(--text-m)">Un cadre clair, au service de la décision publique</h2>
+    </div>
     <div class="grid grid-cols-1 sm:grid-cols-3 gap-0 divide-y sm:divide-y-0 sm:divide-x divide-slate-100">
 
       <div class="text-center py-8 sm:px-8 reveal">
-        <div class="stat-number mb-1">2 500<span style="font-size:32px;color:var(--green)">+</span></div>
-        <div class="text-sm text-slate-500 font-medium mt-1">familles accompagnées</div>
-      </div>
-
-      <div class="text-center py-8 sm:px-8 reveal reveal-delay-2">
         <div class="stat-number mb-1">100<span style="font-size:32px;color:var(--green)">%</span></div>
         <div class="text-sm text-slate-500 font-medium mt-1">des dossiers relus et validés par un professionnel</div>
       </div>
 
+      <div class="text-center py-8 sm:px-8 reveal reveal-delay-2">
+        <div class="stat-number mb-1">0</div>
+        <div class="text-sm text-slate-500 font-medium mt-1">décision automatique — la MDPH / CDAPH décide</div>
+      </div>
+
       <div class="text-center py-8 sm:px-8 reveal reveal-delay-3">
-        <div class="stat-number mb-1">−75<span style="font-size:32px;color:var(--green)">%</span></div>
-        <div class="text-sm text-slate-500 font-medium mt-1">de temps administratif pour les équipes</div>
+        <div class="stat-number mb-1">100<span style="font-size:32px;color:var(--green)">%</span></div>
+        <div class="text-sm text-slate-500 font-medium mt-1">traçabilité de l'origine de chaque information</div>
       </div>
 
     </div>
@@ -562,8 +570,8 @@
   <div class="max-w-6xl mx-auto px-5 sm:px-8">
 
     <div class="text-center mb-10 reveal">
-      <p class="section-label mb-2">Ils nous font confiance</p>
-      <h2 class="text-xl font-semibold" style="color:var(--text-m)">Adopté par les structures médico-sociales partout en France</h2>
+      <p class="section-label mb-2">Pour qui</p>
+      <h2 class="text-xl font-semibold" style="color:var(--text-m)">Pensé pour tous les acteurs du médico-social</h2>
     </div>
 
     <div class="flex flex-wrap justify-center gap-3 reveal reveal-delay-1">
@@ -670,56 +678,41 @@
   <div class="max-w-6xl mx-auto px-5 sm:px-8">
 
     <div class="text-center mb-14 reveal">
-      <p class="section-label mb-3">Ce qu'ils disent</p>
+      <p class="section-label mb-3">Ce que Facilim change</p>
       <h2 id="testi-title" class="text-3xl sm:text-4xl font-black" style="color:var(--navy)">
-        Des vrais mots. Des vrais vécus.
+        Concrètement, pour chacun.
       </h2>
     </div>
 
     <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
 
-      <!-- Testimonial 1 -->
+      <!-- Valeur 1 — équipe -->
       <div class="card-shadow card-hover p-7 flex flex-col reveal">
-        <div class="quote-mark">"</div>
         <p class="text-[15px] text-slate-600 leading-relaxed flex-1 mt-2">
-          Nous passions des heures à remplir les CERFA à la main. Avec Facilim, le dossier est prêt en 20 minutes — et il est bien mieux structuré qu'avant. Les familles répondent sur WhatsApp et on reçoit tout directement.
+          Fini les heures passées à remplir le CERFA à la main. Facilim le pré-remplit et le structure, bien plus vite. Les familles répondent par WhatsApp, et l'équipe reçoit tout au même endroit, prêt à relire.
         </p>
         <div class="flex items-center gap-3 mt-6 pt-5 border-t border-slate-100">
-          <div class="w-10 h-10 rounded-full font-bold text-white text-sm flex items-center justify-center flex-shrink-0" style="background:var(--navy)">SC</div>
-          <div>
-            <div class="font-semibold text-sm" style="color:var(--text)">Sophie C.</div>
-            <div class="text-xs text-slate-500">Chargée de suivi — SESSAD Île-de-France</div>
-          </div>
+          <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold" style="background:#E6EEF8;color:var(--navy)">Pour l'équipe médico-sociale</span>
         </div>
       </div>
 
-      <!-- Testimonial 2 -->
+      <!-- Valeur 2 — famille -->
       <div class="card-shadow card-hover p-7 flex flex-col reveal reveal-delay-2">
-        <div class="quote-mark">"</div>
         <p class="text-[15px] text-slate-600 leading-relaxed flex-1 mt-2">
-          Je ne comprenais rien aux formulaires MDPH. C'est tellement complexe. Le bot m'a posé des questions simples sur le quotidien de mon fils, et mon éducatrice spécialisée avait tout ce dont elle avait besoin. C'est un soulagement immense.
+          Des questions simples sur le quotidien, en langage clair, posées avec patience. La personne s'exprime à son rythme : par écrit, par message vocal, ou dans sa langue. Aucune barrière d'écriture, et ses mots se retrouvent au cœur du dossier.
         </p>
         <div class="flex items-center gap-3 mt-6 pt-5 border-t border-slate-100">
-          <div class="w-10 h-10 rounded-full font-bold text-white text-sm flex items-center justify-center flex-shrink-0" style="background:#7C3AED">MA</div>
-          <div>
-            <div class="font-semibold text-sm" style="color:var(--text)">Marie A.</div>
-            <div class="text-xs text-slate-500">Mère d'un enfant accompagné par un IME</div>
-          </div>
+          <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold" style="background:#F1EAFE;color:#6D28D9">Pour la famille</span>
         </div>
       </div>
 
-      <!-- Testimonial 3 -->
+      <!-- Valeur 3 — structure -->
       <div class="card-shadow card-hover p-7 flex flex-col reveal reveal-delay-3">
-        <div class="quote-mark">"</div>
         <p class="text-[15px] text-slate-600 leading-relaxed flex-1 mt-2">
-          La standardisation des dossiers a vraiment amélioré notre taux d'acceptation MDPH. Avant Facilim, on avait beaucoup de dossiers renvoyés pour compléments. Maintenant, nos dossiers sont complets dès le premier envoi. Gain de temps énorme.
+          Des dossiers homogènes et plus complets dès le premier envoi, avec la parole de la personne au centre. Moins d'allers-retours, une charge administrative allégée pour la structure.
         </p>
         <div class="flex items-center gap-3 mt-6 pt-5 border-t border-slate-100">
-          <div class="w-10 h-10 rounded-full font-bold text-white text-sm flex items-center justify-center flex-shrink-0" style="background:#C2410C">PL</div>
-          <div>
-            <div class="font-semibold text-sm" style="color:var(--text)">Pierre L.</div>
-            <div class="text-xs text-slate-500">Chef de service — ESAT Normandie</div>
-          </div>
+          <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold" style="background:#FDEBE0;color:#C2410C">Pour la structure</span>
         </div>
       </div>
 
@@ -751,8 +744,8 @@
           <div class="flex items-start gap-3">
             <div class="feat-check">✓</div>
             <div>
-              <div class="font-semibold text-white text-sm">Gain de temps immédiat</div>
-              <div class="text-slate-400 text-sm mt-0.5">De 3h à 20 minutes par dossier. Votre équipe se concentre sur l'accompagnement humain.</div>
+              <div class="font-semibold text-white text-sm">Du temps rendu à l'accompagnement</div>
+              <div class="text-slate-400 text-sm mt-0.5">Moins de temps sur l'administratif, plus de temps pour la relation humaine.</div>
             </div>
           </div>
 
@@ -783,8 +776,16 @@
           <div class="flex items-start gap-3">
             <div class="feat-check">✓</div>
             <div>
-              <div class="font-semibold text-white text-sm">Déploiement en 24h</div>
-              <div class="text-slate-400 text-sm mt-0.5">Pas d'installation. Pas de formation longue. Votre équipe est opérationnelle dès le lendemain.</div>
+              <div class="font-semibold text-white text-sm">Traçabilité des informations</div>
+              <div class="text-slate-400 text-sm mt-0.5">L'origine de chaque information est conservée — pour un dossier vérifiable et lisible par l'équipe MDPH.</div>
+            </div>
+          </div>
+
+          <div class="flex items-start gap-3">
+            <div class="feat-check">✓</div>
+            <div>
+              <div class="font-semibold text-white text-sm">Déploiement simple</div>
+              <div class="text-slate-400 text-sm mt-0.5">Pas d'installation lourde. Une prise en main rapide pour votre équipe.</div>
             </div>
           </div>
 
@@ -890,16 +891,20 @@
       <h2 id="auto-title" class="text-3xl sm:text-4xl font-black" style="color:var(--navy)">
         Un outil au service de l'autodétermination.
       </h2>
+      <p class="mt-3 text-base font-semibold" style="color:var(--navy)">C'est le système qui s'adapte à la personne, jamais l'inverse.</p>
       <p class="mt-4 text-base text-slate-500 max-w-2xl mx-auto">
         Facilim aide la personne et ses aidants à exprimer leurs besoins et leur projet de vie.
         La personne (ou son représentant) reste décisionnaire et valide son dossier.
+      </p>
+      <p class="mt-3 text-sm text-slate-400 max-w-2xl mx-auto">
+        Une approche dans l'esprit de la loi du 2 janvier 2002, qui consacre l'expression et la participation de l'usager, et de la loi du 11 février 2005, qui place le projet de vie et la citoyenneté de la personne handicapée au cœur de ses droits.
       </p>
     </div>
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
       <div class="card-shadow p-6 reveal">
         <div class="text-2xl mb-3">🗣️</div>
         <div class="font-bold text-sm mb-1" style="color:var(--navy)">Expression des besoins</div>
-        <p class="text-sm text-slate-500">La parole de la personne est recueillie simplement, à son rythme, dans ses mots.</p>
+        <p class="text-sm text-slate-500">La parole de la personne est recueillie simplement, à son rythme : par écrit, par message vocal, en langage facile à lire et à comprendre (FALC) ou dans sa langue. Aucune barrière d'écriture.</p>
       </div>
       <div class="card-shadow p-6 reveal reveal-delay-1">
         <div class="text-2xl mb-3">🎯</div>
@@ -953,6 +958,71 @@
         <span class="feat-check">✓</span>
         <p class="text-sm text-slate-700"><strong>Aucun dossier n'est transmis sans relecture humaine.</strong> Facilim s'appuie sur le référentiel GEVA/CNSA — sans label ni endossement officiel.</p>
       </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ════════════════════════════════════════════════
+     FAQ INSTITUTIONNELLE
+════════════════════════════════════════════════ -->
+<section id="faq" class="py-24" style="background:linear-gradient(155deg,#F8FAFF,#EEF4FF)" aria-labelledby="faq-title">
+  <div class="max-w-3xl mx-auto px-5 sm:px-8">
+    <div class="text-center mb-12 reveal">
+      <p class="section-label mb-3">Questions fréquentes</p>
+      <h2 id="faq-title" class="text-3xl sm:text-4xl font-black" style="color:var(--navy)">Les réponses aux questions des institutions</h2>
+    </div>
+
+    <div class="flex flex-col gap-3 reveal reveal-delay-1">
+
+      <details class="card-shadow p-5">
+        <summary class="font-semibold cursor-pointer list-none flex justify-between items-center gap-4" style="color:var(--navy)">
+          Facilim remplace-t-il la MDPH ?
+          <span style="color:var(--green-d)">＋</span>
+        </summary>
+        <p class="text-sm text-slate-500 mt-3 leading-relaxed">Non. Facilim ne se substitue ni à la MDPH ni à la CDAPH. Il aide à exprimer les besoins, à structurer l'information et à préparer le dossier. L'évaluation et la décision restent entièrement de la compétence de la MDPH et de la CDAPH.</p>
+      </details>
+
+      <details class="card-shadow p-5">
+        <summary class="font-semibold cursor-pointer list-none flex justify-between items-center gap-4" style="color:var(--navy)">
+          Qui décide des droits ?
+          <span style="color:var(--green-d)">＋</span>
+        </summary>
+        <p class="text-sm text-slate-500 mt-3 leading-relaxed">La CDAPH, sur la base de l'évaluation de la MDPH. Facilim ne décide jamais et ne prédit aucun droit : il signale, le cas échéant, des pistes à explorer avec le professionnel.</p>
+      </details>
+
+      <details class="card-shadow p-5">
+        <summary class="font-semibold cursor-pointer list-none flex justify-between items-center gap-4" style="color:var(--navy)">
+          Comment éviter les erreurs de l'outil ?
+          <span style="color:var(--green-d)">＋</span>
+        </summary>
+        <p class="text-sm text-slate-500 mt-3 leading-relaxed">La validation humaine est obligatoire : le professionnel vérifie chaque élément, la personne (ou son représentant) relit et valide. Aucun dossier n'est transmis sans relecture humaine, et l'origine de chaque information est tracée.</p>
+      </details>
+
+      <details class="card-shadow p-5">
+        <summary class="font-semibold cursor-pointer list-none flex justify-between items-center gap-4" style="color:var(--navy)">
+          Que deviennent les données de santé ?
+          <span style="color:var(--green-d)">＋</span>
+        </summary>
+        <p class="text-sm text-slate-500 mt-3 leading-relaxed">Elles sont hébergées en France et traitées dans une démarche de conformité RGPD (données de santé, art. 9), avec un canal sécurisé dédié (hébergement de santé HDS en cours).</p>
+      </details>
+
+      <details class="card-shadow p-5">
+        <summary class="font-semibold cursor-pointer list-none flex justify-between items-center gap-4" style="color:var(--navy)">
+          Sur quel cadre légal Facilim s'inscrit-il ?
+          <span style="color:var(--green-d)">＋</span>
+        </summary>
+        <p class="text-sm text-slate-500 mt-3 leading-relaxed">Dans l'esprit de la loi du 2 janvier 2002, qui consacre les droits, l'expression et la participation de l'usager du médico-social, et de la loi du 11 février 2005, qui institue le projet de vie, la MDPH et la citoyenneté des personnes handicapées. Facilim outille l'expression des besoins et la préparation du dossier ; l'évaluation et la décision restent à la MDPH et à la CDAPH.</p>
+      </details>
+
+      <details class="card-shadow p-5">
+        <summary class="font-semibold cursor-pointer list-none flex justify-between items-center gap-4" style="color:var(--navy)">
+          La personne reste-t-elle actrice de sa démarche ?
+          <span style="color:var(--green-d)">＋</span>
+        </summary>
+        <p class="text-sm text-slate-500 mt-3 leading-relaxed">Oui. Facilim est conçu pour soutenir l'autodétermination : expression des besoins, projet de vie, participation et pouvoir d'agir. La personne (ou son représentant) valide son dossier avant toute transmission.</p>
+      </details>
+
     </div>
   </div>
 </section>

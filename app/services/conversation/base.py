@@ -19,6 +19,23 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
+from app.services.field_status import (
+    est_a_completer_pro,
+    est_refuse,
+    finalisation_bloquee,
+    statut_champ,
+)
+
+# Cœur substantiel d'un dossier MDPH « solide » : ces champs ne peuvent PAS être
+# tous délégués/refusés sans vider le dossier de son sens. Un dossier n'est
+# « prêt à transmettre » que s'ils sont réellement FOURNIS (cf. dossier_solide).
+CHAMPS_COEUR_SOLIDITE = (
+    "impact_quotidien",     # retentissement (B) — ce que la MDPH évalue
+    "aides_en_place",       # besoins de compensation (B2)
+    "attentes_usager",      # attentes (E) — autodétermination
+    "projet_de_vie",        # projet de vie (E)
+)
+
 logger = logging.getLogger("facilim.conversation")
 
 
@@ -83,23 +100,84 @@ class ConversationAgent(ABC):
                 return f"Merci. Pourriez-vous me préciser : {manquants[0]} ?"
             return "Merci pour vos informations. — L'équipe Facilim"
 
+    def _applicable(self, item: dict, donnees: dict[str, Any]) -> bool:
+        """True si un champ requis est applicable ici (condition remplie)."""
+        if not item.get("requis", True):
+            return False
+        from app.services.collecte_schema import condition_remplie
+        return condition_remplie(donnees, item.get("condition"))
+
     def missing_fields(self, donnees: dict[str, Any]) -> list[str]:
-        """Retourne les libellés des champs obligatoires non encore renseignés."""
-        missing = []
-        for item in self.CHECKLIST:
-            if not item.get("requis", True):
+        """
+        Libellés des champs obligatoires encore À POSER À L'USAGER. Exclut les
+        champs refusés ET ceux délégués au professionnel (« à compléter par pro ») :
+        on ne les repose pas à l'usager — mais ils restent comptés et VISIBLES
+        ailleurs (synthese_completude / points_d_attention), jamais effacés.
+        """
+        return [it["label"] for it in self.CHECKLIST
+                if self._applicable(it, donnees)
+                and statut_champ(donnees, it["id"]) == "en_attente"]
+
+    def missing_field_ids(self, donnees: dict[str, Any]) -> list[str]:
+        """Comme missing_fields() mais retourne les IDS (détection refus / relance)."""
+        return [it["id"] for it in self.CHECKLIST
+                if self._applicable(it, donnees)
+                and statut_champ(donnees, it["id"]) == "en_attente"]
+
+    def etat_par_champ(self, donnees: dict[str, Any]) -> list[dict[str, str]]:
+        """
+        État de CHAQUE champ requis applicable : 'fourni' | 'refuse' |
+        'a_completer_pro' | 'en_attente'. Aucun champ exigé n'est masqué.
+        """
+        out: list[dict[str, str]] = []
+        for it in self.CHECKLIST:
+            if not self._applicable(it, donnees):
                 continue
-            cond = item.get("condition")
-            if cond:
-                val = str(donnees.get(cond["champ"], "")).lower()
-                if not val.startswith(cond["valeur"].lower()):
-                    continue
-            if not donnees.get(item["id"]):
-                missing.append(item["label"])
-        return missing
+            out.append({
+                "id": it["id"],
+                "label": it.get("label", it["id"]),
+                "etat": statut_champ(donnees, it["id"]),
+            })
+        return out
+
+    def synthese_completude(self, donnees: dict[str, Any]) -> dict[str, Any]:
+        """
+        Synthèse de complétude différenciée d'un dossier. Distingue clairement
+        complet / en_attente / à compléter par pro / refusé, sans rien masquer.
+        """
+        etats = self.etat_par_champ(donnees)
+        par = {e["etat"]: [] for e in etats}
+        for e in etats:
+            par.setdefault(e["etat"], []).append(e)
+        requis = len(etats)
+        fournis = len(par.get("fourni", []))
+        return {
+            "requis_total": requis,
+            "fournis": fournis,
+            "en_attente": [e["label"] for e in par.get("en_attente", [])],
+            "a_completer_pro": [e["label"] for e in par.get("a_completer_pro", [])],
+            "refuses": [e["label"] for e in par.get("refuse", [])],
+            "taux_completude": round(fournis / requis, 2) if requis else 1.0,
+        }
+
+    def dossier_solide(self, donnees: dict[str, Any]) -> bool:
+        """
+        True si le CŒUR substantiel du dossier est réellement FOURNI (pas vide, pas
+        refusé, pas seulement délégué). Empêche qu'un dossier creux passe « prêt ».
+        """
+        return all(statut_champ(donnees, cid) == "fourni" for cid in CHAMPS_COEUR_SOLIDITE)
 
     def is_complete(self, donnees: dict[str, Any]) -> bool:
-        return len(self.missing_fields(donnees)) == 0
+        """
+        COLLECTE RÉSOLUE côté usager : plus aucun champ requis « en_attente » (tout
+        est fourni, refusé ou délégué au pro) ET aucun champ bloquant refusé. C'est
+        le signal de fin de collecte (stoppe les relances), PAS le feu vert de
+        transmission : un dossier « prêt à transmettre » exige en plus dossier_solide
+        (cf. revue_instructeur.validite_dossier) — un dossier creux ne passe jamais.
+        """
+        if self.missing_fields(donnees):
+            return False
+        return not finalisation_bloquee(donnees)
 
     # ── Contexte dynamique (onglet + données) ────────────────────────────────
 
@@ -192,7 +270,9 @@ class ConversationAgent(ABC):
 
         manquants_ids = [
             item["id"] for item in self.CHECKLIST
-            if item.get("requis", True) and not donnees.get(item["id"])
+            if item.get("requis", True)
+            and not donnees.get(item["id"])
+            and not est_refuse(donnees, item["id"])
         ]
         # Filtrer les champs déjà couverts par l'extraction documentaire
         _knowledge = donnees.get("_document_knowledge") or {}
@@ -203,25 +283,69 @@ class ConversationAgent(ABC):
             except Exception:
                 pass
 
+        # ── Groupement par nature de question ─────────────────────────────────
+        # Questions OUVERTES (réflexives) : posées UNE par une, pour laisser la
+        # personne s'exprimer. Questions FACTUELLES courtes (identité, administratif,
+        # dates, choix) : regroupées en un seul message pour réduire les allers-retours
+        # et éviter les redondances.
+        _CHAMPS_OUVERTS = {
+            "impact_quotidien", "aides_en_place", "aides_techniques", "frais_handicap",
+            "consequences_professionnelles", "projet_professionnel", "attentes_usager",
+            "projet_de_vie", "aidant_identite", "accompagnement_scolaire",
+            "amenagements_scolaires", "expression_directe", "situation_professionnelle",
+        }
+
         # Reconvertir en labels pour l'affichage
         _id_to_label = {item["id"]: item["label"] for item in self.CHECKLIST}
         manquants = [_id_to_label[mid] for mid in manquants_ids if mid in _id_to_label]
 
-        if manquants:
-            # Maximum 2 questions par message pour ne pas surcharger.
-            # Le LLM les formule de façon naturelle et conversationnelle.
-            prochains = manquants[:2]
+        if manquants_ids:
+            _premier = manquants_ids[0]
+            if _premier in _CHAMPS_OUVERTS:
+                # Question ouverte → seule, pour ne pas brider l'expression.
+                prochains_ids = [_premier]
+            else:
+                # Grouper les questions factuelles courtes consécutives (jusqu'à 4).
+                prochains_ids = []
+                for mid in manquants_ids:
+                    if mid in _CHAMPS_OUVERTS:
+                        break
+                    prochains_ids.append(mid)
+                    if len(prochains_ids) >= 4:
+                        break
+            prochains = [_id_to_label[mid] for mid in prochains_ids if mid in _id_to_label]
+            _groupe = len(prochains) > 1
+            # Relance douce : une de ces questions avait déjà été posée et est restée
+            # sans réponse (oubli, pas refus) → on la redemande avec délicatesse.
+            _oublies_ids = set(donnees.get("_champs_oublies") or [])
+            _relance_douce = any(mid in _oublies_ids for mid in prochains_ids)
+
             ctx += f"\nInformations à collecter MAINTENANT ({len(prochains)}/{len(manquants)} restantes) :\n"
             for m in prochains:
                 ctx += f"  → {m}\n"
-            ctx += (
-                "\nRègle absolue :\n"
-                "• Pose ces 1 ou 2 questions EN UN SEUL message, formulé naturellement\n"
-                "• JAMAIS de liste numérotée (1. 2. 3.)\n"
-                "• ATTENDS la réponse avant d'envoyer un autre message\n"
-                "• Si la réponse est partielle, ne redemande QUE ce qui manque\n"
-                "• Ton : chaleureux, simple, professionnel"
-            )
+            if _groupe:
+                ctx += (
+                    "\nRègle absolue :\n"
+                    "• Pose ces questions courtes ENSEMBLE, en UN SEUL message fluide et naturel "
+                    "(pas une par une) — par exemple en une phrase qui les enchaîne.\n"
+                    "• JAMAIS de liste numérotée (1. 2. 3.)\n"
+                    "• ATTENDS la réponse, puis ne redemande QUE ce qui manque encore\n"
+                    "• Ton : chaleureux, simple, FALC (facile à lire et à comprendre)"
+                )
+            else:
+                ctx += (
+                    "\nRègle absolue :\n"
+                    "• Pose CETTE seule question, ouverte, et laisse la personne s'exprimer librement\n"
+                    "• JAMAIS de liste numérotée\n"
+                    "• ATTENDS la réponse avant toute autre question\n"
+                    "• Ton : chaleureux, simple, FALC (facile à lire et à comprendre)"
+                )
+            if _relance_douce:
+                ctx += (
+                    "\n• RELANCE DOUCE : une de ces informations avait déjà été demandée et "
+                    "n'a pas encore été reçue. Redemande-la avec délicatesse, sans reproche, "
+                    "en commençant par « Sauf erreur de ma part, je n'ai pas encore noté… »."
+                )
         else:
             ctx += "\nToutes les informations sont collectées. Félicite chaleureusement et annonce la suite."
 
@@ -237,6 +361,11 @@ class ConversationAgent(ABC):
             ctx += f"\n\n⛔ INFORMATIONS DÉJÀ CONNUES — NE PAS REDEMANDER ({len(_champs_a_afficher)} champs) :\n"
             for k, v in _champs_a_afficher[:8]:
                 ctx += f"  ✓ {k}: {str(v)[:80]}\n"
-            ctx += "Ces informations ont été transmises par le professionnel. Passer directement aux éléments manquants."
+            ctx += (
+                "Ces informations sont déjà connues : ne les redemande pas, passe aux éléments manquants. "
+                "MAIS si l'usager demande à les voir, les vérifier ou les confirmer "
+                "(par ex. « montre-moi », « récapitule », « qu'as-tu noté »), présente-lui un "
+                "récapitulatif clair et lisible de ces informations. Ne refuse JAMAIS de les montrer."
+            )
 
         return ctx

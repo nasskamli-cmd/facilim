@@ -58,6 +58,30 @@ _DROIT_LABEL = {
 ORGANISME_PAYEUR_VALEURS = ("CAF", "MSA", "AUTRE")
 
 
+# ── Criticité des champs (gestion des refus « champ non communiqué ») ─────────
+# Le refus d'un champ BLOQUANT empêche la finalisation tant que le professionnel
+# n'a pas tranché. Le refus d'un autre champ est seulement SIGNALÉ (alerte pro) et
+# n'empêche pas de finaliser. Dans les deux cas : message bienveillant à la famille,
+# alerte au professionnel, et AUCUNE valeur inventée.
+CHAMPS_CRITIQUES_BLOQUANTS = {
+    "nom_prenom",
+    "date_naissance",
+    "adresse_complete",
+    "num_secu",
+    "departement",
+    # NB : `diagnostics` n'est PLUS bloquant. Le médical (diagnostic, traitements,
+    # médecin) ne figure pas sur ce CERFA — il est sur le certificat médical 15695,
+    # rempli par le médecin. On ne le demande pas, on ne le bloque pas. Cf. cartographie.
+    "droits_demandes",          # type(s) de demande — sans quoi la MDPH ne peut instruire
+    "representant_legal_nom",   # enfant / majeur protégé : représentant légal indispensable
+}
+
+
+def criticite_champ(field_id: str) -> str:
+    """'bloquant' si le refus de ce champ empêche la finalisation, sinon 'signale'."""
+    return "bloquant" if field_id in CHAMPS_CRITIQUES_BLOQUANTS else "signale"
+
+
 # ── NIVEAU A — champs ajoutés (requis=False : is_complete inchangé) ───────────
 _NIVEAU_A_IDENTITE = [
     {"id": "prenom",        "label": "Prénom(s)",                    "requis": False, "niveau": "A"},
@@ -97,9 +121,12 @@ _BASE_COMMUN = [
     {"id": "num_secu",       "label": "Numéro de Sécurité Sociale",     "requis": True},
     {"id": "telephone",      "label": "Téléphone",                      "requis": True},
     {"id": "departement",    "label": "Département MDPH",                "requis": True},
-    {"id": "diagnostics",    "label": "Diagnostic(s) médical(aux)",     "requis": True},
-    {"id": "traitements",    "label": "Traitements en cours",          "requis": True},
-    {"id": "medecin_traitant", "label": "Médecin traitant (nom et ville)", "requis": True},
+    # Médical HORS CERFA (cf. cartographie) : diagnostic, traitements et médecin
+    # traitant ne sont NI demandés NI inscrits sur ce formulaire — ils figurent sur
+    # le certificat médical 15695 rempli par le médecin. Seuls comptent ici
+    # l'existence du certificat et SA date (champ certificat_medical_date, dictionnaire),
+    # avec alerte instructeur si absent ou de plus d'un an. On garde uniquement le
+    # RETENTISSEMENT fonctionnel (impact_quotidien), qui, lui, est bien sur le CERFA.
     {"id": "impact_quotidien", "label": "Impact du handicap sur la vie quotidienne", "requis": True},
     {"id": "historique_mdph", "label": "Historique MDPH",               "requis": True},
 ]
@@ -151,7 +178,40 @@ def checklist_for(profil: str) -> list[dict]:
     = champs existants (inchangés) + NIVEAU A (requis=False) + chrono/expression + droits texte.
     """
     base = _PROFILS.get((profil or "adulte").lower(), _ADULTE)
-    return list(base) + list(NIVEAU_A_COMMUN) + list(_CHRONO_EXPR) + list(_DROITS_TEXTE)
+    items = list(base) + list(NIVEAU_A_COMMUN) + list(_CHRONO_EXPR) + list(_DROITS_TEXTE)
+    # Fusion avec le DICTIONNAIRE CERFA (source de vérité unique) : il PRIME par id.
+    # C'est ce qui rend enfin « demandés » des champs jamais posés jusqu'ici
+    # (mode de contact MDPH, CAF / n° allocataire, caisse, etc.). Si le module
+    # est absent, dégradation gracieuse : on garde la checklist historique.
+    try:
+        from app.services.cerfa_dictionary import champs_checklist
+        par_id = {it["id"]: it for it in items}
+        for d in champs_checklist((profil or "adulte").lower()):
+            par_id[d["id"]] = d
+        items = list(par_id.values())
+    except Exception:
+        pass
+    return items
+
+
+def condition_remplie(donnees: dict[str, Any], condition: dict | None) -> bool:
+    """
+    Évalue la condition d'applicabilité d'un champ (source unique, partagée par la
+    collecte, la revue et l'extraction). Formes supportées :
+      - {"champ": X, "valeur": "y"}      → la valeur de X commence par « y »
+      - {"champ": X, "valeur_in": [...]} → la valeur de X commence par l'une d'elles
+      - {"champ": X, "present": True}    → X est renseigné (non vide)
+    Pas de condition → champ toujours applicable.
+    """
+    if not condition:
+        return True
+    brut = donnees.get(condition.get("champ"))
+    if condition.get("present"):
+        return brut not in (None, "", 0, [])
+    val = str(brut or "").lower()
+    if "valeur_in" in condition:
+        return any(val.startswith(str(v).lower()) for v in condition["valeur_in"])
+    return val.startswith(str(condition.get("valeur", "")).lower())
 
 
 # ── Normalisation (compat structuré ↔ legacy) — fonction PURE ────────────────
@@ -188,3 +248,42 @@ def droits_objet_vers_liste(droits: Any) -> list[str]:
     if not isinstance(droits, dict):
         return []
     return [_DROIT_LABEL.get(k, k.upper()) for k in DROITS_KEYS + ["aeeh"] if droits.get(k) is True]
+
+
+# Alias historiques du numéro de sécurité sociale (NIR). L'interface, l'extraction
+# et la collecte WhatsApp utilisent des noms différents : on les garde tous alignés.
+_NIR_ALIASES = ("num_secu", "numero_securite_sociale", "nss")
+
+
+def synchroniser_nir(donnees: dict[str, Any]) -> None:
+    """
+    Aligne EN PLACE les alias du NIR dans `donnees`. Source = première valeur non
+    vide parmi `_NIR_ALIASES` ; sa valeur (espaces retirés) est recopiée sur tous
+    les alias. Idempotent. Centralise une logique jusqu'ici copiée-collée en
+    4 endroits (et déjà divergente : un seul site gérait l'alias `nss`), évitant
+    qu'un NIR saisi sur un canal soit redemandé sur un autre.
+    """
+    if not isinstance(donnees, dict):
+        return
+    nir = ""
+    for a in _NIR_ALIASES:
+        v = str(donnees.get(a) or "").strip()
+        if v:
+            nir = v.replace(" ", "")
+            break
+    if not nir:
+        return
+    for a in _NIR_ALIASES:
+        donnees[a] = nir
+
+
+def code_postal_vers_departement(cp: str | None) -> str:
+    """
+    Code postal → code département. Gère les DOM/COM : 971-976 et 98x utilisent
+    les 3 premiers chiffres (974 = La Réunion), les autres les 2 premiers.
+    Retourne "" si le code postal est inexploitable.
+    """
+    cp = str(cp or "").strip()
+    if len(cp) < 2 or not cp[:2].isdigit():
+        return ""
+    return cp[:3] if cp[:2] in ("97", "98") else cp[:2]

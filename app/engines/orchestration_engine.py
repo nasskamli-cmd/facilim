@@ -81,8 +81,9 @@ def _dossier_narratif_exploitable(donnees: dict) -> bool:
     # et terminait la collecte au 1ᵉʳ message WhatsApp (« oui » → fin). `notes_pro`
     # reste disponible pour le moteur narratif — il ne sert simplement plus de
     # déclencheur de fin de collecte.
+    # Médical HORS CERFA : `diagnostics` ne sert plus de déclencheur (il n'est plus
+    # collecté). Le contenu fonctionnel (retentissement) suffit et est plus fidèle.
     a_contenu_fonctionnel = any([
-        donnees.get("diagnostics"),
         donnees.get("impact_quotidien"),
         donnees.get("_verbatim_b"),
         donnees.get("documents_texte"),     # texte extrait de documents uploadés
@@ -162,7 +163,42 @@ def _calculer_completude_live(donnees: dict) -> int:
                 already_counted_nss = True
         elif donnees.get(champ):
             score += poids
+
+    # ── FACILIM V2 (ADDITIF) — créditer la présence d'un FAIT projet professionnel ──
+    # Lit synthese["faits"] si présent ; sinon aucun effet (dossiers legacy intacts).
+    # C'est ce qui rend le score sensible à une info stratégique (cas BIM Modeleur).
+    try:
+        faits = donnees.get("faits")
+        if isinstance(faits, list) and any(
+            isinstance(f, dict)
+            and f.get("domaine") == "projet_professionnel"
+            and f.get("valeur")
+            for f in faits
+        ):
+            score += 5
+    except Exception:
+        pass
+
     return min(score, 100)
+
+
+def _score_completude_metier(donnees: dict) -> int:
+    """
+    CÂBLAGE P4 — score de complétude MÉTIER = % de champs REQUIS réellement
+    FOURNIS, calculé via synthese_completude (réutilise l'existant). Remplace
+    l'ancien fill-rate pondéré `_calculer_completude_live` pour la valeur affichée :
+    cet ancien score créditait encore le `diagnostics` retiré de la collecte et ne
+    distinguait pas « fourni » de « délégué/refusé ». Profil déduit des données ;
+    dégradation gracieuse (0) si indisponible.
+    """
+    try:
+        from app.services.conversation.router import get_agent
+        profil = (donnees.get("profil_mdph") or donnees.get("service_type")
+                  or donnees.get("profil_principal") or "adulte")
+        s = get_agent(profil).synthese_completude(donnees or {})
+        return int(round(float(s.get("taux_completude", 0.0)) * 100))
+    except Exception:
+        return 0
 
 
 # ── Instrumentation [TRACE_COLLECTE] — observabilité du pont collecte→synthese ──
@@ -225,7 +261,7 @@ def _sauvegarder_nav(
     Commit immédiat : garantit la visibilité aux connexions concurrentes
     (évite la race condition entre messages successifs rapides).
     """
-    score_live = _calculer_completude_live(donnees)
+    score_live = _score_completude_metier(donnees)   # P4 : complétude métier (synthese_completude)
     logger.info("[TRACE_COLLECTE] 8-SAVE start dossier=%s %s", dossier_id, _trace_resume(donnees))
     db.execute(
         """
@@ -403,7 +439,7 @@ class OrchestrationEngine:
             # Clé = message_id (unique par message WhatsApp).
             import time as _time
             lock_check = self.db.execute(
-                "SELECT contexte_json FROM sessions_whatsapp WHERE telephone = ? OR telephone = ? LIMIT 1",
+                "SELECT contexte_json FROM sessions_whatsapp WHERE telephone = ? OR telephone = ? ORDER BY created_at DESC LIMIT 1",
                 (phone_db, phone_wa),
             ).fetchone()
             if lock_check:
@@ -525,6 +561,13 @@ class OrchestrationEngine:
             historique = json.loads(dossier.get("conversation_json", "[]") or "[]")
             donnees    = json.loads(dossier.get("synthese_json", "{}") or "{}")
 
+            # Neutraliser un gabarit de date stocké par erreur (ex. « JJ/MM/AAAA ») :
+            # sans cela, la date réelle donnée par l'usager n'écrase jamais le gabarit,
+            # le champ reste « rempli » d'un faux et la question tourne en boucle.
+            _dn = str(donnees.get("date_naissance") or "")
+            if _dn and not any(c.isdigit() for c in _dn):
+                donnees["date_naissance"] = ""
+
             # ── Sélection du service (IMMUABLE une fois posé) ─────────────────
             # Le service_type est lu depuis sessions_whatsapp.persona_actif.
             # "intake" / "collecte" / vide → identification d'abord.
@@ -532,6 +575,18 @@ class OrchestrationEngine:
             from app.services.conversation import get_agent, service_type_from_persona
             service_type = service_type_from_persona(etat)
             agent = get_agent(service_type)
+
+            # Snapshot des champs obligatoires EN ATTENTE avant extraction
+            # (= ce que l'agent venait de demander) — base de la détection de refus.
+            try:
+                _manquants_avant_ids = agent.missing_field_ids(donnees)
+                _id_to_label = {it["id"]: it["label"] for it in agent.CHECKLIST}
+                # CÂBLAGE P5 — photo des statuts AVANT le tour, pour historiser les
+                # transitions (en_attente→fourni/refuse/a_completer_pro, …) en fin de tour.
+                from app.services.field_status import etats_snapshot as _snap
+                _etats_avant = _snap(donnees, list(_id_to_label.keys()))
+            except Exception:
+                _manquants_avant_ids, _id_to_label, _etats_avant = [], {}, {}
 
             # ── [TRACE_COLLECTE] amont extraction (observabilité, sans effet) ──
             _trace_compl_avant = _calculer_completude_live(donnees)
@@ -571,9 +626,81 @@ class OrchestrationEngine:
                 elif k not in _champs_admin_pro:
                     donnees[k] = v  # champ nouveau → ajouter
 
+            # ── Alias NIR : l'extraction renvoie 'numero_securite_sociale', mais la
+            # collecte surveille 'num_secu'. Sans synchronisation, Corrine croit le
+            # numéro absent et le redemande sans cesse. Helper partagé (gère aussi 'nss').
+            from app.services.collecte_schema import synchroniser_nir
+            synchroniser_nir(donnees)
+
+            # ── FACILIM V2 (ADDITIF) — projeter le domaine pilote en faits canoniques ──
+            # N'efface aucune clé plate ; alimente uniquement donnees["faits"].
+            # Domaine pilote : projet_professionnel. Bloc non bloquant.
+            try:
+                from app.services.faits import derive_faits_projet_professionnel
+                derive_faits_projet_professionnel(
+                    donnees, source="whatsapp", extrait=(text or "")[:300]
+                )
+            except Exception as _faits_err:
+                logger.debug("[FAITS] projection non bloquante : %s", _faits_err)
+
+            # ── Détection d'un refus de champ (« champ non communiqué ») ─────────
+            # Si la famille refuse : marque le champ (jamais inventé), message
+            # bienveillant à la famille, alerte au professionnel. Non bloquant.
+            try:
+                from app.services.refus_handler import (
+                    traiter_ne_sait_pas_eventuel,
+                    traiter_refus_eventuel,
+                )
+                _refuse_id = traiter_refus_eventuel(
+                    donnees, text or "", _manquants_avant_ids, _id_to_label,
+                    self.wa, self.db, dossier_id, phone_wa,
+                )
+                # Si ce n'était pas un refus, c'est peut-être un « je ne sais pas » :
+                # on délègue alors le champ au professionnel (évite la boucle/abandon),
+                # sans jamais l'effacer ni inventer de valeur.
+                if not _refuse_id:
+                    traiter_ne_sait_pas_eventuel(
+                        donnees, text or "", _manquants_avant_ids, _id_to_label,
+                        self.wa, self.db, dossier_id, phone_wa,
+                    )
+            except Exception as _refus_err:
+                logger.warning("[REFUS] traitement non bloquant : %s", _refus_err)
+
+            # ── CÂBLAGE P5 — historiser les transitions de statut de ce tour ──────
+            # (en_attente→fourni après extraction, en_attente→refuse/a_completer_pro
+            #  après traitement, a_completer_pro→fourni si l'info arrive enfin).
+            try:
+                from app.services.field_status import journaliser_transitions
+                _n_trans = journaliser_transitions(
+                    donnees, _etats_avant, list(_id_to_label.keys()), origine="whatsapp",
+                )
+                if _n_trans:
+                    logger.info("[AUDIT_STATUT] dossier=%s %d transition(s) historisée(s)",
+                                dossier_id, _n_trans)
+            except Exception as _trans_err:
+                logger.debug("[AUDIT_STATUT] journalisation non bloquante : %s", _trans_err)
+
             # ── [TRACE_COLLECTE] aval fusion (avant sauvegarde) ──
             logger.info("[TRACE_COLLECTE] 7-SYNTHESE_APRES %s (completude_avant=%d)",
                         _trace_resume(donnees), _trace_compl_avant)
+
+            # ── Champs OUBLIÉS : demandés au tour précédent, toujours vides et non
+            #    refusés → la personne a probablement oublié d'y répondre. On le signale
+            #    pour une relance DOUCE (« sauf erreur de ma part… »), sans insister ni
+            #    confondre avec un refus.
+            try:
+                from app.services.field_status import (
+                    est_refuse as _est_refuse,
+                    est_a_completer_pro as _est_acp,
+                )
+                donnees["_champs_oublies"] = [
+                    fid for fid in (_manquants_avant_ids or [])
+                    if not donnees.get(fid)
+                    and not _est_refuse(donnees, fid)
+                    and not _est_acp(donnees, fid)   # délégué au pro → ne pas relancer l'usager
+                ]
+            except Exception:
+                donnees["_champs_oublies"] = []
 
             # ── Verbatim significatif + chronologie + évaluation relance ─────────
             _relance_a_injecter: str = ""   # instruction de relance pour le contexte, si nécessaire
@@ -876,7 +1003,7 @@ class OrchestrationEngine:
                 if _onglet_a_des_champs:
                     # Onglet avec champs → demander confirmation à l'usager
                     nav.validation_demandee = True
-                    msg_validation = generer_message_validation_onglet(nav.onglet_courant)
+                    msg_validation = generer_message_validation_onglet(nav.onglet_courant, donnees)
                     self.wa.send_text(phone_wa, msg_validation, dossier_id=dossier_id, db_conn=self.db)
                     _sauvegarder_nav(self.db, dossier_id, nav, historique, donnees)
                     return {"success": True, "action": "validation_demandee", "dossier_id": dossier_id}
@@ -921,41 +1048,71 @@ class OrchestrationEngine:
             #   uploadé / des notes de création (donc avec beaucoup de champs requis
             #   manquants) clôturait la collecte dès le 1ᵉʳ message (« oui »), sautant
             #   les questions et la Section E (droits_demandes).
+            # Garde anti-finalisation prématurée : le raccourci « presque complet »
+            # ne doit PAS clôturer un dossier seulement parce qu'il a été bien pré-rempli
+            # par le professionnel. On exige, pour ce raccourci, que les DEMANDES de droits
+            # soient présentes — c'est l'objet même du dossier. Sans demande, jamais « prêt ».
+            # Un dict `droits` NON vide mais dont aucune valeur n'est True (ex.
+            # {"aah": False, "pch": False}) ne constitue PAS une demande : la
+            # truthiness du dict seul laisserait passer la garde. On exige donc
+            # qu'au moins un droit soit explicitement coché (ou un texte présent).
+            _droits_obj = donnees.get("droits")
+            _a_des_demandes = bool(
+                str(donnees.get("droits_demandes") or "").strip()
+                or (isinstance(_droits_obj, dict)
+                    and any(v is True for v in _droits_obj.values()))
+            )
             _declencher_narratif = (
                 (
                     agent.is_complete(donnees)
-                    or (_dossier_narratif_exploitable(donnees) and _collecte_presque_complete(agent, donnees))
+                    or (
+                        _dossier_narratif_exploitable(donnees)
+                        and _collecte_presque_complete(agent, donnees)
+                        and _a_des_demandes
+                    )
                 )
                 and service_type != "validation_en_attente"
             )
             if _declencher_narratif:
-                self._generer_narratif_et_qualite(dossier_id, donnees, service_type)
+                # RÉSILIENCE : toute cette phase (narratif, qualité, validation finale)
+                # est isolée. Une exception ici ne doit JAMAIS casser le tour ni faire
+                # perdre l'état déjà sauvegardé plus haut. En cas d'échec, on poursuit
+                # simplement la collecte avec une réponse normale, sans planter.
+                try:
+                    self._generer_narratif_et_qualite(dossier_id, donnees, service_type)
 
-                # Sprint P0.6 — Priorité 1 : vérifier que le narratif a réellement été généré.
-                # La validation finale NE DOIT PAS être envoyée si le moteur narratif a échoué.
-                # Un narratif absent = dossier non exploitable = pas de validation = collecte continue.
-                _narratif_ok = any([
-                    donnees.get("texte_b_vie_quotidienne"),
-                    donnees.get("texte_c_scolarite"),
-                    donnees.get("texte_d_situation_pro"),
-                    donnees.get("texte_e_projet_vie"),
-                ])
-                if _narratif_ok:
-                    self._demander_validation_usager(
-                        dossier_id, usager, donnees, phone_wa, session["id"]
-                    )
-                    _sauvegarder_nav(self.db, dossier_id, nav, historique, donnees)
-                    return {"success": True, "action": "validation_demandee", "dossier_id": dossier_id}
-                else:
-                    # Sprint P0.6 — Anti-boucle : marquer l'échec pour ne plus retenter
-                    # indéfiniment et ne pas renvoyer une fausse validation.
-                    donnees["_narratif_echec"] = True
-                    _sauvegarder_nav(self.db, dossier_id, nav, historique, donnees)
+                    # Sprint P0.6 — Priorité 1 : vérifier que le narratif a réellement été généré.
+                    # La validation finale NE DOIT PAS être envoyée si le moteur narratif a échoué.
+                    _narratif_ok = any([
+                        donnees.get("texte_b_vie_quotidienne"),
+                        donnees.get("texte_c_scolarite"),
+                        donnees.get("texte_d_situation_pro"),
+                        donnees.get("texte_e_projet_vie"),
+                    ])
+                    if _narratif_ok:
+                        self._demander_validation_usager(
+                            dossier_id, usager, donnees, phone_wa, session["id"]
+                        )
+                        _sauvegarder_nav(self.db, dossier_id, nav, historique, donnees)
+                        return {"success": True, "action": "validation_demandee", "dossier_id": dossier_id}
+                    else:
+                        # Anti-boucle : marquer l'échec pour ne plus retenter et ne pas
+                        # renvoyer une fausse validation.
+                        donnees["_narratif_echec"] = True
+                        _sauvegarder_nav(self.db, dossier_id, nav, historique, donnees)
+                        logger.error(
+                            "[P0.6] Narratif non généré pour dossier=%s — validation bloquée, collecte continuée",
+                            dossier_id[:8],
+                        )
+                        # Ne pas return → continue vers send_text(reponse) ci-dessous
+                except Exception as _fin_err:
                     logger.error(
-                        "[P0.6] Narratif non généré pour dossier=%s — validation bloquée, collecte continuée",
-                        dossier_id[:8],
+                        "[FINALISATION] Échec non bloquant pour dossier=%s — le tour se poursuit "
+                        "normalement, l'état est préservé : %s",
+                        dossier_id[:8], _fin_err, exc_info=True,
                     )
-                    # Ne pas return → continue vers send_text(reponse) ci-dessous
+                    # L'état a déjà été sauvegardé avant ce bloc ; on continue vers la
+                    # réponse normale ci-dessous sans interrompre la conversation.
 
             # ── Point 2 : traitement réponse validation usager ───────────────────
             if service_type == "validation_en_attente":
@@ -986,6 +1143,45 @@ class OrchestrationEngine:
         3. Persiste le tout en base
         Non bloquant : les erreurs sont loggées sans interrompre le pipeline.
         """
+        # ── Correction depuis le réel AVANT le narratif ──────────────────────────
+        #    Renseigner genre / département / NIR depuis les données déjà connues
+        #    AVANT de générer les narratifs (la civilité du narratif lit `genre`).
+        #    Idempotent : ne remplit que ce qui manque, sans rien inventer.
+        #    La REVUE instructeur, elle, s'exécute APRÈS le narratif (voir plus bas) :
+        #    elle inspecte les clés narratives, encore vides à ce stade.
+        try:
+            from app.engines.correction_loop import corriger_depuis_donnees_reelles
+            corriger_depuis_donnees_reelles(donnees)
+        except Exception as _corr_err:
+            logger.warning("[BOUCLE] correction pré-narratif non bloquante : %s", _corr_err)
+
+        # ── RACCORD dictionnaire → moteur narratif ───────────────────────────────
+        # Le moteur narratif lit certains champs sous des noms historiques différents
+        # de ceux du dictionnaire. Sans alignement, des informations collectées ne
+        # nourrissent pas les sections B/C/E. On aligne ici, sans écraser une valeur
+        # déjà présente et sans rien inventer (un champ vide n'alimente rien).
+        try:
+            _alias_narratif = {
+                "attentes_mdph":        ("attentes_usager", "projet_de_vie"),
+                "frais_restant_charge": ("frais_handicap",),
+                "besoins_compensation": ("aides_techniques",),
+            }
+            for _cible, _sources in _alias_narratif.items():
+                if not donnees.get(_cible):
+                    for _s in _sources:
+                        if donnees.get(_s):
+                            donnees[_cible] = donnees[_s]
+                            break
+            # Scolarité : composer situation_scolaire si absente (enfant / mixte).
+            if not donnees.get("situation_scolaire"):
+                _sco = [donnees.get(k) for k in (
+                    "type_etablissement_scolaire", "classe_scolaire",
+                    "accompagnement_scolaire", "amenagements_scolaires") if donnees.get(k)]
+                if _sco:
+                    donnees["situation_scolaire"] = " — ".join(str(x) for x in _sco)
+        except Exception as _alias_err:
+            logger.debug("[NARRATIF] alignement des alias non bloquant : %s", _alias_err)
+
         try:
             from app.engines.cerfa_narrative_engine import generer_textes_narratifs
             from app.engines.cerfa_quality_agent import verifier_qualite_cerfa
@@ -1011,6 +1207,26 @@ class OrchestrationEngine:
 
             # Fusionner les textes narratifs dans donnees pour la persistance
             donnees.update(textes)
+
+            # ── Revue instructeur APRÈS le narratif ──────────────────────────────
+            #    La revue inspecte les clés narratives (texte_b/c/d/e…) via
+            #    champs_a_risque_de_perte : elle DOIT s'exécuter une fois celles-ci
+            #    produites, sinon chaque champ routé « narratif » serait faussement
+            #    signalé « non produit » (alerte ROUGE/HAUTE parasite à chaque
+            #    finalisation). Lecture seule, non bloquant.
+            try:
+                from app.engines.correction_loop import boucle_correction
+                # Boucle bornée : corrige depuis le réel (idempotent), relance
+                # l'instructeur, ne finalise jamais, n'envoie jamais à la MDPH.
+                _revue_resultat = boucle_correction(donnees, profil_mdph, dossier_id, db=self.db) or {}
+                _revue_dict = _revue_resultat.get("revue") or {}
+                donnees["_revue_instructeur"] = _revue_dict.get("expert") or {}
+                # CÂBLAGE P1 : la décision métier « prêt à transmettre » (validite_dossier)
+                # n'est plus jetée — on la conserve dans la synthèse (persistée) pour le
+                # gate CERFA, le cockpit et les rapports.
+                donnees["_validite_dossier"] = _revue_dict.get("validite") or {}
+            except Exception as _revue_err:
+                logger.warning("[REVUE] non bloquant : %s", _revue_err)
 
             alertes = rapport.alertes_rouges + rapport.alertes_oranges
             self.db.execute(
@@ -1044,6 +1260,8 @@ class OrchestrationEngine:
                         "niveau_maturite":       rapport.niveau_maturite,
                         "retentissement_absent": rapport.retentissement_absent,
                         "projet_vie_incomplet":  rapport.projet_vie_incomplet,
+                        "revue_instructeur":     donnees.get("_revue_instructeur") or {},
+                        "validite_dossier":      donnees.get("_validite_dossier") or {},
                     }, ensure_ascii=False),
                     dossier_id,
                 ),
@@ -1055,6 +1273,28 @@ class OrchestrationEngine:
                 dossier_id[:8], rapport.score_maturite, rapport.niveau_maturite,
                 len(rapport.alertes_rouges),
             )
+
+            # ── Revue instructeur — rendre ACTIONNABLES les alertes qualité ──────
+            # Le rapport qualité (retentissement absent, projet de vie incomplet,
+            # contradictions entre sections) est déjà calculé ci-dessus mais n'est
+            # pas remonté au professionnel. On le surface en alerte tableau de bord.
+            # Lecture seule, non décisionnaire, non bloquant.
+            try:
+                _q_rouges = list(rapport.alertes_rouges or []) + list(rapport.contradictions or [])
+                if _q_rouges:
+                    import uuid as _uuidq
+                    _descq = " ; ".join(str(a) for a in _q_rouges)[:1000]
+                    self.db.execute(
+                        "INSERT INTO alertes (id, dossier_id, usager_id, destinataire_id, "
+                        "type_alerte, severite, titre, description, created_at, acquittee) "
+                        "VALUES (?, ?, NULL, NULL, 'REVUE_INSTRUCTEUR', 'HAUTE', ?, ?, ?, 0)",
+                        (str(_uuidq.uuid4()), dossier_id,
+                         f"Qualité CERFA : {len(_q_rouges)} alerte(s) rouge(s)",
+                         _descq, _now_iso()),
+                    )
+                    self.db.commit()
+            except Exception as _q_err:
+                logger.warning("[REVUE] surfaçage qualité non bloquant : %s", _q_err)
 
             # ── Analyse de situation (Sprint 5) ──────────────────────────────
             try:
@@ -1198,7 +1438,7 @@ class OrchestrationEngine:
             _dossier_row = None
             try:
                 _session = self.db.execute(
-                    "SELECT dossier_id FROM sessions_whatsapp WHERE telephone = ? OR telephone = ? LIMIT 1",
+                    "SELECT dossier_id FROM sessions_whatsapp WHERE telephone = ? OR telephone = ? ORDER BY created_at DESC LIMIT 1",
                     (phone_wa, self._normaliser_telephone_local(phone_wa))
                 ).fetchone()
                 if _session and _session["dossier_id"]:
@@ -1387,9 +1627,15 @@ class OrchestrationEngine:
                         import json as _json
                         prompt = f"""Extrais les informations MDPH depuis ce document.
 Retourne UNIQUEMENT un JSON avec les champs trouvés parmi :
-nom_prenom, date_naissance, adresse_complete, departement, num_secu,
+nom_prenom, date_naissance, genre, commune_naissance, pays_naissance,
+adresse_complete, departement, num_secu,
 diagnostics, traitements, medecin_traitant, impact_quotidien, statut_emploi,
 historique_mdph, accident_travail, restrictions_emploi
+
+Règles :
+- genre : déduis-le de la civilité écrite dans le document. « Mr », « M. », « Monsieur »
+  donnent "homme" ; « Mme », « Madame », « Mlle » donnent "femme". Sinon, ne renvoie rien.
+- N'invente aucun champ : si une information est absente, ne la renvoie pas.
 
 Document :
 {texte[:3000]}"""
@@ -1947,8 +2193,14 @@ Document :
     def _get_or_create_session(self, phone: str, usager_id: str | None) -> dict[str, Any]:
         # Chercher par téléphone (texte clair) — cherche les deux formats
         phone_intl = "33" + phone[1:] if phone.startswith("0") else phone
+        # CRITIQUE (RGPD) : un même numéro peut avoir plusieurs sessions (numéro
+        # réutilisé pour plusieurs personnes de test, ou changement de dossier).
+        # Sans tri, « LIMIT 1 » renvoie une session au hasard → un message pouvait
+        # tomber dans le dossier d'une AUTRE personne (fuite de données). On prend
+        # TOUJOURS la session la plus récemment créée = le dernier dossier ouvert.
         row = self.db.execute(
-            "SELECT * FROM sessions_whatsapp WHERE telephone = ? OR telephone = ? LIMIT 1",
+            "SELECT * FROM sessions_whatsapp WHERE telephone = ? OR telephone = ? "
+            "ORDER BY created_at DESC LIMIT 1",
             (phone, phone_intl),
         ).fetchone()
 

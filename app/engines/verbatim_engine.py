@@ -169,7 +169,34 @@ _PATTERNS_CHRONO_LIBRE: list[str] = [
     r"depuis\s+(?:que|qu.)\s+(?:je|il|elle|on|nous)\s+(?:suis|est|sommes|avons?|ai)\s+\w+",
     r"à\s+l.âge\s+de\s+\d+\s+ans",
     r"(?:en|pendant)\s+ma\s+(?:jeunesse|enfance|adolescence)",
+    r"(?:en|à partir de|courant|dès)\s+(?:19|20)\d{2}",       # « en 2025 », « dès 2018 »
+    r"plusieurs\s+(?:ans|années|mois|semaines)",              # « plusieurs années »
+    r"quelques\s+(?:ans|années|mois|semaines|jours)",
+    r"il y a\s+\d+\s+(?:ans?|mois|semaines?)",
 ]
+
+
+# ── Réponse à une question temporelle (« depuis quand ? ») ────────────────────
+# Une réponse qui donne une date, une année ou une durée RÉPOND à « depuis quand ».
+# Elle ne doit donc jamais être jugée « pauvre » ni relancée en boucle, même courte
+# (« en 2025 », « depuis plusieurs années »). C'est la cause de la boucle du test 11.
+_PATTERNS_REPONSE_TEMPORELLE: list[str] = [
+    r"\b(?:19|20)\d{2}\b",                                    # une année : 2025, 1998
+    r"\bdepuis\b",
+    r"\bil y a\s+\d+",
+    r"\b\d+\s*(?:an|ans|mois|semaines?|années?)\b",
+    r"\bplusieurs\s+(?:ans|années|mois|semaines)\b",
+    r"\bquelques\s+(?:ans|années|mois|semaines|jours)\b",
+    r"\b(?:toujours|de naissance|à la naissance|enfance|toute ma vie|longtemps|récemment)\b",
+    r"\b(?:janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|"
+    r"septembre|octobre|novembre|décembre|decembre)\b",
+]
+
+
+def repond_a_question_temporelle(texte: str) -> bool:
+    """True si le message donne une date, une année ou une durée (répond à « depuis quand »)."""
+    t = (texte or "").lower()
+    return any(re.search(p, t) for p in _PATTERNS_REPONSE_TEMPORELLE)
 
 
 def est_verbatim_significatif(texte: str) -> tuple[bool, list[str]]:
@@ -332,6 +359,13 @@ def evaluer_richesse_reponse(texte: str) -> tuple[bool, str]:
     Utilisé par l'orchestrateur pour décider si une relance est nécessaire.
     """
     mots = texte.strip().split()
+    # NB : on ne court-circuite PLUS l'évaluation dès qu'un repère temporel est
+    # présent. Une réponse comme « ça fait 2 ans que c'est pareil » à une question
+    # sur les conséquences au quotidien contient une durée mais reste pauvre : la
+    # juger « riche » supprimait à tort la relance de fond. La boucle « depuis quand »
+    # que ce garde-fou visait est déjà bornée en amont (une seule relance par section,
+    # cf. _relances_faites dans l'orchestrateur), donc le risque de boucle ne revient
+    # pas. La première réponse pauvre déclenche UNE relance de précision, puis stop.
     if len(mots) < LONGUEUR_MIN_RICHE:
         return True, f"réponse trop courte ({len(mots)} mots)"
 

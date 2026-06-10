@@ -385,18 +385,65 @@ def onglet_courant_complet(
     return all(donnees.get(c) for c in champs_du_profil)
 
 
-def generer_message_validation_onglet(onglet_num: int) -> str:
+_RECAP_LABELS = [
+    ("nom_prenom", "Nom et prénom"),
+    ("date_naissance", "Date de naissance"),
+    ("genre", "Sexe"),
+    ("adresse_complete", "Adresse"),
+    ("num_secu", "N° de Sécurité Sociale"),
+    ("telephone", "Téléphone"),
+    ("departement", "Département"),
+    ("situation_familiale", "Situation familiale"),
+    ("diagnostics", "Santé / diagnostic"),
+    ("traitements", "Traitements"),
+    ("medecin_traitant", "Médecin traitant"),
+    ("impact_quotidien", "Impact au quotidien"),
+    ("statut_emploi", "Situation professionnelle"),
+    ("projet_professionnel", "Projet"),
+    ("droits_demandes", "Demandes"),
+    ("historique_mdph", "Historique MDPH"),
+]
+
+
+def formater_recap_donnees(donnees: dict[str, Any] | None, max_len: int = 90) -> str:
+    """Récapitulatif lisible des informations déjà collectées (pour confirmation usager)."""
+    if not donnees:
+        return ""
+    lignes = []
+    for cid, label in _RECAP_LABELS:
+        v = donnees.get(cid)
+        if v in (None, "", 0, []):
+            continue
+        sv = str(v).strip().replace("\n", " ")
+        # Ne jamais présenter un gabarit comme une vraie valeur (ex. date « JJ/MM/AAAA »).
+        if cid == "date_naissance" and not any(c.isdigit() for c in sv):
+            continue
+        if cid == "num_secu" and len(sv) >= 6:
+            sv = sv[:1] + "•" * (len(sv) - 4) + sv[-3:]  # masquer partiellement le NIR
+        if len(sv) > max_len:
+            sv = sv[:max_len] + "…"
+        lignes.append(f"• {label} : {sv}")
+    return "\n".join(lignes)
+
+
+def generer_message_validation_onglet(onglet_num: int, donnees: dict[str, Any] | None = None) -> str:
     """
     Génère le message de demande de validation d'un onglet avant de passer au suivant.
-    Formulé en FALC, chaleureux.
+    Formulé en FALC, chaleureux. Affiche un récapitulatif des informations collectées
+    pour que la confirmation ait du sens.
     """
     onglet = next((o for o in ONGLETS_MDPH if o["num"] == onglet_num), None)
     if not onglet:
         return ""
-    resume = onglet.get("resume_validation", f"la section {onglet['titre']}")
+    recap = formater_recap_donnees(donnees)
+    if recap:
+        entete = "✅ Voici ce que j'ai noté jusqu'ici :\n\n" + recap + "\n\n"
+    else:
+        resume = onglet.get("resume_validation", f"la section {onglet['titre']}")
+        entete = f"✅ Nous avons bien noté *{resume}*.\n\n"
     return (
-        f"✅ Nous avons bien noté *{resume}*.\n\n"
-        "Est-ce que ces informations sont correctes et complètes ?\n"
+        entete
+        + "Est-ce que ces informations sont correctes et complètes ?\n"
         "Répondez *OUI* pour confirmer, ou dites-moi ce qu'il faut corriger."
     )
 
@@ -418,11 +465,9 @@ def detect_missing_fields(donnees: dict[str, Any], profil_mdph: str = "inconnu")
         if not item.get("requis", True):
             continue
         # Champs conditionnels : évaluer la condition avant d'exiger le champ
-        condition = item.get("condition")
-        if condition:
-            valeur_condition = str(donnees.get(condition["champ"], "")).lower()
-            if not valeur_condition.startswith(condition["valeur"].lower()):
-                continue  # condition non remplie → champ ignoré pour l'instant
+        from app.services.collecte_schema import condition_remplie
+        if not condition_remplie(donnees, item.get("condition")):
+            continue  # condition non remplie → champ ignoré pour l'instant
         if not donnees.get(item["id"]):
             missing.append(item["label"])
     return missing
@@ -491,10 +536,20 @@ _CHAMPS_EXTRACTIBLES_MIXTE = list(
 def _champs_extractibles(profil_mdph: str) -> list[str]:
     # FIX-VAGUE1 : le NIVEAU A est ajouté à tous les profils (point unique).
     if profil_mdph == "enfant":
-        return _CHAMPS_EXTRACTIBLES_ENFANT + _CHAMPS_NIVEAU_A
-    if profil_mdph == "mixte":
-        return _CHAMPS_EXTRACTIBLES_MIXTE + _CHAMPS_NIVEAU_A
-    return _CHAMPS_EXTRACTIBLES_ADULTE + _CHAMPS_NIVEAU_A
+        base = _CHAMPS_EXTRACTIBLES_ENFANT + _CHAMPS_NIVEAU_A
+    elif profil_mdph == "mixte":
+        base = _CHAMPS_EXTRACTIBLES_MIXTE + _CHAMPS_NIVEAU_A
+    else:
+        base = _CHAMPS_EXTRACTIBLES_ADULTE + _CHAMPS_NIVEAU_A
+    # Champs dérivés du DICTIONNAIRE CERFA (source de vérité) : l'extraction doit
+    # pouvoir capter tout ce qui est demandé (ex. preference_contact, sinon impossible
+    # à remplir). Alignement collecte ↔ extraction garanti par la même racine.
+    try:
+        from app.services.cerfa_dictionary import ids_extractibles
+        base = list(base) + [i for i in ids_extractibles() if i not in base]
+    except Exception:
+        pass
+    return base
 
 
 def extract_structured_data_from_history(
@@ -518,6 +573,11 @@ def extract_structured_data_from_history(
 
     champs = _champs_extractibles(profil_mdph)
     champs_str = ", ".join(champs)
+    try:
+        from app.services.cerfa_dictionary import hints_extraction
+        _dico_hints = hints_extraction()
+    except Exception:
+        _dico_hints = ""
 
     conversation_text = "\n".join(
         f"{'Usager' if m.get('role') == 'user' else 'Assistant'}: {m.get('content', '')}"
@@ -543,6 +603,7 @@ FORMATS SPÉCIAUX (Vague 1) — à respecter si l'information est présente :
 - pension_invalidite : booléen true/false. categorie_invalidite : 1, 2 ou 3.
 - organisme_payeur : "CAF", "MSA" ou "AUTRE". taux_ipp : nombre (pourcentage).
 - prenom / nom_naissance : chaînes. numero_allocataire : chaîne.
+{_dico_hints}
 
 Exemple : {{"nom_prenom": "Jean Dupont", "date_naissance": "15/03/1980", "avq_habillage": "AIDE_PARTIELLE", "droits": {{"aah": true}}}}
 

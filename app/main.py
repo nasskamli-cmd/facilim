@@ -55,6 +55,45 @@ _2FA_LOCK:      threading.Lock  = threading.Lock()
 _2FA_TTL_SEC:   int             = 600   # 10 minutes
 
 
+def _send_email_brevo(
+    to_email: str,
+    subject: str,
+    html: str,
+    reply_to_email: str | None = None,
+    reply_to_name: str | None = None,
+) -> bool:
+    """
+    Envoi d'email générique via l'API HTTP Brevo (réutilisable).
+    Retourne True si Brevo a accepté l'envoi. Non bloquant côté appelant.
+    """
+    if not settings.brevo_api_key:
+        logger.warning("[EMAIL] BREVO_API_KEY absente — envoi ignoré (to=%s)", (to_email or "")[:4] + "***")
+        return False
+    try:
+        import requests as _req
+        _payload = {
+            "sender":      {"name": settings.brevo_sender_name, "email": settings.brevo_sender_email},
+            "to":          [{"email": to_email}],
+            "subject":     subject,
+            "htmlContent": html,
+        }
+        if reply_to_email:
+            _payload["replyTo"] = {"email": reply_to_email, "name": reply_to_name or reply_to_email}
+        resp = _req.post(
+            "https://api.brevo.com/v3/smtp/email",
+            headers={"accept": "application/json", "content-type": "application/json",
+                     "api-key": settings.brevo_api_key},
+            json=_payload, timeout=12,
+        )
+        if resp.status_code in (200, 201):
+            return True
+        logger.warning("[EMAIL] Brevo status=%d body=%s", resp.status_code, resp.text[:200])
+        return False
+    except Exception as e:
+        logger.warning("[EMAIL] Envoi échoué : %s", e)
+        return False
+
+
 def _generate_2fa_code() -> str:
     import random
     return f"{random.randint(0, 999999):06d}"
@@ -218,6 +257,39 @@ except Exception as _col_err:
 # ── Client LLM ───────────────────────────────────────────────────────────────
 from openai import OpenAI
 _llm_client = OpenAI(api_key=settings.openai_api_key)
+
+# ── Observabilité Sentry — suivi des erreurs en production ───────────────────
+# Activé uniquement si un DSN est fourni. Garde-fou RGPD : on retire les corps de
+# requête, les cookies et les en-têtes sensibles pour ne JAMAIS transmettre de
+# donnée de santé ou personnelle brute à un tiers.
+if settings.sentry_dsn:
+    try:
+        import sentry_sdk
+
+        def _sentry_scrub(event, hint):
+            req = event.get("request") or {}
+            req.pop("data", None)
+            req.pop("cookies", None)
+            req.pop("query_string", None)
+            if isinstance(req.get("headers"), dict):
+                req["headers"] = {
+                    k: v for k, v in req["headers"].items()
+                    if k.lower() not in ("authorization", "cookie", "api-key")
+                }
+            if req:
+                event["request"] = req
+            return event
+
+        sentry_sdk.init(
+            dsn=settings.sentry_dsn,
+            environment=settings.sentry_environment,
+            send_default_pii=False,      # jamais d'IP, de cookies ou de corps par défaut
+            traces_sample_rate=0.0,      # pas de tracing perf, uniquement les erreurs
+            before_send=_sentry_scrub,
+        )
+        logger.info("[SENTRY] Suivi des erreurs activé (env=%s)", settings.sentry_environment)
+    except Exception as _sentry_err:
+        logger.warning("[SENTRY] Initialisation ignorée (non bloquant) : %s", _sentry_err)
 
 # ── Services ─────────────────────────────────────────────────────────────────
 _wa_service = WhatsAppService(
@@ -417,6 +489,179 @@ def _process_whatsapp_background(
         conn.close()
 
 
+# ── Formulaire de contact (demandes de renseignement des structures) ──────────
+class ContactRequest(BaseModel):
+    prenom:    str
+    nom:       str
+    email:     str
+    structure: str | None = ""
+    type:      str | None = ""
+    message:   str | None = ""
+
+
+@app.post("/api/v1/contact")
+def contact_form(body: ContactRequest):
+    """
+    Reçoit une demande de renseignement depuis la page d'accueil et l'achemine
+    par email vers la boîte de contact Facilim. La réponse part directement vers
+    le prospect (replyTo). Aucune donnée de santé ici : prospection uniquement.
+    """
+    import html as _html
+    _esc = lambda s: _html.escape(str(s or "").strip())
+    prenom, nom, email = _esc(body.prenom), _esc(body.nom), _esc(body.email)
+    if not (prenom and nom and email and "@" in email):
+        raise HTTPException(status_code=400, detail="Prénom, nom et email valides requis.")
+
+    corps = (
+        f"<p><strong>Nouvelle demande via facilim.fr</strong></p>"
+        f"<p><b>Nom :</b> {prenom} {nom}<br/>"
+        f"<b>Email :</b> {email}<br/>"
+        f"<b>Structure :</b> {_esc(body.structure) or '—'}<br/>"
+        f"<b>Type :</b> {_esc(body.type) or '—'}</p>"
+        f"<p><b>Message :</b><br/>{_esc(body.message).replace(chr(10), '<br/>') or '—'}</p>"
+    )
+    envoye = _send_email_brevo(
+        to_email=settings.contact_email,
+        subject=f"[Facilim] Demande de {prenom} {nom}" + (f" — {_esc(body.structure)}" if body.structure else ""),
+        html=corps,
+        reply_to_email=email,
+        reply_to_name=f"{prenom} {nom}",
+    )
+    # Accusé de réception au prospect (non bloquant).
+    if envoye:
+        _send_email_brevo(
+            to_email=email,
+            subject="Votre demande a bien été reçue — Facilim",
+            html=(f"<p>Bonjour {prenom},</p><p>Merci pour votre message. "
+                  f"Nous revenons vers vous très vite.</p><p>L'équipe Facilim</p>"),
+        )
+    logger.info("[CONTACT] demande reçue de %s (envoi=%s)", email[:4] + "***", envoye)
+    return {"success": True, "envoye": envoye}
+
+
+# ── Documents reçus par email → rattachement automatique au dossier ───────────
+def _ingerer_document_dans_dossier(db, dossier_id: str, content: bytes,
+                                   filename: str, content_type: str) -> bool:
+    """
+    Ingestion d'un document reçu (email, upload) dans un dossier : extraction du
+    texte, extraction LLM des champs utiles (sans rien écraser), enregistrement
+    comme pièce justificative. Réutilise la même logique que l'upload tableau de bord.
+    """
+    texte = _extraire_texte_fichier(content, filename, content_type)
+    extraits: dict = {}
+    if texte and len(texte) > 50 and not texte.startswith("["):
+        try:
+            prompt = f"""Extrais les informations MDPH de ce document. Retourne UNIQUEMENT un JSON
+avec les champs trouvés parmi : nom_prenom, date_naissance, genre, commune_naissance,
+pays_naissance, adresse_complete, departement, num_secu, diagnostics, traitements,
+medecin_traitant, impact_quotidien, statut_emploi, historique_mdph, restrictions_emploi.
+Règles : genre déduit de la civilité (Mr/M./Monsieur → "homme" ; Mme/Madame → "femme").
+N'invente rien ; si un champ est absent, ne l'inclus pas.
+
+Document :
+{texte[:4000]}"""
+            resp = _llm_client.chat.completions.create(
+                model=settings.openai_model_fast,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=400, temperature=0.0,
+                response_format={"type": "json_object"},
+            )
+            extraits = json.loads(resp.choices[0].message.content) or {}
+        except Exception as e:
+            logger.warning("[EMAIL_IN] extraction LLM ignorée : %s", e)
+
+    row = db.execute("SELECT synthese_json FROM dossiers WHERE id = ?", (dossier_id,)).fetchone()
+    synthese = json.loads((row["synthese_json"] if row else "{}") or "{}")
+    for k, v in extraits.items():
+        # Ne pas écraser une valeur existante ; ignorer les gabarits de date.
+        if not v or synthese.get(k):
+            continue
+        if k == "date_naissance" and not any(c.isdigit() for c in str(v)):
+            continue
+        synthese[k] = v
+    if texte and not texte.startswith("["):
+        _notes = synthese.get("documents_texte", "")
+        synthese["documents_texte"] = f"{_notes}\n\n--- {filename} (reçu par email) ---\n{texte[:2000]}"
+
+    now = datetime.now(timezone.utc).isoformat()
+    db.execute("UPDATE dossiers SET synthese_json = ?, updated_at = ? WHERE id = ?",
+               (json.dumps(synthese, ensure_ascii=False), now, dossier_id))
+    db.execute(
+        """INSERT INTO pieces_justificatives
+           (id, dossier_id, type_piece, mime_type, uploaded_par, ocr_effectue,
+            flag_validation_humaine, created_at, updated_at)
+           VALUES (?, ?, 'DOCUMENT_EMAIL', ?, 'email', 0, 0, ?, ?)""",
+        (str(uuid.uuid4()), dossier_id, content_type or "", now, now),
+    )
+    return True
+
+
+@app.post("/api/v1/webhook/email-inbound")
+async def email_inbound_webhook(request: Request, db=Depends(_get_db)):
+    """
+    Webhook d'email entrant (ex. Brevo Inbound Parsing). Quand un usager envoie des
+    documents par email à l'adresse Facilim, ses pièces jointes sont rattachées
+    automatiquement à SON dossier — le plus récent associé à son adresse.
+
+    Sécurité : jeton partagé requis (?token= ou en-tête X-Inbound-Token = INBOUND_EMAIL_SECRET).
+    """
+    token = request.query_params.get("token") or request.headers.get("x-inbound-token", "")
+    if not settings.inbound_email_secret or token != settings.inbound_email_secret:
+        raise HTTPException(status_code=403, detail="Webhook non autorisé.")
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Payload JSON invalide.")
+
+    items = payload.get("items") if isinstance(payload, dict) else None
+    items = items if isinstance(items, list) else [payload]
+    import base64 as _b64
+    traites = 0
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        sender = ((item.get("From") or {}).get("Address") if isinstance(item.get("From"), dict)
+                  else item.get("from") or item.get("sender") or "")
+        sender = str(sender or "").strip().lower()
+        attachments = item.get("Attachments") or item.get("attachments") or []
+        if not sender or not attachments:
+            continue
+        # Rattachement par email, dossier le plus récent (anti-fuite : jamais le 1er au hasard).
+        # Anti-fuite renforcé : l'adresse doit apparaître comme VALEUR JSON exacte
+        # ("email@x.fr"), jamais comme simple sous-chaîne d'un texte libre — sinon une
+        # note pro citant un email rattacherait des pièces médicales au mauvais dossier.
+        # On échappe aussi les métacaractères LIKE ('_' et '%') du local-part, qui
+        # élargiraient silencieusement la correspondance. Un email non rattaché est
+        # simplement loggé/ignoré : mode d'échec bien plus sûr qu'une fuite.
+        _sender_like = sender.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        row = db.execute(
+            "SELECT id FROM dossiers WHERE lower(synthese_json) LIKE ? ESCAPE '\\' "
+            "ORDER BY updated_at DESC LIMIT 1",
+            (f'%"{_sender_like}"%',),
+        ).fetchone()
+        if not row:
+            logger.info("[EMAIL_IN] aucun dossier pour l'expéditeur — pièces ignorées")
+            continue
+        dossier_id = row["id"]
+        for att in (attachments if isinstance(attachments, list) else []):
+            try:
+                name  = att.get("Name") or att.get("name") or "document"
+                ctype = att.get("ContentType") or att.get("contentType") or ""
+                c_b64 = att.get("Content") or att.get("content") or ""
+                if not c_b64:
+                    continue
+                _ingerer_document_dans_dossier(db, dossier_id, _b64.b64decode(c_b64), name, ctype)
+                traites += 1
+            except Exception as _att_err:
+                logger.warning("[EMAIL_IN] pièce ignorée : %s", _att_err)
+        try:
+            db.commit()
+        except Exception:
+            pass
+    logger.info("[EMAIL_IN] %d pièce(s) rattachée(s)", traites)
+    return {"success": True, "pieces_traitees": traites}
+
+
 # ── Authentification Dashboard ────────────────────────────────────────────────
 
 # ── Rate limiting authentification ───────────────────────────────────────────
@@ -557,7 +802,7 @@ def verify_page():
     """Page de saisie du code 2FA."""
     verify_path = os.path.join(os.path.dirname(__file__), "..", "static", "verify.html")
     if os.path.isfile(verify_path):
-        return FileResponse(verify_path)
+        return FileResponse(verify_path, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
     return HTMLResponse("<h1>Page de vérification non trouvée</h1>", status_code=404)
 
 
@@ -655,9 +900,13 @@ def get_dossier(
     db=Depends(_get_db),
 ):
     """Détail d'un dossier avec consentement et scoring."""
-    row = db.execute("SELECT * FROM dossiers WHERE id = ?", (dossier_id,)).fetchone()
+    # deleted_at IS NULL : un dossier supprimé ne doit plus pouvoir être rouvert
+    # (sinon une alerte résiduelle le fait « revenir »).
+    row = db.execute(
+        "SELECT * FROM dossiers WHERE id = ? AND deleted_at IS NULL", (dossier_id,)
+    ).fetchone()
     if not row:
-        raise HTTPException(status_code=404, detail="Dossier non trouvé")
+        raise HTTPException(status_code=404, detail="Dossier non trouvé ou supprimé")
 
     d = dict(row)
     access_control.require_permission(user.get("role", "LECTEUR"), access_control.Permission.DOSSIER_READ)
@@ -666,6 +915,27 @@ def get_dossier(
     d["synthese"] = json.loads(d.get("synthese_json", "{}") or "{}")
     d["questions"] = json.loads(d.get("questions_json", "[]") or "[]")
     d["conversation"] = json.loads(d.get("conversation_json", "[]") or "[]")
+    # Rapport qualité (inclut les signaux experts de la revue instructeur :
+    # robustesse, risque de refus, axes d'amélioration) pour le cockpit.
+    d["rapport_qualite"] = json.loads(d.get("rapport_qualite_json", "{}") or "{}")
+    d["revue_instructeur"] = d["rapport_qualite"].get("revue_instructeur", {})
+
+    # CÂBLAGE P3/P4 — complétude DIFFÉRENCIÉE (5 états par champ) + verdict métier
+    # « prêt à transmettre ». Réutilise synthese_completude + validite_dossier déjà
+    # développés : le professionnel voit ce qui manque, ce qu'il doit compléter, ce
+    # qui a été refusé, et POURQUOI le dossier n'est pas prêt. Ne recrée aucun score.
+    try:
+        from app.services.conversation.router import get_agent
+        from app.engines.revue_instructeur import validite_dossier
+        _profil = (d["synthese"].get("profil_mdph") or d.get("service_type")
+                   or d["synthese"].get("service_type") or "adulte")
+        _ag = get_agent(_profil)
+        d["completude"] = _ag.synthese_completude(d["synthese"])
+        d["completude"]["etats_champs"] = _ag.etat_par_champ(d["synthese"])
+        d["validite_dossier"] = (d["rapport_qualite"].get("validite_dossier")
+                                 or validite_dossier(d["synthese"], _profil))
+    except Exception as _compl_err:
+        logger.warning("[COMPLETUDE] synthèse non calculée pour %s : %s", dossier_id, _compl_err)
 
     # Consentement
     usager_row = db.execute("SELECT id FROM usagers WHERE id = ?", (d.get("usager_id", ""),)).fetchone()
@@ -879,16 +1149,23 @@ def get_alertes(user=Depends(_get_current_user), db=Depends(_get_db)):
         SELECT a.*, d.reference as dossier_reference
         FROM alertes a
         LEFT JOIN dossiers d ON d.id = a.dossier_id
-        WHERE a.type_alerte = 'FLAG_HUMAIN' AND a.acquittee = 0
+        WHERE a.type_alerte IN ('FLAG_HUMAIN', 'CHAMP_NON_COMMUNIQUE', 'CHAMP_A_COMPLETER_PRO', 'REVUE_INSTRUCTEUR') AND a.acquittee = 0
+          -- N'afficher que les alertes de dossiers existants ET non supprimés :
+          -- une alerte orpheline ne doit plus faire resurgir un dossier supprimé.
+          AND d.id IS NOT NULL AND d.deleted_at IS NULL
         ORDER BY a.created_at DESC LIMIT 50
         """
     ).fetchall()
 
     relances = db.execute(
         """
-        SELECT * FROM relances
-        WHERE statut = 'PLANIFIEE'
-        ORDER BY planifiee_le ASC LIMIT 50
+        SELECT r.* FROM relances r
+        LEFT JOIN dossiers d ON d.id = r.dossier_id
+        WHERE r.statut = 'PLANIFIEE'
+          -- Exclure les relances rattachées à un dossier supprimé ou inexistant :
+          -- un dossier supprimé n'est plus relançable (règle de fermeture).
+          AND d.id IS NOT NULL AND d.deleted_at IS NULL
+        ORDER BY r.planifiee_le ASC LIMIT 50
         """
     ).fetchall()
 
@@ -1146,7 +1423,7 @@ def root():
     if not index_path.is_file():
         index_path = Path("/app/static/index.html")
     if index_path.is_file():
-        return FileResponse(str(index_path))
+        return FileResponse(str(index_path), headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
     logger.warning("[root] index.html introuvable — chemins tentés : %s", index_path)
     return RedirectResponse("/dashboard")
 
@@ -1162,7 +1439,7 @@ def dashboard_page(request: Request):
         return RedirectResponse("/login", status_code=302)
     dashboard_path = os.path.join(os.path.dirname(__file__), "dashboards", "dashboard.html")
     if os.path.isfile(dashboard_path):
-        return FileResponse(dashboard_path)
+        return FileResponse(dashboard_path, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
     return HTMLResponse("<h1>Facilim v2 — Dashboard en cours de chargement</h1>")
 
 
@@ -1170,7 +1447,7 @@ def dashboard_page(request: Request):
 def login_page():
     static_login = os.path.join(os.path.dirname(__file__), "..", "static", "login.html")
     if os.path.isfile(static_login):
-        return FileResponse(static_login)
+        return FileResponse(static_login, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
     return HTMLResponse("""
     <!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
     <title>Facilim — Connexion</title>
@@ -1558,7 +1835,10 @@ def initiate_dossier(
         "langue":           body.langue,
     }
     if body.nom_prenom:           donnees_initiales["nom_prenom"]          = body.nom_prenom
-    if body.date_naissance:       donnees_initiales["date_naissance"]      = body.date_naissance
+    # Ne pas stocker un gabarit de date (« JJ/MM/AAAA ») : seule une vraie date,
+    # contenant des chiffres, est conservée — sinon le champ reste à collecter.
+    if body.date_naissance and any(c.isdigit() for c in str(body.date_naissance)):
+        donnees_initiales["date_naissance"] = body.date_naissance
     if body.notes_pro:            donnees_initiales["notes_pro"]           = body.notes_pro
     if body.numero_securite_sociale:
         donnees_initiales["numero_securite_sociale"] = body.numero_securite_sociale.replace(" ", "")
@@ -1569,8 +1849,8 @@ def initiate_dossier(
     if body.aidant_familial:      donnees_initiales["aidant_demande"]      = True
     if body.urgent:               donnees_initiales["urgence"]             = True
 
-    from app.engines.orchestration_engine import _calculer_completude_live
-    score_init = _calculer_completude_live(donnees_initiales)
+    from app.engines.orchestration_engine import _score_completude_metier
+    score_init = _score_completude_metier(donnees_initiales)   # P4 : complétude métier
     db.execute(
         "UPDATE dossiers SET synthese_json = ?, score_completude = ?, updated_at = ? WHERE id = ?",
         (json.dumps(donnees_initiales, ensure_ascii=False), score_init, now_iso, dossier_id),
@@ -1843,6 +2123,9 @@ async def upload_document_dossier(
 Retourne UNIQUEMENT un JSON avec les champs trouvés parmi cette liste :
 - nom_prenom : NOM Prénom (tel qu'écrit dans le document)
 - date_naissance : JJ/MM/AAAA
+- genre : "homme" ou "femme", déduit de la civilité écrite dans le document (« Mr », « M. », « Monsieur » → "homme" ; « Mme », « Madame », « Mlle » → "femme"). N'invente rien : si aucune civilité, n'inclus pas ce champ.
+- commune_naissance : commune de naissance si mentionnée
+- pays_naissance : pays de naissance si mentionné
 - adresse_complete : adresse postale complète
 - departement : code département (2 ou 3 chiffres)
 - num_secu : numéro de sécurité sociale 15 chiffres
@@ -2247,24 +2530,31 @@ def _ajouter_page_couverture(cerfa_bytes: bytes, donnees: dict) -> bytes:
     couverture_bytes = buf.getvalue()
 
     # ── Fusion : couverture AVANT le CERFA ───────────────────────────────────
-    writer = PdfWriter()
+    # CRITIQUE : on CLONE le CERFA rempli (clone_from) pour PRÉSERVER son AcroForm
+    # (612 champs) et toutes les valeurs saisies, puis on insère la couverture en
+    # tête. L'ancienne méthode (PdfWriter() + add_page) recopiait seulement les
+    # PAGES et perdait l'AcroForm document-level → tous les champs remplis
+    # disparaissaient et le CERFA sortait VIDE. (Validé par reproduction : 612→0
+    # avec add_page, 612 conservés avec clone_from + insert_page.)
+    writer = PdfWriter(clone_from=io.BytesIO(cerfa_bytes))
 
-    # Page 1 : couverture
     couverture_reader = PdfReader(io.BytesIO(couverture_bytes))
-    for page in couverture_reader.pages:
-        writer.add_page(page)
+    for i, page in enumerate(couverture_reader.pages):
+        writer.insert_page(page, i)
 
-    # Pages 2-N : CERFA officiel (inchangé)
-    cerfa_reader = PdfReader(io.BytesIO(cerfa_bytes))
-    for page in cerfa_reader.pages:
-        writer.add_page(page)
+    # Forcer les lecteurs PDF à afficher les valeurs des champs après fusion.
+    try:
+        writer.set_need_appearances_writer(True)
+    except Exception:
+        pass
 
     out = io.BytesIO()
     writer.write(out)
     return out.getvalue()
 
 
-def _verrou_export_cerfa(dossier_id: str, db, user, action: str = "export") -> dict:
+def _verrou_export_cerfa(dossier_id: str, db, user, action: str = "export",
+                         exiger_present: bool = False) -> dict:
     """
     VERROU CENTRALISÉ d'export CERFA (FACILIM PROD-3).
 
@@ -2275,13 +2565,28 @@ def _verrou_export_cerfa(dossier_id: str, db, user, action: str = "export") -> d
       - PASS / WARNING / UNKNOWN(absent) → autorise (retourne le statut)
       - BLOCK                            → refuse (403, aucun PDF généré)
 
-    Retour : dict du statut du gate (cf. export_gate.lire_gate_export).
+    exiger_present : durcissement réservé à la TRANSMISSION officielle. Quand True,
+    un gate absent (cockpit jamais évalué) ne suffit plus : le dossier doit avoir
+    été évalué et validé avant d'être transmis. Le téléchargement pour relecture
+    reste, lui, tolérant (fail-open) afin de ne pas gêner le travail du pro.
     """
-    from app.services.export_gate import lire_gate_export
+    from app.services.export_gate import lire_gate_export, coeur_incomplet
 
-    row = db.execute("SELECT cockpit_pro_json FROM dossiers WHERE id = ?", (dossier_id,)).fetchone()
+    row = db.execute(
+        "SELECT cockpit_pro_json, synthese_json FROM dossiers WHERE id = ?", (dossier_id,)
+    ).fetchone()
     cockpit_json = row["cockpit_pro_json"] if row else None
     g = lire_gate_export(cockpit_json)
+
+    # SÉCURISATION FRAÎCHEUR (anti-gate-obsolète) — le gate ci-dessus est PERSISTÉ et
+    # peut être périmé (une édition dashboard modifie synthese_json sans recalculer le
+    # gate). On revérifie donc la solidité du CŒUR sur la synthèse FRAÎCHE, à chaque
+    # export. Déterministe, sans LLM, sans toucher aux moteurs droits/éligibilité.
+    try:
+        _synthese_fraiche = json.loads((row["synthese_json"] if row else "{}") or "{}")
+    except Exception:
+        _synthese_fraiche = {}
+    _coeur_bloque, _coeur_raison = coeur_incomplet(_synthese_fraiche)
 
     acteur = None
     try:
@@ -2308,12 +2613,30 @@ def _verrou_export_cerfa(dossier_id: str, db, user, action: str = "export") -> d
     except Exception:
         pass
 
+    # Blocage FRAÎCHEUR : un cœur métier devenu incomplet bloque l'export même si le
+    # gate persisté est encore « PASS » (anti-désynchronisation). Indépendant du gate.
+    if _coeur_bloque:
+        raise HTTPException(
+            status_code=403,
+            detail=("Export bloqué : " + _coeur_raison + ". Le cœur du dossier (retentissement, "
+                    "aides, attentes, projet de vie) doit être réellement renseigné avant export "
+                    "ou transmission. Complétez le dossier puis réessayez."),
+        )
+
     if not g["autorise_export"]:
         raise HTTPException(
             status_code=403,
             detail=(g["message"] or
                     "Export bloqué par FACILIM (gate BLOCK). Corrigez les points critiques "
                     "signalés dans le cockpit avant d'exporter ou de transmettre le CERFA."),
+        )
+    # Durcissement transmission : un dossier jamais évalué ne peut pas être transmis.
+    if exiger_present and not g["present"]:
+        raise HTTPException(
+            status_code=403,
+            detail=("Le dossier n'a pas encore été évalué par FACILIM. Ouvrez-le dans le "
+                    "cockpit pour générer l'analyse, faites valider par un professionnel, "
+                    "puis relancez la transmission."),
         )
     return g
 
@@ -2322,9 +2645,10 @@ def _generer_cerfa_pdf(dossier_id: str, db) -> tuple[str, bytes]:
     """
     Génère le PDF CERFA pour un dossier et retourne (pdf_path, pdf_bytes).
 
-    Utilise le moteur V2 (services/cerfa_filler.py — 2197 lignes, 20 pages)
-    via le pont V3→V2 (v2_bridge.py).
-    Fallback sur le field_mapper V3 si le moteur V2 est indisponible.
+    UNIQUE moteur de remplissage : V2 (services/cerfa_filler.py), via le pont
+    v2_bridge.py. Il n'y a plus de second moteur de secours : en cas d'échec V2,
+    on remonte une erreur claire plutôt que de produire silencieusement un CERFA
+    issu d'un autre moteur, source d'incohérences entre dossiers.
     """
     import os
     from datetime import datetime, timezone
@@ -2412,17 +2736,16 @@ def _generer_cerfa_pdf(dossier_id: str, db) -> tuple[str, bytes]:
     )
     output_path = os.path.join(storage_path, output_filename)
 
-    # ── Moteur V2 (priorité) ──────────────────────────────────────────────────
-    # CORRECTION FIX-TEST4 : SEULE la génération V2 peut déclencher le fallback V3.
-    # L'audit (hash, SELECT version, journalisation) et la persistance sont
-    # désormais NON BLOQUANTS — une erreur d'audit (ex. « no such column: version »
-    # observée sur le dossier TEST4) ne doit JAMAIS détruire un PDF V2 déjà généré.
+    # ── Moteur V2 (unique) ──────────────────────────────────────────────────
+    # L'audit (hash, SELECT version, journalisation) et la persistance sont NON
+    # BLOQUANTS — une erreur d'audit (ex. « no such column: version ») ne doit
+    # JAMAIS détruire un PDF V2 déjà généré.
     pdf_bytes = None
     try:
         from app.engines.pdf.v2_bridge import generer_cerfa_depuis_synthese
         pdf_bytes = generer_cerfa_depuis_synthese(donnees, service_type, num_mdph)
     except Exception as e_v2:
-        logger.warning("[CERFA V2] Génération V2 échouée (%s) — fallback V3", e_v2)
+        logger.error("[CERFA] Génération V2 échouée (%s) — aucune bascule, erreur remontée", e_v2)
         pdf_bytes = None
 
     if pdf_bytes is not None:
@@ -2478,21 +2801,18 @@ def _generer_cerfa_pdf(dossier_id: str, db) -> tuple[str, bytes]:
                     dossier_id[:8], len(pdf_bytes), (_synthese_hash[:8] or "—"))
         return output_path, pdf_bytes
 
-    # ── Fallback V3 (UNIQUEMENT si la génération V2 a réellement échoué) ───────
-    logger.warning("[CERFA V2] Fallback V3 activé pour dossier=%s (génération V2 indisponible)", dossier_id[:8])
-    from app.engines.pdf.cerfa_filler import CerfaFiller
-    from app.database.schemas import DossierCERFA
-    filler = CerfaFiller(db_conn=db, storage_path=storage_path)
-    result = filler.generer(
-        dossier_cerfa=DossierCERFA(),
-        dossier_id=dossier_id,
-        donnees_brutes=donnees,
-        service_type=service_type,
+    # ── Échec V2 : moteur UNIQUE, donc aucune bascule silencieuse vers un autre
+    #    moteur. On remonte une erreur explicite : mieux vaut pas de document qu'un
+    #    CERFA produit par un moteur divergent, source d'incohérences.
+    logger.error(
+        "[CERFA] Génération indisponible pour dossier=%s — aucune bascule de moteur, "
+        "erreur remontée au professionnel.", dossier_id[:8],
     )
-    if not result.success or not result.pdf_path:
-        raise HTTPException(status_code=500, detail=result.error or "Génération PDF échouée")
-    pdf_bytes = open(result.pdf_path, "rb").read()
-    return result.pdf_path, pdf_bytes
+    raise HTTPException(
+        status_code=503,
+        detail=("La génération du CERFA a échoué temporairement. Vérifiez les données du "
+                "dossier puis réessayez ; aucun document partiel n'est produit."),
+    )
 
 
 @app.get("/api/v1/dossiers/{dossier_id}/cerfa.pdf")
@@ -2520,7 +2840,15 @@ def telecharger_cerfa(
         row = db.execute("SELECT synthese_json FROM dossiers WHERE id = ?", (dossier_id,)).fetchone()
         if row:
             d = json.loads(row["synthese_json"] or "{}")
-            nom_usager = d.get("nom_prenom", "dossier").replace(" ", "_")
+            import unicodedata as _ud_hdr
+            _nom_brut = str(d.get("nom_prenom", "") or "dossier")
+            # L'en-tête HTTP Content-Disposition n'accepte que le latin-1. Les
+            # apostrophes courbes (') et autres caractères Unicode font planter
+            # l'envoi. On translittère donc le nom en ASCII pur pour le nom de fichier.
+            _nom_ascii = _ud_hdr.normalize("NFKD", _nom_brut).encode("ascii", "ignore").decode("ascii")
+            nom_usager = "".join(
+                c if (c.isalnum() or c in "-_") else "_" for c in _nom_ascii
+            ).strip("_") or "dossier"
         return RawResponse(
             content=pdf_bytes,
             media_type="application/pdf",
@@ -2570,7 +2898,7 @@ def envoyer_cerfa(
 
     # ── VERROU PROD-3 : gate d'export (lit le gate DÉJÀ calculé, aucun recalcul) ──
     # BLOCK → 403 ici : aucun PDF n'est généré, aucun email n'est envoyé.
-    gate = _verrou_export_cerfa(dossier_id, db, user, action="envoi")
+    gate = _verrou_export_cerfa(dossier_id, db, user, action="envoi", exiger_present=True)
 
     donnees    = json.loads(row["synthese_json"] or "{}")
     email_dest = donnees.get("email", "").strip()
@@ -2710,6 +3038,11 @@ def bulk_update_synthese(
                 synthese[champ] = valeur
             champs_mis_a_jour.append(champ)
 
+    # Alias NIR : garder les noms du numéro de sécu synchronisés (l'interface peut
+    # enregistrer l'un ou l'autre ; la collecte WhatsApp lit 'num_secu'). Helper partagé.
+    from app.services.collecte_schema import synchroniser_nir
+    synchroniser_nir(synthese)
+
     db.execute(
         "UPDATE dossiers SET synthese_json = ?, updated_at = ? WHERE id = ?",
         (json.dumps(synthese, ensure_ascii=False), datetime.now(timezone.utc).isoformat(), dossier_id),
@@ -2741,8 +3074,14 @@ def update_cerfa_champ(
     else:
         synthese[body.champ] = body.valeur
 
-    from app.engines.orchestration_engine import _calculer_completude_live
-    score = _calculer_completude_live(synthese)
+    # Alias NIR : l'interface enregistre le numéro de Sécu sous 'numero_securite_sociale',
+    # mais la collecte WhatsApp surveille 'num_secu'. On synchronise les noms pour qu'un
+    # NIR saisi à l'écran ne soit JAMAIS redemandé sur WhatsApp. Helper partagé (gère 'nss').
+    from app.services.collecte_schema import synchroniser_nir
+    synchroniser_nir(synthese)
+
+    from app.engines.orchestration_engine import _score_completude_metier
+    score = _score_completude_metier(synthese)   # P4 : complétude métier (synthese_completude)
     db.execute(
         """UPDATE dossiers SET synthese_json = ?,
            score_completude = CASE WHEN score_completude < ? THEN ? ELSE score_completude END,
@@ -2800,6 +3139,21 @@ def delete_dossier(
     now = datetime.now(timezone.utc).isoformat()
     db.execute("UPDATE dossiers SET deleted_at = ?, updated_at = ? WHERE id = ?",
                (now, now, dossier_id))
+    # Nettoyer les éléments rattachés : un dossier supprimé ne doit plus laisser
+    # d'alerte « fantôme » ni de relance dans le tableau de bord. Sans cela,
+    # l'alerte orpheline restait visible et, au clic (openDossier), faisait
+    # « réapparaître » le dossier. On ACQUITTE les alertes et on ANNULE les relances
+    # planifiées (pas de suppression dure : l'historique reste auditable).
+    try:
+        db.execute("UPDATE alertes SET acquittee = 1 WHERE dossier_id = ? AND acquittee = 0",
+                   (dossier_id,))
+    except Exception as _al_err:
+        logger.warning("[DELETE] acquittement alertes échoué pour %s : %s", dossier_id, _al_err)
+    try:
+        db.execute("UPDATE relances SET statut = 'ANNULEE' WHERE dossier_id = ? AND statut = 'PLANIFIEE'",
+                   (dossier_id,))
+    except Exception as _rl_err:
+        logger.warning("[DELETE] annulation relances échouée pour %s : %s", dossier_id, _rl_err)
     event_logger.log_event("DOSSIER_SUPPRIME", dossier_id=dossier_id,
                            utilisateur_id=user.get("sub"), canal="dashboard", db_conn=db)
     return {"success": True}

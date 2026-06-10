@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 96" role="img" aria-label="FACILIM — l'intelligence au service des droits des personnes">
+  <defs>
+    <linearGradient id="flLG" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%"  stop-color="#34d399"/>
+      <stop offset="32%" stop-color="#2dd4bf"/>
+      <stop offset="62%" stop-color="#60a5fa"/>
+      <stop offset="100%" stop-color="#a78bfa"/>
+    </linearGradient>
+    <linearGradient id="flLGl" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#34d399"/><stop offset="100%" stop-color="#2dd4bf"/>
+    </linearGradient>
+    <linearGradient id="flLGr" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#2dd4bf"/><stop offset="55%" stop-color="#60a5fa"/><stop offset="100%" stop-color="#a78bfa"/>
+    </linearGradient>
+  </defs>
+
+  <g fill="none" stroke-width="2" stroke-linecap="round" opacity="0.95">
+    <g stroke="url(#flLGl)">
+      <path d="M2 30 C 30 30, 52 38, 70 48"/>
+      <path d="M2 40 C 30 40, 52 44, 70 48"/>
+      <path d="M2 48 C 30 48, 52 48, 70 48"/>
+      <path d="M2 56 C 30 56, 52 52, 70 48"/>
+      <path d="M2 66 C 30 66, 52 58, 70 48"/>
+    </g>
+    <g stroke="url(#flLGr)">
+      <path d="M90 48 C 108 38, 130 30, 158 30"/>
+      <path d="M90 48 C 108 44, 130 40, 158 40"/>
+      <path d="M90 48 C 130 48, 130 48, 158 48"/>
+      <path d="M90 48 C 108 52, 130 56, 158 56"/>
+      <path d="M90 48 C 108 58, 130 66, 158 66"/>
+    </g>
+  </g>
+  <g>
+    <circle cx="72" cy="30" r="3" fill="#2dd4bf"/>
+    <circle cx="78" cy="40" r="2.4" fill="#22d3ee"/>
+    <circle cx="72" cy="48" r="3.4" fill="#60a5fa"/>
+    <circle cx="80" cy="56" r="2.4" fill="#3b82f6"/>
+    <circle cx="72" cy="66" r="3" fill="#a78bfa"/>
+    <circle cx="86" cy="30" r="3" fill="#a78bfa"/>
+    <circle cx="88" cy="48" r="2.6" fill="#60a5fa"/>
+    <circle cx="86" cy="66" r="3" fill="#2dd4bf"/>
+  </g>
+
+  <text x="168" y="62" font-family="Segoe UI, Arial, Helvetica, sans-serif"
+        font-size="46" font-weight="800" letter-spacing="2">
+    <tspan fill="#ffffff">FACI</tspan><tspan fill="url(#flLG)">LIM</tspan>
+  </text>
+  <circle cx="214" cy="58" r="3.6" fill="#2dd4bf"/>
+
+  <text x="170" y="84" font-family="Segoe UI, Arial, Helvetica, sans-serif"
+        font-size="10.5" font-weight="600" letter-spacing="1.1" fill="rgba(255,255,255,0.6)">
+    L'INTELLIGENCE AU SERVICE DES DROITS DES PERSONNES
+  </text>
+</svg>
