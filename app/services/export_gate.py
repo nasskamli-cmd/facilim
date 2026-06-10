@@ -67,3 +67,27 @@ def lire_gate_export(cockpit_pro_json: Any) -> dict:
         "message":         gate.get("message", "") or "",
         "decision_brute":  decision,
     }
+
+
+def coeur_incomplet(synthese: dict, profil: str | None = None) -> tuple[bool, str]:
+    """
+    Anti-gate-obsolète : revérifie la SOLIDITÉ du cœur métier sur la synthèse
+    FRAÎCHE, au moment de l'export. Le gate persisté (cockpit_pro_json) peut être
+    périmé (ex. champ du cœur vidé via une édition dashboard, sans recalcul du
+    gate). Ce contrôle est déterministe (aucun LLM), réutilise validite_dossier
+    déjà développé, et ne touche à aucun moteur droits/éligibilité/CDAPH.
+
+    Retourne (bloque: bool, raison: str). bloque=True ⇒ export à refuser.
+    """
+    try:
+        from app.engines.revue_instructeur import validite_dossier
+        prof = (profil or (synthese or {}).get("profil_mdph")
+                or (synthese or {}).get("profil_principal") or "adulte")
+        v = validite_dossier(synthese or {}, prof)
+        if not v.get("criteres", {}).get("dossier_solide", True):
+            raison = next((m for m in v.get("manquants", []) if m.startswith("cœur")),
+                          "cœur du dossier incomplet (retentissement / attentes / projet de vie)")
+            return True, raison
+    except Exception:
+        return False, ""   # dégradation gracieuse : ne jamais bloquer sur une erreur technique
+    return False, ""

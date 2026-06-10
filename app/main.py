@@ -2566,11 +2566,23 @@ def _verrou_export_cerfa(dossier_id: str, db, user, action: str = "export",
     été évalué et validé avant d'être transmis. Le téléchargement pour relecture
     reste, lui, tolérant (fail-open) afin de ne pas gêner le travail du pro.
     """
-    from app.services.export_gate import lire_gate_export
+    from app.services.export_gate import lire_gate_export, coeur_incomplet
 
-    row = db.execute("SELECT cockpit_pro_json FROM dossiers WHERE id = ?", (dossier_id,)).fetchone()
+    row = db.execute(
+        "SELECT cockpit_pro_json, synthese_json FROM dossiers WHERE id = ?", (dossier_id,)
+    ).fetchone()
     cockpit_json = row["cockpit_pro_json"] if row else None
     g = lire_gate_export(cockpit_json)
+
+    # SÉCURISATION FRAÎCHEUR (anti-gate-obsolète) — le gate ci-dessus est PERSISTÉ et
+    # peut être périmé (une édition dashboard modifie synthese_json sans recalculer le
+    # gate). On revérifie donc la solidité du CŒUR sur la synthèse FRAÎCHE, à chaque
+    # export. Déterministe, sans LLM, sans toucher aux moteurs droits/éligibilité.
+    try:
+        _synthese_fraiche = json.loads((row["synthese_json"] if row else "{}") or "{}")
+    except Exception:
+        _synthese_fraiche = {}
+    _coeur_bloque, _coeur_raison = coeur_incomplet(_synthese_fraiche)
 
     acteur = None
     try:
@@ -2596,6 +2608,16 @@ def _verrou_export_cerfa(dossier_id: str, db, user, action: str = "export",
         db.commit()
     except Exception:
         pass
+
+    # Blocage FRAÎCHEUR : un cœur métier devenu incomplet bloque l'export même si le
+    # gate persisté est encore « PASS » (anti-désynchronisation). Indépendant du gate.
+    if _coeur_bloque:
+        raise HTTPException(
+            status_code=403,
+            detail=("Export bloqué : " + _coeur_raison + ". Le cœur du dossier (retentissement, "
+                    "aides, attentes, projet de vie) doit être réellement renseigné avant export "
+                    "ou transmission. Complétez le dossier puis réessayez."),
+        )
 
     if not g["autorise_export"]:
         raise HTTPException(
