@@ -2388,6 +2388,21 @@ def remplir_cerfa(dossier: dict[str, Any]) -> bytes:
             champs["Champ de texte P16 1"] = projet_professionnel[:500]
         # Plus de cas « résumé des besoins » : il copiait la vie quotidienne dans le projet.
 
+        # JUSTIFICATION de l'orientation CRP/ESRP — page 16 = OÙ SE LÉGITIME le choix.
+        # Sans cet argumentaire, l'orientation cochée en page 18 ne suffit pas (cartographie).
+        # Justification STRUCTURELLE (cadre adapté / médico-social / rythme aménagé), pas une
+        # donnée médicale ni une recopie de la vie quotidienne.
+        if _orientation_crp:
+            _justif_crp = (
+                "Un centre de rééducation / réadaptation professionnelle (CRP / ESRP) est "
+                "sollicité plutôt qu'une formation de droit commun : il apporte un cadre "
+                "adapté, un accompagnement médico-social et un rythme aménagé que le milieu "
+                "ordinaire ne permet pas, au regard des difficultés déclarées."
+            )
+            _p16_actuel = str(champs.get("Champ de texte P16 1", "") or "")
+            if _justif_crp[:40] not in _p16_actuel:
+                champs["Champ de texte P16 1"] = (f"{_p16_actuel} {_justif_crp}".strip())[:500]
+
         # Case à cocher P16 2 = Orientation vers CRP/ESRP
         # Même signal partagé que P18 3 (détection depuis projet libre / formation /
         # nom d'ESRP), pour que page 16 et page 18 racontent la même orientation.

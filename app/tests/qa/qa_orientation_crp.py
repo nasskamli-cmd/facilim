@@ -112,9 +112,16 @@ def run() -> bool:
             and not coche("Case à cocher P18 5")
             and not scolarite
         )
+
+        # QA-CRP-7 : page 16 JUSTIFIE l'orientation (cadre adapté / médico-social).
+        _p16 = str(fields.get("Champ de texte P16 1", {}).get("/V") or "")
+        res["QA-CRP-7 — page 16 justifie l'orientation CRP"] = (
+            "réadaptation professionnelle" in _p16 and "médico-social" in _p16
+        )
     except Exception as e:  # pragma: no cover
-        print(f"     ⚠️  QA-CRP-6 non exécuté (PDF) : {e}")
+        print(f"     ⚠️  QA-CRP-6/7 non exécuté (PDF) : {e}")
         res["QA-CRP-6 — bout-en-bout ESRP (P18 3 ✓, P18 5 ✗, pas scolarité)"] = False
+        res["QA-CRP-7 — page 16 justifie l'orientation CRP"] = False
 
     # ── Rapport ──
     print("=" * 64)
