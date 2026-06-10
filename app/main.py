@@ -920,6 +920,23 @@ def get_dossier(
     d["rapport_qualite"] = json.loads(d.get("rapport_qualite_json", "{}") or "{}")
     d["revue_instructeur"] = d["rapport_qualite"].get("revue_instructeur", {})
 
+    # CÂBLAGE P3/P4 — complétude DIFFÉRENCIÉE (5 états par champ) + verdict métier
+    # « prêt à transmettre ». Réutilise synthese_completude + validite_dossier déjà
+    # développés : le professionnel voit ce qui manque, ce qu'il doit compléter, ce
+    # qui a été refusé, et POURQUOI le dossier n'est pas prêt. Ne recrée aucun score.
+    try:
+        from app.services.conversation.router import get_agent
+        from app.engines.revue_instructeur import validite_dossier
+        _profil = (d["synthese"].get("profil_mdph") or d.get("service_type")
+                   or d["synthese"].get("service_type") or "adulte")
+        _ag = get_agent(_profil)
+        d["completude"] = _ag.synthese_completude(d["synthese"])
+        d["completude"]["etats_champs"] = _ag.etat_par_champ(d["synthese"])
+        d["validite_dossier"] = (d["rapport_qualite"].get("validite_dossier")
+                                 or validite_dossier(d["synthese"], _profil))
+    except Exception as _compl_err:
+        logger.warning("[COMPLETUDE] synthèse non calculée pour %s : %s", dossier_id, _compl_err)
+
     # Consentement
     usager_row = db.execute("SELECT id FROM usagers WHERE id = ?", (d.get("usager_id", ""),)).fetchone()
     if usager_row:
@@ -1132,7 +1149,7 @@ def get_alertes(user=Depends(_get_current_user), db=Depends(_get_db)):
         SELECT a.*, d.reference as dossier_reference
         FROM alertes a
         LEFT JOIN dossiers d ON d.id = a.dossier_id
-        WHERE a.type_alerte IN ('FLAG_HUMAIN', 'CHAMP_NON_COMMUNIQUE', 'REVUE_INSTRUCTEUR') AND a.acquittee = 0
+        WHERE a.type_alerte IN ('FLAG_HUMAIN', 'CHAMP_NON_COMMUNIQUE', 'CHAMP_A_COMPLETER_PRO', 'REVUE_INSTRUCTEUR') AND a.acquittee = 0
           -- N'afficher que les alertes de dossiers existants ET non supprimés :
           -- une alerte orpheline ne doit plus faire resurgir un dossier supprimé.
           AND d.id IS NOT NULL AND d.deleted_at IS NULL
@@ -1828,8 +1845,8 @@ def initiate_dossier(
     if body.aidant_familial:      donnees_initiales["aidant_demande"]      = True
     if body.urgent:               donnees_initiales["urgence"]             = True
 
-    from app.engines.orchestration_engine import _calculer_completude_live
-    score_init = _calculer_completude_live(donnees_initiales)
+    from app.engines.orchestration_engine import _score_completude_metier
+    score_init = _score_completude_metier(donnees_initiales)   # P4 : complétude métier
     db.execute(
         "UPDATE dossiers SET synthese_json = ?, score_completude = ?, updated_at = ? WHERE id = ?",
         (json.dumps(donnees_initiales, ensure_ascii=False), score_init, now_iso, dossier_id),
@@ -3037,8 +3054,8 @@ def update_cerfa_champ(
     from app.services.collecte_schema import synchroniser_nir
     synchroniser_nir(synthese)
 
-    from app.engines.orchestration_engine import _calculer_completude_live
-    score = _calculer_completude_live(synthese)
+    from app.engines.orchestration_engine import _score_completude_metier
+    score = _score_completude_metier(synthese)   # P4 : complétude métier (synthese_completude)
     db.execute(
         """UPDATE dossiers SET synthese_json = ?,
            score_completude = CASE WHEN score_completude < ? THEN ? ELSE score_completude END,

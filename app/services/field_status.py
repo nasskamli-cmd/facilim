@@ -145,6 +145,53 @@ def phrase_ne_sait_pas(text: str) -> bool:
     return any(p in t for p in _NE_SAIT_PAS_PATTERNS)
 
 
+# ── Audit trail des transitions de statut ────────────────────────────────────
+# Historise en_attente→fourni / →refuse / →a_completer_pro et a_completer_pro→fourni,
+# dans donnees["_historique_statuts"] (persisté avec la synthèse). Auditabilité ESSMS.
+
+HIST_KEY = "_historique_statuts"
+
+
+def etats_snapshot(donnees: dict[str, Any], field_ids) -> dict[str, str]:
+    """Photo des statuts courants d'une liste de champs (avant traitement d'un tour)."""
+    return {fid: statut_champ(donnees, fid) for fid in field_ids}
+
+
+def journaliser_transitions(
+    donnees: dict[str, Any],
+    avant: dict[str, str],
+    field_ids,
+    origine: str = "",
+    horodatage: str | None = None,
+) -> int:
+    """
+    Compare les statuts AVANT/APRÈS et historise chaque transition dans
+    donnees[HIST_KEY]. Chaque événement : {champ, ancien, nouveau, horodatage,
+    origine}. Retourne le nombre d'événements ajoutés. Idempotent sur l'état
+    (ne journalise que les changements réels).
+    """
+    from datetime import datetime, timezone
+    ts = horodatage or datetime.now(timezone.utc).isoformat()
+    hist = donnees.get(HIST_KEY)
+    if not isinstance(hist, list):
+        hist = []
+        donnees[HIST_KEY] = hist
+    n = 0
+    for fid in field_ids:
+        ancien = avant.get(fid, EN_ATTENTE)
+        nouveau = statut_champ(donnees, fid)
+        if nouveau != ancien:
+            hist.append({
+                "champ": fid,
+                "ancien": ancien,
+                "nouveau": nouveau,
+                "horodatage": ts,
+                "origine": origine,
+            })
+            n += 1
+    return n
+
+
 # ── Détection d'un refus exprimé par la famille ───────────────────────────────
 import unicodedata
 

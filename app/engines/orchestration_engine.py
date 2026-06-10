@@ -182,6 +182,25 @@ def _calculer_completude_live(donnees: dict) -> int:
     return min(score, 100)
 
 
+def _score_completude_metier(donnees: dict) -> int:
+    """
+    CÂBLAGE P4 — score de complétude MÉTIER = % de champs REQUIS réellement
+    FOURNIS, calculé via synthese_completude (réutilise l'existant). Remplace
+    l'ancien fill-rate pondéré `_calculer_completude_live` pour la valeur affichée :
+    cet ancien score créditait encore le `diagnostics` retiré de la collecte et ne
+    distinguait pas « fourni » de « délégué/refusé ». Profil déduit des données ;
+    dégradation gracieuse (0) si indisponible.
+    """
+    try:
+        from app.services.conversation.router import get_agent
+        profil = (donnees.get("profil_mdph") or donnees.get("service_type")
+                  or donnees.get("profil_principal") or "adulte")
+        s = get_agent(profil).synthese_completude(donnees or {})
+        return int(round(float(s.get("taux_completude", 0.0)) * 100))
+    except Exception:
+        return 0
+
+
 # ── Instrumentation [TRACE_COLLECTE] — observabilité du pont collecte→synthese ──
 # LOGS UNIQUEMENT. Aucune donnée sensible complète. Aucun changement de comportement.
 _TRACE_SENSIBLES = {
@@ -242,7 +261,7 @@ def _sauvegarder_nav(
     Commit immédiat : garantit la visibilité aux connexions concurrentes
     (évite la race condition entre messages successifs rapides).
     """
-    score_live = _calculer_completude_live(donnees)
+    score_live = _score_completude_metier(donnees)   # P4 : complétude métier (synthese_completude)
     logger.info("[TRACE_COLLECTE] 8-SAVE start dossier=%s %s", dossier_id, _trace_resume(donnees))
     db.execute(
         """
@@ -562,8 +581,12 @@ class OrchestrationEngine:
             try:
                 _manquants_avant_ids = agent.missing_field_ids(donnees)
                 _id_to_label = {it["id"]: it["label"] for it in agent.CHECKLIST}
+                # CÂBLAGE P5 — photo des statuts AVANT le tour, pour historiser les
+                # transitions (en_attente→fourni/refuse/a_completer_pro, …) en fin de tour.
+                from app.services.field_status import etats_snapshot as _snap
+                _etats_avant = _snap(donnees, list(_id_to_label.keys()))
             except Exception:
-                _manquants_avant_ids, _id_to_label = [], {}
+                _manquants_avant_ids, _id_to_label, _etats_avant = [], {}, {}
 
             # ── [TRACE_COLLECTE] amont extraction (observabilité, sans effet) ──
             _trace_compl_avant = _calculer_completude_live(donnees)
@@ -642,6 +665,20 @@ class OrchestrationEngine:
                     )
             except Exception as _refus_err:
                 logger.warning("[REFUS] traitement non bloquant : %s", _refus_err)
+
+            # ── CÂBLAGE P5 — historiser les transitions de statut de ce tour ──────
+            # (en_attente→fourni après extraction, en_attente→refuse/a_completer_pro
+            #  après traitement, a_completer_pro→fourni si l'info arrive enfin).
+            try:
+                from app.services.field_status import journaliser_transitions
+                _n_trans = journaliser_transitions(
+                    donnees, _etats_avant, list(_id_to_label.keys()), origine="whatsapp",
+                )
+                if _n_trans:
+                    logger.info("[AUDIT_STATUT] dossier=%s %d transition(s) historisée(s)",
+                                dossier_id, _n_trans)
+            except Exception as _trans_err:
+                logger.debug("[AUDIT_STATUT] journalisation non bloquante : %s", _trans_err)
 
             # ── [TRACE_COLLECTE] aval fusion (avant sauvegarde) ──
             logger.info("[TRACE_COLLECTE] 7-SYNTHESE_APRES %s (completude_avant=%d)",
@@ -1182,7 +1219,12 @@ class OrchestrationEngine:
                 # Boucle bornée : corrige depuis le réel (idempotent), relance
                 # l'instructeur, ne finalise jamais, n'envoie jamais à la MDPH.
                 _revue_resultat = boucle_correction(donnees, profil_mdph, dossier_id, db=self.db) or {}
-                donnees["_revue_instructeur"] = (_revue_resultat.get("revue") or {}).get("expert") or {}
+                _revue_dict = _revue_resultat.get("revue") or {}
+                donnees["_revue_instructeur"] = _revue_dict.get("expert") or {}
+                # CÂBLAGE P1 : la décision métier « prêt à transmettre » (validite_dossier)
+                # n'est plus jetée — on la conserve dans la synthèse (persistée) pour le
+                # gate CERFA, le cockpit et les rapports.
+                donnees["_validite_dossier"] = _revue_dict.get("validite") or {}
             except Exception as _revue_err:
                 logger.warning("[REVUE] non bloquant : %s", _revue_err)
 
@@ -1219,6 +1261,7 @@ class OrchestrationEngine:
                         "retentissement_absent": rapport.retentissement_absent,
                         "projet_vie_incomplet":  rapport.projet_vie_incomplet,
                         "revue_instructeur":     donnees.get("_revue_instructeur") or {},
+                        "validite_dossier":      donnees.get("_validite_dossier") or {},
                     }, ensure_ascii=False),
                     dossier_id,
                 ),

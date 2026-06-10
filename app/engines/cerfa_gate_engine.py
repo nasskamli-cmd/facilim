@@ -276,6 +276,42 @@ def _verif_narratifs(donnees: dict, profil_mdph: str) -> list[BlocageGate]:
 # POINT D'ENTRÉE
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _verif_dossier_solide(donnees: dict, profil_mdph: str) -> list[BlocageGate]:
+    """
+    CÂBLAGE P2 — contrôle métier RÉEL de solidité (réutilise la logique déjà
+    développée : validite_dossier + synthese_completude). N'introduit aucun
+    nouveau score : un dossier dont le CŒUR (retentissement, aides, attentes,
+    projet de vie) n'est pas réellement FOURNI est BLOQUÉ à l'export, et le
+    message explique quels champs du cœur manquent / sont à compléter par le pro.
+    """
+    blocages: list[BlocageGate] = []
+    try:
+        from app.engines.revue_instructeur import validite_dossier
+        from app.services.conversation.router import get_agent
+        v = validite_dossier(donnees, profil_mdph)
+        synth = get_agent(profil_mdph).synthese_completude(donnees)
+    except Exception as e:  # pragma: no cover
+        logger.warning("[GATE] solidité non évaluée (non bloquant) : %s", e)
+        return blocages
+
+    if not v.get("criteres", {}).get("dossier_solide", True):
+        coeur_msg = next((m for m in v.get("manquants", []) if m.startswith("cœur")),
+                         "cœur du dossier incomplet")
+        a_compl = synth.get("a_completer_pro", [])
+        resolution = ("Compléter le cœur du dossier (retentissement, aides, attentes, "
+                      "projet de vie) avant transmission.")
+        if a_compl:
+            resolution += " À compléter par le professionnel : " + ", ".join(a_compl) + "."
+        blocages.append(BlocageGate(
+            code="COEUR_INCOMPLET",
+            categorie="CRITIQUE",
+            message="Cœur métier du dossier non rempli — " + coeur_msg,
+            resolution=resolution,
+            bloquant=True,
+        ))
+    return blocages
+
+
 def verifier_gate_cerfa(
     donnees: dict[str, Any],
     tableau_validation=None,
@@ -315,6 +351,10 @@ def verifier_gate_cerfa(
 
     # 6. Pièces critiques
     tous_blocages.extend(_verif_pieces_obligatoires(decision_presoumission))
+
+    # 7. CÂBLAGE P2 — solidité métier réelle (cœur du dossier réellement fourni).
+    #    S'ajoute aux contrôles existants, ne les remplace pas.
+    tous_blocages.extend(_verif_dossier_solide(donnees, profil_mdph))
 
     # Séparer bloquants vs avertissements
     bloquants    = [b for b in tous_blocages if b.bloquant]
