@@ -1159,9 +1159,13 @@ def get_alertes(user=Depends(_get_current_user), db=Depends(_get_db)):
 
     relances = db.execute(
         """
-        SELECT * FROM relances
-        WHERE statut = 'PLANIFIEE'
-        ORDER BY planifiee_le ASC LIMIT 50
+        SELECT r.* FROM relances r
+        LEFT JOIN dossiers d ON d.id = r.dossier_id
+        WHERE r.statut = 'PLANIFIEE'
+          -- Exclure les relances rattachées à un dossier supprimé ou inexistant :
+          -- un dossier supprimé n'est plus relançable (règle de fermeture).
+          AND d.id IS NOT NULL AND d.deleted_at IS NULL
+        ORDER BY r.planifiee_le ASC LIMIT 50
         """
     ).fetchall()
 
